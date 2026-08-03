@@ -17,25 +17,75 @@ abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome (persis
 
 ## Install
 
+Needs **Python 3.11+** and **Google Chrome** installed. The matching chromedriver
+is resolved automatically by Selenium Manager — nothing to download by hand.
+
 ```bash
+git clone https://github.com/skssmd/Ai-Browser-Toolkit
+cd Ai-Browser-Toolkit
+
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 # .venv/bin/python -m pip install -e ".[dev]"       # macOS / Linux
 ```
 
-Chrome must be installed. The driver is resolved automatically by Selenium Manager.
+Check it worked:
+
+```bash
+.venv/Scripts/python -m pytest -q     # 168 tests, needs Chrome
+```
+
+The `abt` command lands in the venv. Either activate it
+(`.venv\Scripts\activate` / `source .venv/bin/activate`) so `abt` is on your
+PATH, or call it explicitly as `.venv/Scripts/python -m abt.cli …` everywhere
+below.
 
 ## Run
 
+> **Start the server as a separate process.** `abt serve` is the command loop —
+> it opens Chrome, listens, and **never returns on its own**. Run it in the
+> foreground and it holds that terminal until you shut it down, so an agent or
+> script that launches it inline will hang there forever. Background it, or give
+> it its own terminal.
+
 ```bash
-abt serve                        # visible window, profile in ./profile
-abt serve --headless --port 9000 # no window, different port
-abt serve --profile ~/work-profile
+# Linux / macOS — background it and keep the log
+nohup abt serve > server.log 2>&1 &
+
+# Windows PowerShell
+Start-Process .venv\Scripts\python.exe `
+  -ArgumentList "-m","abt.cli","serve" `
+  -RedirectStandardOutput server.log -RedirectStandardError server.err -NoNewWindow
+
+# or just give it its own terminal and leave it there
+abt serve
 ```
+
+It is ready when `/status` answers — poll rather than sleeping a fixed amount,
+since first launch has to start Chrome:
+
+```bash
+until curl -s -m 3 localhost:8765/status > /dev/null; do sleep 1; done
+```
+
+Options:
+
+```bash
+abt serve --headless                 # no window
+abt serve --port 9000                # another port
+abt serve --profile ~/work-profile   # another profile
+abt serve --no-log --no-diff         # leanest responses
+```
+
+Stop it with `abt shutdown` (or `POST {"op":"shutdown"}`), which closes Chrome
+and exits the process. `Ctrl+C` works too if it has its own terminal.
+
+Because the server owns exactly one browser, run **one server per browser** —
+use `--port` and `--profile` together to run more than one side by side.
 
 The profile directory persists cookies and logins across restarts, and is isolated
 from your everyday Chrome. Log in by hand once in the visible window and the session
-sticks around.
+sticks around — including across a restart to pick up new code.
 
 ## Send commands
 
@@ -103,48 +153,142 @@ Ops that touch an element take exactly one of `ref`, `css`, `xpath`, or `text`
 (exact visible text). When a selector matches several elements, acting ops use the
 first unless you pass `index`.
 
-## DOM diffs
+## Diffs: what the last command changed
 
 Every interactive op (`click` `input` `select` `hover` `scroll` `press`
-`wait_for` `run_js`) reports what it changed in the page as a `dom_diff` key on
-its response. The page is snapshotted into a compact line-per-element dump before
-and after the op; the two dump `difflib` into added/removed lines. That reads
-far smaller than raw HTML, which is what makes SPA state changes cheap to follow:
+`wait_for` `run_js`) and every navigation op (`goto` `back` `forward` `reload`)
+reports what it changed as a `dom_diff` key on its response. The page is
+snapshotted before and after; the two snapshots `difflib` into what appeared and
+what disappeared. This is the feedback loop — you find out what a command did
+without re-fetching the page.
+
+There are two tracks, and they answer different questions.
+
+### The text track — always on
+
+**What appeared on screen.** Every element's own text plus every form control's
+live value, collected in document order as separate entries. One element, one
+entry: two adjacent labels stay two strings and never merge into a blob, so you
+can tell which text belongs to which thing without any markup being present.
 
 ```json
-{"op": "click", "css": "button.buy"}
-→ {"clicked": "css='button.buy'", "forced": false, …,
+{"op": "click", "css": "#products"}
+→ {"clicked": "css='#products'", "forced": false, …,
    "dom_diff": {
-     "url_before": "https://example.com/", "url_after": "https://example.com/",
-     "added": 2, "removed": 1, "truncated": false,
-     "diff": "@@ -1 +1 @@\n <div.card id=\"p1\" [data-price=\"4.99\"] …\n"
+     "url_before": "https://shop.example/", "url_after": "https://shop.example/",
+     "text": {"added": ["Widgets", "Gadgets", "3 items"],
+              "removed_count": 1,
+              "truncated": false}
    }}
 ```
 
-Fields: `added`/`removed` are always exact; `diff` is the unified diff of the
-changed lines; `truncated` is true when the diff was bigger than the token
-budget — the counts are still right, and you can pull the full picture another
-way. If the op navigated to a different document, `dom_diff` instead carries
-`navigation: true` plus the two URLs, since diffing two different pages is noise.
+This carries no tags, no classes, and no attributes, so it stays small enough to
+be unconditional — there is no budget to set and nothing to tune. What it costs
+you is state that has no visible text: a `class` flip, an `aria-expanded`
+toggle, or a `data-` attribute produces an empty text diff.
 
-**The manual check.** `{"op": "diff"}` diffs the current DOM against the baseline
-(the state after the last command that touched the page) — check it after a
-delay to catch async SPA updates, or whenever you like:
+**Removals are counted, not listed.** Additions are what you act on — the new
+options, the result, the error. What *left* is usually the page you were already
+looking at, and on a page that replaces its body the removals are the entire old
+document for no benefit. So you get `removed_count` for free, and the strings
+themselves only when you ask:
+
+```json
+{"op": "click", "css": "#products", "include_removed": true}
+→ …, "text": {"added": […], "removed": ["Loading…"], "removed_count": 1, …}
+```
+
+The count is there so you can tell when asking is worth it: `removed_count: 1`
+after a click is a spinner disappearing, `removed_count: 340` means the page
+rewrote itself.
+
+**When the page navigates, you get the page.** A diff against a document that no
+longer exists is meaningless, but the question behind it — *what am I looking at
+now?* — still has an answer. So `added` becomes the destination's full text
+instead of going empty, and you skip the separate read you would otherwise need:
+
+```json
+{"op": "goto", "url": "https://shop.example/cart"}
+→ {"url": "…/cart", "title": "Your cart",
+   "dom_diff": {"navigation": true,
+                "note": "text is the full page you landed on, not a diff",
+                "text": {"added": ["Your cart", "2 items", "Total: $42", "Checkout"],
+                         "removed_count": 18, "truncated": false}}}
+```
+
+This covers `goto` `back` `forward` `reload` and any interactive op that
+redirected — a `click` that leaves the page returns the page it arrived at. The
+element track is skipped in this case, since a unified diff of two unrelated
+documents is noise at any budget. `"diff": false` turns it off per command.
+
+Only rendered text counts. An element with `display: none` has not appeared yet,
+so a hover that reveals a menu shows up as its items being *added* — which is
+usually exactly the event you were waiting for. Password field values are never
+captured, since diffs are written to the session log.
+
+### The element track — opt in
+
+**Which element the text belongs to.** Pass `element_diff: true` for the
+line-per-element unified diff: tag, id, classes, sorted attributes, own text.
+This is the one to reach for when the change was an attribute with no text at
+all, or when you need a selector for something the text track just told you
+appeared.
+
+```json
+{"op": "click", "css": "#insert-menu", "element_diff": true}
+→ {…, "dom_diff": {
+     "text": {"added": ["Chart", "Pivot table", …], "removed_count": 0, "truncated": false},
+     "elements": {"added": 2, "removed": 1, "truncated": false,
+                  "diff": "@@ -1 +1 @@\n-div#insert-menu [aria-expanded=\"false\"] …"}
+   }}
+```
+
+`added`/`removed` are exact counts; `diff` is the unified diff; `truncated`
+means it outgrew the token budget — the counts are still right. Budget it with
+`diff_max_tokens` per command or `--diff-max-tokens` on the server. Passing
+`diff_max_tokens` implies `element_diff: true`, since budgeting something you
+never asked for is a typo.
+
+```json
+{"op": "click", "css": "#menu", "diff": false}              // no diff at all
+{"op": "click", "css": "#menu", "include_removed": true}    // list what left too
+{"op": "click", "css": "#menu", "element_diff": true}       // both tracks
+{"op": "click", "css": "#menu", "diff_max_tokens": 20000}   // both, generous budget
+```
+
+### The manual check
+
+`{"op": "diff"}` diffs the current page against the baseline — the state after
+the last command that touched the page. Use it to catch async SPA updates that
+land *after* the command that triggered them. Because you asked for it
+explicitly, it returns **everything** by default: both tracks, removals listed.
 
 ```json
 {"op": "diff"}
 → {"baseline": "present", "tab_id": "tab_0", "url_before": "…", "url_after": "…",
-   "added": 3, "removed": 2, "truncated": false, "diff": "…"}
+   "text": {"added": ["Order confirmed"], "removed": ["Placing order…"],
+            "removed_count": 1, "truncated": false},
+   "elements": {"added": 3, "removed": 2, "truncated": false, "diff": "…"}}
 
-{"op": "diff", "reset": true}   → baseline is now the current DOM
-{"op": "diff", "max_tokens": 500}  → smaller budget
+{"op": "diff", "reset": true}             → baseline is now the current page
+{"op": "diff", "element_diff": false}     → text alone
+{"op": "diff", "include_removed": false}  → count removals instead of listing them
+{"op": "diff", "max_tokens": 500}         → smaller element-diff budget
 ```
 
-Diffs are on by default. Tune or disable them with `--diff-max-tokens` and
-`--no-diff` on `abt serve`, or per command with the `diff` field: `"diff": true`
-forces one when the server default is off, `"diff": false` suppresses it for a
-single command. Each tab keeps its own baseline; `diff` on a fresh tab sets one
-instead of failing.
+### Two behaviours worth knowing
+
+Every DOM-touching op re-baselines after itself, so the op that caused a change
+also consumes it. A manual `{"op": "diff"}` straight after a `click` comes back
+empty — the click already reported that change. Each tab keeps its own baseline;
+`diff` on a fresh tab sets one instead of failing.
+
+Diffing costs two snapshots per op — roughly **180 ms** on a heavy SPA like
+Google Sheets, far less on ordinary pages. Interactively that is invisible;
+across a 60-command batch it is about 11 seconds. Use `"diff": false` on the
+commands in a batch whose effects you do not care about, `--no-diff` when
+running a script you have already debugged, and `"diff": true` to force one back
+on when the server default is off.
 
 ## Ops
 

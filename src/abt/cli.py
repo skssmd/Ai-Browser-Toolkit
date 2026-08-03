@@ -192,6 +192,12 @@ def click(
     background: bool = typer.Option(
         False, "--background", help="With --new-tab, stay on the current page."
     ),
+    elements: bool = typer.Option(
+        False, "--elements", help="Add the element diff to the text diff."
+    ),
+    removed: bool = typer.Option(
+        False, "--removed", help="List the text that left the screen, not just count it."
+    ),
     port: int = _port_option(),
 ) -> None:
     """Click an element."""
@@ -201,6 +207,10 @@ def click(
     if new_tab:
         payload["new_tab"] = True
         payload["activate"] = not background
+    if elements:
+        payload["element_diff"] = True
+    if removed:
+        payload["include_removed"] = True
     _call(port, "/command", payload)
 
 
@@ -241,15 +251,27 @@ def ops(port: int = _port_option()) -> None:
 @app.command()
 def diff(
     reset: bool = typer.Option(
-        False, "--reset", help="Set the baseline to the current DOM instead."
+        False, "--reset", help="Set the baseline to the current page instead."
     ),
-    max_tokens: int = typer.Option(1000, "--max-tokens", help="Diff budget, in tokens."),
+    text_only: bool = typer.Option(
+        False, "--text-only", help="Skip the element diff and return text alone."
+    ),
+    added_only: bool = typer.Option(
+        False, "--added-only", help="Count removed text instead of listing it."
+    ),
+    max_tokens: int = typer.Option(
+        1000, "--max-tokens", help="Element diff budget, in tokens."
+    ),
     port: int = _port_option(),
 ) -> None:
-    """Diff the current DOM against the last known state."""
+    """Diff the current page against the last known state."""
     payload = {"op": "diff"}
     if reset:
         payload["reset"] = True
+    if text_only:
+        payload["element_diff"] = False
+    if added_only:
+        payload["include_removed"] = False
     if max_tokens != 1000:
         payload["max_tokens"] = max_tokens
     _call(port, "/command", payload)

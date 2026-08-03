@@ -9,9 +9,10 @@ The document body is drawn onto a `<canvas>`. The text you type does **not**
 exist as DOM text, so:
 
 - `find`, `get_text`, `get_html`, and `dom_diff` **cannot see the body text**.
-- The diff *does* catch structural changes and the save indicator
-  (`div#docs-save-indicator-badge`: "Saving…" / "Saved to Drive") — use that as
-  the live "an action registered" signal.
+- The diff *does* catch the chrome around the canvas. The save indicator
+  (`div#docs-save-indicator-badge`) lands straight in the text track as
+  `"added": ["Saving…"]` then `["Saved to Drive"]` — that is your live "an
+  action registered" signal, and it needs no `element_diff`.
 - After a `click` on `.kix-page-paginated`, focus lands in an offscreen
   `iframe.docs-texteventtarget-iframe`. The `input` op fails on it
   ("not visible within Ns"); drive it with `press` instead.

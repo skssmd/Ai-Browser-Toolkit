@@ -163,7 +163,22 @@ def input(session: BrowserSession, cmd) -> dict:
             "not_interactable",
             f"could not type into {describe(cmd)}: {exc.msg or exc}",
         ) from exc
-    return {"target": describe(cmd), "value": element.get_attribute("value")}
+    return {"target": describe(cmd), "value": _field_value(element)}
+
+
+def _field_value(element) -> str | None:
+    """What the field now holds.
+
+    Form controls answer to the value attribute; contenteditable elements have
+    no such attribute and would report null, making a successful write look
+    like it did nothing.
+    """
+    value = element.get_attribute("value")
+    if value is not None:
+        return value
+    if element.get_attribute("contenteditable") in ("", "true", "plaintext-only"):
+        return element.get_attribute("textContent")
+    return None
 
 
 def select(session: BrowserSession, cmd) -> dict:

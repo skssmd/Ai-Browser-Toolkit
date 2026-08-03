@@ -217,18 +217,18 @@ class BrowserSession:
 
     # --- DOM diff baselines ----------------------------------------------------
 
-    def snapshot(self) -> list[str]:
-        """Canonical line-per-element dump of the active tab's DOM."""
+    def snapshot(self) -> dict:
+        """The active tab's state as {"dom": [element lines], "text": [strings]}."""
         return diff_util.snapshot(self.driver)
 
     def baseline(self) -> dict | None:
-        """The stored (url, dom) state for the active tab, or None."""
+        """The stored (url, dom, text) state for the active tab, or None."""
         return self._baselines.get(self.active_tab)
 
-    def set_baseline(self, dom: list[str] | None = None) -> dict:
-        """Record the current DOM as the state to diff the next command against."""
-        if dom is None:
-            dom = self.snapshot()
-        entry = {"url": self.driver.current_url, "dom": dom}
+    def set_baseline(self, state: dict | None = None) -> dict:
+        """Record the current page as the state to diff the next command against."""
+        if state is None:
+            state = self.snapshot()
+        entry = {"url": self.driver.current_url, **state}
         self._baselines[self.active_tab] = entry
         return entry

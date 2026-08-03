@@ -46,32 +46,60 @@ class OptionalTarget(Target):
 
 
 class Diffable(Base):
-    """Ops that can report the DOM diff they caused.
+    """Ops that report what they changed on the page.
 
     `diff` defaults to None, meaning "follow the server's --diff default".
-    Set it true to force a diff on a command, false to suppress one.
+    Set it true to force a diff on a command, false to suppress one entirely.
+
+    What you get by default is the *text* diff: the strings that appeared on
+    screen. It is small enough to always be on, so it has no budget.
+
+    `include_removed` adds the strings that left the screen. Off by default
+    because on a page that swaps its body they are the whole old document; the
+    count is reported either way, so you can always tell when it is worth
+    asking.
+
+    `element_diff` adds the element-level diff -- tags, ids, classes,
+    attributes -- for when you need to know which element the text belongs to,
+    or when the change was an attribute with no visible text at all.
+    `diff_max_tokens` budgets that element diff, and supplying it implies
+    `element_diff` since a budget for something you did not ask for is a typo.
     """
 
     diff: bool | None = None
+    include_removed: bool = False
+    element_diff: bool = False
+    diff_max_tokens: int | None = Field(default=None, ge=1, le=100_000)
+
+    @model_validator(mode="after")
+    def _budget_implies_elements(self):
+        if self.diff_max_tokens is not None:
+            self.element_diff = True
+        return self
 
 
 # --- navigation ---------------------------------------------------------------
 
 
-class Goto(Base):
+# Navigation ops are Diffable so they can hand back the page they landed on.
+# There is nothing to diff against once the document is replaced, so the text
+# track carries the whole new page and the element track is skipped.
+
+
+class Goto(Diffable):
     op: Literal["goto"]
     url: str
 
 
-class Back(Base):
+class Back(Diffable):
     op: Literal["back"]
 
 
-class Forward(Base):
+class Forward(Diffable):
     op: Literal["forward"]
 
 
-class Reload(Base):
+class Reload(Diffable):
     op: Literal["reload"]
 
 
@@ -212,8 +240,17 @@ class RunJs(Diffable):
 
 
 class Diff(Base):
+    """The manual diff: current page against the last recorded baseline.
+
+    Unlike the automatic diff on a command, this returns the element diff as
+    well as the text diff by default -- you asked for it explicitly, so you get
+    everything. Pass element_diff false for the text alone.
+    """
+
     op: Literal["diff"]
     reset: bool = False
+    include_removed: bool = True
+    element_diff: bool = True
     max_tokens: int = Field(default=1000, ge=1, le=100_000)
 
 

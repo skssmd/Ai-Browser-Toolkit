@@ -57,6 +57,16 @@ def test_input_can_append_to_a_contenteditable(form):
     assert run(form, op="get_text", css="#rich") == "onetwo"
 
 
+def test_input_reports_the_value_it_wrote_to_a_contenteditable(form):
+    # A div has no value attribute, so a successful write must not report null.
+    result = run(form, op="input", css="#rich", value="written")
+    assert result["value"] == "written"
+
+
+def test_input_still_reports_value_for_form_controls(form):
+    assert run(form, op="input", css="#name", value="plain")["value"] == "plain"
+
+
 def test_select_by_visible_text(form):
     result = run(form, op="select", css="#size", by_text="Large")
     assert result["selected"] == "Large"

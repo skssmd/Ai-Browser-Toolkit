@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from selenium.common.exceptions import JavascriptException, WebDriverException
 
-from ..diff import diff_html, page_key
+from ..diff import diff_html, diff_text, page_key, page_text
 from ..browser import BrowserSession
 from ..errors import OpError
 
@@ -20,7 +20,7 @@ def run_js(session: BrowserSession, cmd) -> dict:
 
 
 def diff(session: BrowserSession, cmd) -> dict:
-    """Diff the current DOM against the last known state, or re-baseline."""
+    """Diff the current page against the last known state, or re-baseline."""
     tab_id = session.active_tab
     entry = session.baseline()
 
@@ -30,7 +30,7 @@ def diff(session: BrowserSession, cmd) -> dict:
             "baseline": "set",
             "tab_id": tab_id,
             "url": session.driver.current_url,
-            "note": "baseline is now the current DOM",
+            "note": "baseline is now the current page",
         }
 
     after = session.snapshot()
@@ -45,10 +45,18 @@ def diff(session: BrowserSession, cmd) -> dict:
     if page_key(entry["url"]) != page_key(url_after):
         payload["navigation"] = True
         payload["note"] = (
-            "the page changed since the baseline; the two DOMs are different documents"
+            "the page changed since the baseline; text is the new page in full, "
+            "not a diff, and the element track is skipped"
+        )
+        payload["text"] = page_text(
+            after["text"], entry["text"], include_removed=cmd.include_removed
         )
     else:
-        payload.update(diff_html(entry["dom"], after, cmd.max_tokens))
+        payload["text"] = diff_text(
+            entry["text"], after["text"], include_removed=cmd.include_removed
+        )
+        if cmd.element_diff:
+            payload["elements"] = diff_html(entry["dom"], after["dom"], cmd.max_tokens)
     return payload
 
 

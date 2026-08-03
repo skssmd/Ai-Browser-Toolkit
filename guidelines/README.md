@@ -8,8 +8,7 @@ these notes and skip the trial-and-error that produced them.
 
 1. Read `toolkit-workflow.md` first — the concepts of driving the toolkit
    (ops, targeting, refs, DOM diffs, batching, verification).
-2. Then read the playbook for the site you are about to touch (only
-   `google-docs.md` exists today).
+2. Then read the playbook for the site you are about to touch.
 3. Site-specific playbooks capture the *traps*: canvas-rendered editors,
    offscreen iframes, stale exports, and the workarounds that work.
 
@@ -19,7 +18,12 @@ these notes and skip the trial-and-error that produced them.
 |---|---|
 | `toolkit-workflow.md` | Before every session — how the toolkit thinks |
 | `google-docs.md` | Driving docs.google.com (rich paste, headings, tables, verification) |
+| `google-sheets.md` | Driving sheets.google.com (canvas grid, name box, formulas, menus, charts) |
+| `fojik-mlwbd.md` | Finding and downloading movies on fojik.site/MLWBD (WordPress search, verify gauntlet, boabd/R2) |
 
+Docs and Sheets share the canvas problem but not the workaround: Docs is driven
+by clipboard paste into the body, Sheets by the name box and formula bar. Read
+the one you need, not both.
 ## Adding a playbook
 
 After you have fought a site to the finish, write down the wins so nobody

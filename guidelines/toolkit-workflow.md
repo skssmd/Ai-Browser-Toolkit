@@ -39,18 +39,51 @@ persists across commands.
 - Refs die on navigation or when the element leaves the DOM. A dead ref returns
   `stale_ref`, never silently hits a different element.
 
-## DOM diffs: your primary feedback loop
+## Diffs: your primary feedback loop
 
-Interactive ops (`click input press select hover scroll wait_for run_js`)
-snapshot the DOM before/after and return `dom_diff` with added/removed element
-lines. This is how you see what an action *did*, in real time.
+Interactive ops (`click input press select hover scroll wait_for run_js`) and
+navigation ops (`goto back forward reload`) snapshot the page before/after and
+return `dom_diff`. This is how you see what an action *did*, in real time. Two
+tracks:
+
+**`text` — always on, no budget.** The strings that appeared on screen, one
+entry per element, plus form-control values. Read this first; on most pages it
+is the whole answer and it costs almost nothing.
+
+```json
+"text": {"added": ["Widgets", "Gadgets"], "removed_count": 1, "truncated": false}
+```
+
+Only rendered text counts, so a hover that reveals a menu reads as its items
+being added. An attribute-only change — `aria-expanded`, a class flip — has no
+text and shows up as an empty diff. That is the trade: text is clean because it
+drops exactly that state churn.
+
+Text that *left* the screen is counted, not listed — on a page that rewrites
+itself the removals are the whole old document. `removed_count` tells you
+whether it is worth asking; add `"include_removed": true` when it is.
+
+**When you navigate, `added` is the whole destination page.** `goto` `back`
+`forward` `reload`, and any click that redirected, hand back the text of the
+page they landed on — there is no diff to take against a document that is gone.
+So you do **not** need a `find` or `get_text` just to see what is on a page you
+just opened; read `dom_diff.text.added` and act. The element track is skipped
+here.
+
+**`elements` — pass `element_diff: true`.** The line-per-element unified diff
+with tags, ids, classes, and attributes. Reach for it when the change was an
+attribute with no visible text, or when you need a selector for something the
+text track told you appeared. Budget it with `diff_max_tokens` (per command) or
+`--diff-max-tokens` (server); passing a budget implies `element_diff: true`.
 
 - Navigation and tab ops reset the baseline automatically.
-- Suppress noise on a single command with `"diff": false`. Set a manual
-  baseline with `{"op": "diff", "reset": true}`, then re-check with
-  `{"op": "diff"}` to catch async SPA updates.
-- Budget with `--diff-max-tokens` (server) or `max_tokens` (op); disable
-  entirely with `--no-diff`.
+- Reading a page is often free: `goto` already returned its text. Reach for
+  `find`/`find_full` when you need selectors or refs, not to see the content.
+- Suppress noise on a single command with `"diff": false`; disable entirely with
+  `--no-diff`.
+- Set a manual baseline with `{"op": "diff", "reset": true}`, then re-check with
+  `{"op": "diff"}` to catch async SPA updates. The manual `diff` is explicit, so
+  it returns everything by default: both tracks, removals listed.
 
 **Rule of thumb:** verify *effects* with the diff, not with screenshots or
 external downloads. Downloads and exports lag; the diff is live.
