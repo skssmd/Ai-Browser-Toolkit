@@ -1,0 +1,24 @@
+<title>Form</title>
+<body>
+  <input id="name" type="text" value="" placeholder="name">
+  <select id="size">
+    <option value="s">Small</option>
+    <option value="m" selected>Medium</option>
+    <option value="l">Large</option>
+  </select>
+  <button id="go" type="button" onclick="document.getElementById('out').textContent =
+    document.getElementById('name').value + '/' + document.getElementById('size').value">
+    Submit
+  </button>
+  <button id="disabled-btn" type="button" disabled>Nope</button>
+  <p id="out"></p>
+  <p id="keyed"></p>
+  <!-- Rich editors (Google Sheets' cell editor, most WYSIWYGs) are contenteditable
+       divs, not form controls, so Selenium's clear() does not apply to them. -->
+  <div id="rich" contenteditable="true" style="border: 1px solid #999; padding: 4px"></div>
+  <script>
+    document.getElementById('name').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { document.getElementById('keyed').textContent = 'entered'; }
+    });
+  </script>
+</body>

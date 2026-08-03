@@ -1,0 +1,21 @@
+<title>Overlay</title>
+<body>
+  <a href="#reached" id="link" onclick="document.getElementById('out').textContent = 'link'">
+    Real link
+  </a>
+  <button id="disabled-btn" type="button" disabled
+    onclick="document.getElementById('out').textContent = 'disabled ran'">Nope</button>
+  <p id="out"></p>
+
+  <!-- The custom-control pattern: the real input is visually hidden and a styled
+       element is shown in its place, so the input itself is never "clickable". -->
+  <label id="fancy-label" for="fancy">Fancy option</label>
+  <input type="radio" id="fancy" name="choice" style="opacity: 0; width: 0; height: 0;"
+    onclick="document.getElementById('out').textContent = 'fancy'">
+
+  <!-- The ad-network click-hijack pattern: a transparent full-page layer at max
+       z-index that swallows the first click anywhere on the document. -->
+  <div id="hijack" style="position: absolute; top: 0; left: 0; width: 100%;
+       height: 100%; z-index: 2147483647; pointer-events: auto;"
+       onclick="document.getElementById('out').textContent = 'hijacked'"></div>
+</body>

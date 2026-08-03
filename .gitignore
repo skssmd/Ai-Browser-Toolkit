@@ -1,0 +1,17 @@
+.venv/
+profile/
+logs/
+.e2e-profile/
+.demo-profile/
+logs-demo/
+.e2e.log
+.e2e.err
+server.log
+server.err
+demo.log
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/

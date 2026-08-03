@@ -1,0 +1,13 @@
+<title>Delayed</title>
+<body>
+  <p id="placeholder">loading</p>
+  <script>
+    setTimeout(function () {
+      var el = document.createElement('p');
+      el.id = 'late';
+      el.textContent = 'arrived';
+      document.body.appendChild(el);
+      document.getElementById('placeholder').remove();
+    }, 600);
+  </script>
+</body>

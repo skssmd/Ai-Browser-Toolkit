@@ -1,0 +1,24 @@
+<title>Nav</title>
+<style>
+  .menu { display: none; }
+  .dropdown:hover .menu { display: block; }
+  .dropdown { width: 160px; padding: 20px; background: #eee; }
+  .menu a { display: block; padding: 6px; }
+</style>
+<body>
+  <div class="dropdown" id="products">
+    <span>Products</span>
+    <div class="menu" id="menu">
+      <a href="#widgets" id="widgets">Widgets</a>
+      <a href="#gadgets" id="gadgets">Gadgets</a>
+    </div>
+  </div>
+  <p id="chosen"></p>
+  <script>
+    document.querySelectorAll('.menu a').forEach(function (a) {
+      a.addEventListener('click', function () {
+        document.getElementById('chosen').textContent = a.id;
+      });
+    });
+  </script>
+</body>
