@@ -239,6 +239,28 @@ class RunJs(Diffable):
     args: list[Any] = Field(default_factory=list)
 
 
+class Alert(Base):
+    """A native browser dialog (alert/confirm/prompt), which lives outside the
+    page DOM and so never shows up in a diff.
+
+    action:
+      text      -- report {present, text} without touching it
+      accept    -- click OK / Yes
+      dismiss   -- click Cancel / No
+      send_text -- type `text` into a prompt, then accept it
+    """
+
+    op: Literal["alert"]
+    action: Literal["text", "accept", "dismiss", "send_text"] = "accept"
+    text: str | None = None
+
+    @model_validator(mode="after")
+    def _text_requires_send(self):
+        if self.text is not None and self.action != "send_text":
+            raise ValueError("text only applies to the 'send_text' action")
+        return self
+
+
 class Diff(Base):
     """The manual diff: current page against the last recorded baseline.
 
@@ -268,7 +290,7 @@ Command = Annotated[
         GetHtml, GetText, Find, FindFull, Screenshot,
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
         TabNew, TabList, TabSwitch, TabClose,
-        RunJs, Diff, Status, Shutdown,
+        RunJs, Diff, Status, Shutdown, Alert,
     ],
     Field(discriminator="op"),
 ]

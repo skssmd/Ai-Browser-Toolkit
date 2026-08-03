@@ -34,6 +34,7 @@ REGISTRY: dict[str, Handler] = {
     "tab_switch": tabs.tab_switch,
     "tab_close": tabs.tab_close,
     "run_js": control.run_js,
+    "alert": control.alert,
     "diff": control.diff,
     "status": control.status,
     "shutdown": control.shutdown,

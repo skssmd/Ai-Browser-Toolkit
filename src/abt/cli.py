@@ -24,6 +24,19 @@ def _port_option() -> int:
     return typer.Option(DEFAULT_PORT, "--port", "-p", help="Server port.")
 
 
+def _choose_browser(browser: str | None) -> str:
+    """Resolve the browser choice, prompting interactively when omitted."""
+    if browser is not None:
+        chosen = browser.strip().lower()
+    else:
+        chosen = typer.prompt(
+            "Select browser to use", default="chrome", type=str
+        ).strip().lower()
+    if chosen not in ("chrome", "edge"):
+        raise typer.BadParameter(f"choose from: chrome, edge (got {chosen!r})")
+    return chosen
+
+
 def _call(port: int, path: str, payload: Any = None, method: str = "POST") -> None:
     url = f"http://{HOST}:{port}{path}"
     try:
@@ -51,8 +64,13 @@ def _call(port: int, path: str, payload: Any = None, method: str = "POST") -> No
 
 @app.command()
 def serve(
+    browser: str = typer.Option(
+        None,
+        "--browser",
+        help="Browser to drive: chrome or edge. Prompts when omitted.",
+    ),
     profile: Path = typer.Option(
-        Path("./profile"), "--profile", help="Persistent Chrome user-data-dir."
+        Path("./profile"), "--profile", help="Persistent browser user-data-dir."
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
@@ -72,21 +90,23 @@ def serve(
         1000, "--diff-max-tokens", help="Budget for dom_diff, in tokens."
     ),
 ) -> None:
-    """Open Chrome and listen for commands until told to shut down."""
+    """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
 
     from .browser import BrowserSession
     from .recorder import SessionRecorder
     from .server import create_app
 
+    browser = _choose_browser(browser)
     session = BrowserSession(
         profile=profile,
+        browser=browser,
         headless=headless,
         action_timeout=action_timeout,
         diff_enabled=not no_diff,
         diff_max_tokens=diff_max_tokens,
     )
-    typer.echo(f"starting chrome (profile: {session.profile})")
+    typer.echo(f"starting {browser} (profile: {session.profile})")
     session.start()
 
     recorder = None if no_log else SessionRecorder(log_dir)

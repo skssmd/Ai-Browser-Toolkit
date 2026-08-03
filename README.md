@@ -1,7 +1,7 @@
 # aibrowsertoolkit
 
-A Selenium-backed HTTP server that lets an AI agent drive a real Chrome browser by
-sending JSON. The server process is the loop: it opens Chrome with a persistent
+A Selenium-backed HTTP server that lets an AI agent drive a real browser — **Chrome or Edge** — by
+sending JSON. The server process is the loop: it opens the chosen browser with a persistent
 profile, stays up waiting for commands, and only stops when you send `shutdown`.
 
 > **Agents: read [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md)
@@ -10,15 +10,15 @@ profile, stays up waiting for commands, and only stops when you send `shutdown`.
 > the concepts and the traps so you skip the trial-and-error.
 
 ```
-abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome (persistent profile)
+abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome/Edge (persistent profile)
                              ^
    abt / curl / your agent ──┘   POST /command  |  POST /commands
 ```
 
 ## Install
 
-Needs **Python 3.11+** and **Google Chrome** installed. The matching chromedriver
-is resolved automatically by Selenium Manager — nothing to download by hand.
+Needs **Python 3.11+** and **Google Chrome** or **Microsoft Edge** installed. The matching
+chromedriver/msedgedriver is resolved automatically by Selenium Manager — nothing to download by hand.
 
 ```bash
 git clone https://github.com/skssmd/Ai-Browser-Toolkit

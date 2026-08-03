@@ -1,4 +1,4 @@
-"""Chrome lifecycle, persistent profile, and the stable tab registry."""
+"""Browser lifecycle, persistent profile, and the stable tab registry."""
 
 from __future__ import annotations
 
@@ -6,24 +6,35 @@ from pathlib import Path
 
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.edge.options import Options as EdgeOptions
 
 from . import diff as diff_util
 from .errors import OpError
 from .refs import RefCache
 
+_SUPPORTED_BROWSERS = ("chrome", "edge")
+
 
 class BrowserSession:
-    """Owns exactly one Chrome instance for the lifetime of the server."""
+    """Owns exactly one browser instance (chrome or edge) for the server's life."""
 
     def __init__(
         self,
         profile: Path,
+        browser: str = "chrome",
         headless: bool = False,
         action_timeout: float = 5.0,
         diff_enabled: bool = True,
         diff_max_tokens: int = 1000,
     ) -> None:
+        browser = browser.lower()
+        if browser not in _SUPPORTED_BROWSERS:
+            raise OpError(
+                "bad_browser",
+                f"unsupported browser {browser!r}; choose from {', '.join(_SUPPORTED_BROWSERS)}",
+            )
+        self.browser = browser
         self.profile = Path(profile).expanduser().resolve()
         self.headless = headless
         self.action_timeout = action_timeout
@@ -31,7 +42,7 @@ class BrowserSession:
         self.diff_max_tokens = diff_max_tokens
         self.refs = RefCache()
         self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
-        self._driver: webdriver.Chrome | None = None
+        self._driver: webdriver.Chrome | webdriver.Edge | None = None
         self._handles: dict[str, str] = {}  # tab_id -> window handle
         self._order: list[str] = []
         self._counter = 0
@@ -40,7 +51,21 @@ class BrowserSession:
 
     def start(self) -> None:
         self.profile.mkdir(parents=True, exist_ok=True)
-        options = Options()
+        options = self._make_options()
+        if self.browser == "edge":
+            self._driver = webdriver.Edge(options=options)
+        else:
+            self._driver = webdriver.Chrome(options=options)
+        # Implicit waits interact badly with explicit waits and make every failed
+        # lookup cost the full timeout. All waiting here is explicit.
+        self._driver.implicitly_wait(0)
+        self._sync_tabs()
+
+    def _make_options(self):
+        if self.browser == "edge":
+            options = EdgeOptions()
+        else:
+            options = ChromeOptions()
         options.add_argument(f"--user-data-dir={self.profile}")
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
@@ -49,11 +74,7 @@ class BrowserSession:
         if self.headless:
             options.add_argument("--headless=new")
             options.add_argument("--window-size=1440,900")
-        self._driver = webdriver.Chrome(options=options)
-        # Implicit waits interact badly with explicit waits and make every failed
-        # lookup cost the full timeout. All waiting here is explicit.
-        self._driver.implicitly_wait(0)
-        self._sync_tabs()
+        return options
 
     def quit(self) -> None:
         if self._driver is not None:
@@ -64,7 +85,7 @@ class BrowserSession:
             self._driver = None
 
     @property
-    def driver(self) -> webdriver.Chrome:
+    def driver(self) -> webdriver.Chrome | webdriver.Edge:
         if self._driver is None:
             raise OpError("browser_dead", "browser is not running")
         return self._driver

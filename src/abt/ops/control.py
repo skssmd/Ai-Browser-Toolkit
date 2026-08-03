@@ -1,8 +1,12 @@
-"""Control ops: arbitrary JS, session status, shutdown."""
+"""Control ops: arbitrary JS, native dialogs, session status, shutdown."""
 
 from __future__ import annotations
 
-from selenium.common.exceptions import JavascriptException, WebDriverException
+from selenium.common.exceptions import (
+    JavascriptException,
+    NoAlertPresentException,
+    WebDriverException,
+)
 
 from ..diff import diff_html, diff_text, page_key, page_text
 from ..browser import BrowserSession
@@ -17,6 +21,31 @@ def run_js(session: BrowserSession, cmd) -> dict:
     except WebDriverException as exc:
         raise OpError("js_error", f"script failed: {exc.msg or exc}") from exc
     return {"value": value}
+
+
+def alert(session: BrowserSession, cmd) -> dict:
+    """Inspect or answer a native browser dialog (alert/confirm/prompt)."""
+    try:
+        dialog = session.driver.switch_to.alert
+    except NoAlertPresentException:
+        return {"present": False}
+
+    message = None
+    try:
+        message = dialog.text
+    except WebDriverException:
+        pass
+
+    if cmd.action == "text":
+        return {"present": True, "text": message}
+    if cmd.action == "accept":
+        dialog.accept()
+    elif cmd.action == "dismiss":
+        dialog.dismiss()
+    else:  # send_text
+        dialog.send_keys(cmd.text or "")
+        dialog.accept()
+    return {"present": True, "text": message, "action": cmd.action}
 
 
 def diff(session: BrowserSession, cmd) -> dict:
