@@ -59,7 +59,8 @@ def test_input_can_append_to_a_contenteditable(form):
 
 def test_select_by_visible_text(form):
     result = run(form, op="select", css="#size", by_text="Large")
-    assert result == {"selected": "Large", "value": "l"}
+    assert result["selected"] == "Large"
+    assert result["value"] == "l"
 
 
 def test_select_by_value(form):
@@ -127,6 +128,24 @@ def test_wait_for_visible_on_delayed_content(clean_session, base_url):
     result = run(clean_session, op="wait_for", css="#late", state="visible", timeout=5)
     assert result["state"] == "visible"
     assert run(clean_session, op="get_text", css="#late") == "arrived"
+
+
+def test_press_chord_applies_modifier(form):
+    run(form, op="click", css="#name")
+    run(form, op="press", key="shift+a")
+    value = run(
+        form,
+        op="run_js",
+        script="return document.getElementById('name').value;",
+        diff=False,
+    )["value"]
+    assert value == "A"
+
+
+def test_press_chord_with_unknown_modifier_errors(form):
+    with pytest.raises(OpError) as caught:
+        run(form, op="press", key="super+x")
+    assert caught.value.type == "invalid_op"
 
 
 def test_wait_for_absent(clean_session, base_url):

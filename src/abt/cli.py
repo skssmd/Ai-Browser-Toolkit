@@ -63,6 +63,14 @@ def serve(
         Path("./logs"), "--log-dir", help="Where session logs are written."
     ),
     no_log: bool = typer.Option(False, "--no-log", help="Disable session logging."),
+    no_diff: bool = typer.Option(
+        False,
+        "--no-diff/--diff",
+        help="Disable/enable the automatic dom_diff on interactive commands.",
+    ),
+    diff_max_tokens: int = typer.Option(
+        1000, "--diff-max-tokens", help="Budget for dom_diff, in tokens."
+    ),
 ) -> None:
     """Open Chrome and listen for commands until told to shut down."""
     import uvicorn
@@ -72,7 +80,11 @@ def serve(
     from .server import create_app
 
     session = BrowserSession(
-        profile=profile, headless=headless, action_timeout=action_timeout
+        profile=profile,
+        headless=headless,
+        action_timeout=action_timeout,
+        diff_enabled=not no_diff,
+        diff_max_tokens=diff_max_tokens,
     )
     typer.echo(f"starting chrome (profile: {session.profile})")
     session.start()
@@ -224,6 +236,23 @@ def status(port: int = _port_option()) -> None:
 def ops(port: int = _port_option()) -> None:
     """List every supported op."""
     _call(port, "/ops", method="GET")
+
+
+@app.command()
+def diff(
+    reset: bool = typer.Option(
+        False, "--reset", help="Set the baseline to the current DOM instead."
+    ),
+    max_tokens: int = typer.Option(1000, "--max-tokens", help="Diff budget, in tokens."),
+    port: int = _port_option(),
+) -> None:
+    """Diff the current DOM against the last known state."""
+    payload = {"op": "diff"}
+    if reset:
+        payload["reset"] = True
+    if max_tokens != 1000:
+        payload["max_tokens"] = max_tokens
+    _call(port, "/command", payload)
 
 
 @app.command()

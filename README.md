@@ -4,6 +4,11 @@ A Selenium-backed HTTP server that lets an AI agent drive a real Chrome browser 
 sending JSON. The server process is the loop: it opens Chrome with a persistent
 profile, stays up waiting for commands, and only stops when you send `shutdown`.
 
+> **Agents: read [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md)
+> before driving anything, and the site playbooks in
+> [`guidelines/`](guidelines/README.md) for the site you touch.** They encode
+> the concepts and the traps so you skip the trial-and-error.
+
 ```
 abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome (persistent profile)
                              ^
@@ -98,6 +103,49 @@ Ops that touch an element take exactly one of `ref`, `css`, `xpath`, or `text`
 (exact visible text). When a selector matches several elements, acting ops use the
 first unless you pass `index`.
 
+## DOM diffs
+
+Every interactive op (`click` `input` `select` `hover` `scroll` `press`
+`wait_for` `run_js`) reports what it changed in the page as a `dom_diff` key on
+its response. The page is snapshotted into a compact line-per-element dump before
+and after the op; the two dump `difflib` into added/removed lines. That reads
+far smaller than raw HTML, which is what makes SPA state changes cheap to follow:
+
+```json
+{"op": "click", "css": "button.buy"}
+→ {"clicked": "css='button.buy'", "forced": false, …,
+   "dom_diff": {
+     "url_before": "https://example.com/", "url_after": "https://example.com/",
+     "added": 2, "removed": 1, "truncated": false,
+     "diff": "@@ -1 +1 @@\n <div.card id=\"p1\" [data-price=\"4.99\"] …\n"
+   }}
+```
+
+Fields: `added`/`removed` are always exact; `diff` is the unified diff of the
+changed lines; `truncated` is true when the diff was bigger than the token
+budget — the counts are still right, and you can pull the full picture another
+way. If the op navigated to a different document, `dom_diff` instead carries
+`navigation: true` plus the two URLs, since diffing two different pages is noise.
+
+**The manual check.** `{"op": "diff"}` diffs the current DOM against the baseline
+(the state after the last command that touched the page) — check it after a
+delay to catch async SPA updates, or whenever you like:
+
+```json
+{"op": "diff"}
+→ {"baseline": "present", "tab_id": "tab_0", "url_before": "…", "url_after": "…",
+   "added": 3, "removed": 2, "truncated": false, "diff": "…"}
+
+{"op": "diff", "reset": true}   → baseline is now the current DOM
+{"op": "diff", "max_tokens": 500}  → smaller budget
+```
+
+Diffs are on by default. Tune or disable them with `--diff-max-tokens` and
+`--no-diff` on `abt serve`, or per command with the `diff` field: `"diff": true`
+forces one when the server default is off, `"diff": false` suppresses it for a
+single command. Each tab keeps its own baseline; `diff` on a fresh tab sets one
+instead of failing.
+
 ## Ops
 
 | Group | Ops |
@@ -106,10 +154,28 @@ first unless you pass `index`.
 | Read | `get_html` `get_text` `find` `find_full` `screenshot` |
 | Interact | `click` `input` `select` `hover` `scroll` `wait_for` `press` |
 | Tabs | `tab_new` `tab_list` `tab_switch` `tab_close` |
-| Control | `run_js` `status` `shutdown` |
+| Control | `run_js` `diff` `status` `shutdown` |
 
 `select` drives native `<select>` elements via `by_text`, `value`, or `option_index`.
 Custom dropdown navs that only open on mouseover are `hover` then `click`.
+
+### press: keys, named keys, and chords
+
+`press` sends a single character, a named key, or a modifier chord to whatever has
+focus (or to a target when one is given):
+
+```json
+{"op": "press", "key": "H"}
+{"op": "press", "key": "Enter"}
+{"op": "press", "key": "ctrl+v"}        // paste from the clipboard
+{"op": "press", "key": "ctrl+alt+1"}    // Google Docs: Heading 1
+{"op": "press", "key": "shift+enter"}
+```
+
+Modifiers combine with `+` and are named `ctrl`/`control`, `shift`,
+`alt`/`option`, and `meta`/`command`/`cmd`/`windows`. A chord is one or more
+modifiers plus a final key (a single character or a named key). Unknown keys and
+modifiers are rejected up front with `invalid_op`.
 
 ### Clicking past an overlay, and opening in a new tab
 
@@ -214,6 +280,8 @@ abt exec '{"op":"select","css":"#size","by_text":"Large"}'
 abt exec-batch steps.json --continue-on-error
 abt tabs
 abt status
+abt diff
+abt diff --reset
 abt logs
 abt shutdown
 ```

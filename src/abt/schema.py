@@ -45,6 +45,16 @@ class OptionalTarget(Target):
     target_required: ClassVar[bool] = False
 
 
+class Diffable(Base):
+    """Ops that can report the DOM diff they caused.
+
+    `diff` defaults to None, meaning "follow the server's --diff default".
+    Set it true to force a diff on a command, false to suppress one.
+    """
+
+    diff: bool | None = None
+
+
 # --- navigation ---------------------------------------------------------------
 
 
@@ -100,7 +110,7 @@ class Screenshot(OptionalTarget):
 # --- interaction --------------------------------------------------------------
 
 
-class Click(Target):
+class Click(Diffable, Target):
     op: Literal["click"]
     force: bool = False
     new_tab: bool = False
@@ -116,13 +126,13 @@ class Click(Target):
         return self
 
 
-class Input(Target):
+class Input(Diffable, Target):
     op: Literal["input"]
     value: str
     clear: bool = True
 
 
-class Select(Target):
+class Select(Diffable, Target):
     op: Literal["select"]
     by_text: str | None = None
     value: str | None = None
@@ -138,11 +148,11 @@ class Select(Target):
         return self
 
 
-class Hover(Target):
+class Hover(Diffable, Target):
     op: Literal["hover"]
 
 
-class Scroll(OptionalTarget):
+class Scroll(Diffable, OptionalTarget):
     op: Literal["scroll"]
     y: int | None = None
 
@@ -155,15 +165,18 @@ class Scroll(OptionalTarget):
         return self
 
 
-class WaitFor(Target):
+class WaitFor(Diffable, Target):
     op: Literal["wait_for"]
     state: Literal["present", "visible", "clickable", "absent"] = "visible"
     timeout: float = Field(default=10.0, gt=0, le=300)
 
 
-class Press(OptionalTarget):
+class Press(Diffable, OptionalTarget):
     op: Literal["press"]
     key: str
+    """A single character, a named key (e.g. "Enter", "Tab", "Backspace"), or a
+    modifier chord like "ctrl+v", "ctrl+alt+1", or "shift+enter". Modifiers:
+    ctrl/control, shift, alt/option, meta/command/cmd/windows."""
 
 
 # --- tabs ---------------------------------------------------------------------
@@ -192,10 +205,16 @@ class TabClose(Base):
 # --- control ------------------------------------------------------------------
 
 
-class RunJs(Base):
+class RunJs(Diffable):
     op: Literal["run_js"]
     script: str
     args: list[Any] = Field(default_factory=list)
+
+
+class Diff(Base):
+    op: Literal["diff"]
+    reset: bool = False
+    max_tokens: int = Field(default=1000, ge=1, le=100_000)
 
 
 class Status(Base):
@@ -212,7 +231,7 @@ Command = Annotated[
         GetHtml, GetText, Find, FindFull, Screenshot,
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
         TabNew, TabList, TabSwitch, TabClose,
-        RunJs, Status, Shutdown,
+        RunJs, Diff, Status, Shutdown,
     ],
     Field(discriminator="op"),
 ]

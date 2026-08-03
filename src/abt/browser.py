@@ -8,6 +8,7 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
+from . import diff as diff_util
 from .errors import OpError
 from .refs import RefCache
 
@@ -20,11 +21,16 @@ class BrowserSession:
         profile: Path,
         headless: bool = False,
         action_timeout: float = 5.0,
+        diff_enabled: bool = True,
+        diff_max_tokens: int = 1000,
     ) -> None:
         self.profile = Path(profile).expanduser().resolve()
         self.headless = headless
         self.action_timeout = action_timeout
+        self.diff_enabled = diff_enabled
+        self.diff_max_tokens = diff_max_tokens
         self.refs = RefCache()
+        self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
         self._driver: webdriver.Chrome | None = None
         self._handles: dict[str, str] = {}  # tab_id -> window handle
         self._order: list[str] = []
@@ -93,6 +99,7 @@ class BrowserSession:
             del self._handles[tab_id]
             self._order.remove(tab_id)
             self.refs.drop_tab(tab_id)
+            self._baselines.pop(tab_id, None)
         for handle in live:
             if handle not in known:
                 tab_id = self._new_tab_id()
@@ -166,6 +173,7 @@ class BrowserSession:
         self.driver.switch_to.window(self._handles[target])
         self.driver.close()
         self.refs.drop_tab(target)
+        self._baselines.pop(target, None)
         del self._handles[target]
         self._order.remove(target)
         # Activate the nearest surviving tab so the session is never adrift.
@@ -206,3 +214,21 @@ class BrowserSession:
 
     def location(self) -> dict:
         return {"url": self.driver.current_url, "title": self.driver.title}
+
+    # --- DOM diff baselines ----------------------------------------------------
+
+    def snapshot(self) -> list[str]:
+        """Canonical line-per-element dump of the active tab's DOM."""
+        return diff_util.snapshot(self.driver)
+
+    def baseline(self) -> dict | None:
+        """The stored (url, dom) state for the active tab, or None."""
+        return self._baselines.get(self.active_tab)
+
+    def set_baseline(self, dom: list[str] | None = None) -> dict:
+        """Record the current DOM as the state to diff the next command against."""
+        if dom is None:
+            dom = self.snapshot()
+        entry = {"url": self.driver.current_url, "dom": dom}
+        self._baselines[self.active_tab] = entry
+        return entry

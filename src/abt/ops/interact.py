@@ -25,6 +25,57 @@ KEYS = {
     if name.isupper() and not name.startswith("_")
 }
 
+# Modifier names accepted inside a key chord like "ctrl+v" or "shift+enter".
+_MODIFIERS = {
+    "alt": Keys.ALT,
+    "cmd": Keys.META,
+    "command": Keys.META,
+    "control": Keys.CONTROL,
+    "ctrl": Keys.CONTROL,
+    "meta": Keys.META,
+    "option": Keys.ALT,
+    "shift": Keys.SHIFT,
+    "windows": Keys.META,
+}
+
+
+def _resolve_press_keys(raw: str) -> list[str]:
+    """Turn 'ctrl+v', 'shift+enter', or a plain key into a send_keys list.
+
+    A chord is modifiers joined by '+' and one final key: 'ctrl+alt+1'. The
+    final key may be a single character or a named key. A bare key behaves as
+    before (single character or named key).
+    """
+    parts = [part.strip() for part in raw.split("+")]
+    if len(parts) == 1:
+        named = KEYS.get(raw.lower())
+        if named is not None:
+            return [named]
+        if len(raw) != 1:
+            raise OpError(
+                "invalid_op",
+                f"unknown key {raw!r}; use a single character, a named key, or a "
+                f"chord like 'ctrl+v' (modifiers: {', '.join(sorted(_MODIFIERS))})",
+            )
+        return [raw]
+
+    modifiers = []
+    for part in parts[:-1]:
+        modifier = _MODIFIERS.get(part)
+        if modifier is None:
+            raise OpError(
+                "invalid_op",
+                f"unknown modifier {part!r} in chord {raw!r}; use one of "
+                f"{', '.join(sorted(_MODIFIERS))}",
+            )
+        modifiers.append(modifier)
+
+    main = parts[-1]
+    main_key = KEYS.get(main) or (main if len(main) == 1 else None)
+    if main_key is None:
+        raise OpError("invalid_op", f"unknown key {main!r} in chord {raw!r}")
+    return modifiers + [main_key]
+
 
 def click(session: BrowserSession, cmd) -> dict:
     if cmd.new_tab:
@@ -183,18 +234,24 @@ def wait_for(session: BrowserSession, cmd) -> dict:
 
 
 def press(session: BrowserSession, cmd) -> dict:
-    key = KEYS.get(cmd.key.lower())
-    if key is None:
-        if len(cmd.key) != 1:
-            raise OpError(
-                "invalid_op",
-                f"unknown key {cmd.key!r}; use a single character or one of: "
-                + ", ".join(sorted(KEYS)),
-            )
-        key = cmd.key
+    keys = _resolve_press_keys(cmd.key)
 
     if cmd.has_target:
-        resolve_one(session, cmd, state="visible").send_keys(key)
+        resolve_one(session, cmd, state="visible").send_keys(*keys)
         return {"pressed": cmd.key, "target": describe(cmd)}
-    ActionChains(session.driver).send_keys(key).perform()
+
+    # No target: drive whatever has focus. With modifiers the chord needs each
+    # modifier held while the main key goes down, so key_down every modifier,
+    # send the main key, then release them in reverse order.
+    modifiers, main = keys[:-1], keys[-1]
+    if modifiers:
+        chain = ActionChains(session.driver)
+        for modifier in modifiers:
+            chain = chain.key_down(modifier)
+        chain = chain.send_keys(main)
+        for modifier in reversed(modifiers):
+            chain = chain.key_up(modifier)
+        chain.perform()
+    else:
+        ActionChains(session.driver).send_keys(main).perform()
     return {"pressed": cmd.key, "target": "<active element>"}
