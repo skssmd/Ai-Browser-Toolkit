@@ -24,6 +24,7 @@ these notes and skip the trial-and-error that produced them.
 Docs and Sheets share the canvas problem but not the workaround: Docs is driven
 by clipboard paste into the body, Sheets by the name box and formula bar. Read
 the one you need, not both.
+
 ## Adding a playbook
 
 After you have fought a site to the finish, write down the wins so nobody
