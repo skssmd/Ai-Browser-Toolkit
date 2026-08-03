@@ -21,6 +21,7 @@ these notes and skip the trial-and-error that produced them.
 | `google-sheets.md` | Driving sheets.google.com (canvas grid, name box, formulas, menus, charts) |
 | `fojik-mlwbd.md` | Finding and downloading movies on fojik.site/MLWBD (WordPress search, verify gauntlet, boabd/R2) |
 | `kayoanime.md` | Finding and downloading anime on kayoanime.com (WordPress search, Google Group, private Drive folders, virus-scan dialog) |
+| `messenger.md` | Reading and replying on messenger.com, normal + E2EE threads, sending images/files through the hidden file input (contenteditable composer, multi-attachment) |
 
 Docs and Sheets share the canvas problem but not the workaround: Docs is driven
 by clipboard paste into the body, Sheets by the name box and formula bar. Read

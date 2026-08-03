@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mock thread</title>
+  <style>
+    body { font: 14px sans-serif; margin: 0; display: flex; }
+    #sidebar { width: 240px; border-right: 1px solid #ccc; }
+    #sidebar a { display: block; padding: 8px; color: #111; text-decoration: none; }
+    #thread { flex: 1; padding: 8px; }
+    div[role=article] { border-bottom: 1px solid #eee; padding: 6px 0; }
+    #composer { border: 1px solid #888; min-height: 24px; padding: 4px; }
+    #listbox { border: 1px solid #888; }
+    #listbox[hidden] { display: none; }
+    [role=option] { padding: 4px; cursor: pointer; }
+    input[type=file] { display: none; }
+    #previews img { width: 32px; height: 32px; }
+    #reply-preview[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="sidebar" role="navigation">
+    <div role="row"><a href="/t/100/">Alice Aster<br>see you then<br>10:14</a></div>
+    <div role="row"><a href="/e2ee/t/200/">Bob Bell<br>sent a photo<br>09:02</a></div>
+  </div>
+
+  <div id="thread">
+    <div id="messages"></div>
+
+    <div id="reply-preview" hidden>Replying to <span id="reply-target"></span>
+      <button aria-label="Remove reply">x</button>
+    </div>
+    <div id="previews"></div>
+    <div id="composer" contenteditable="true" role="textbox"
+         aria-label="Write to Alice Aster"></div>
+    <div id="listbox" role="listbox" hidden></div>
+    <input type="file" multiple>
+  </div>
+
+<script>
+const ROSTER = ['Alice Aster', 'Bob Bell', 'Carol Chase'];
+const composer = document.getElementById('composer');
+const listbox = document.getElementById('listbox');
+const previews = document.getElementById('previews');
+const messages = document.getElementById('messages');
+const replyPreview = document.getElementById('reply-preview');
+const replyTarget = document.getElementById('reply-target');
+
+function addMessage(body, sender, time) {
+  const row = document.createElement('div');
+  row.setAttribute('role', 'article');
+  const text = document.createElement('span');
+  text.textContent = body;
+  const meta = document.createElement('span');
+  meta.textContent = '\nMessage sent ' + time + ' by ' + sender + ': ' + body;
+  const reply = document.createElement('button');
+  reply.setAttribute('aria-label', 'Reply');
+  reply.textContent = 'reply';
+  reply.onclick = () => {
+    replyTarget.textContent = body;
+    replyPreview.hidden = false;
+  };
+  row.append(text, meta, reply);
+  messages.append(row);
+  return row;
+}
+
+addMessage('lunch tomorrow?', 'Alice Aster', '10:12');
+addMessage('yes, noon works', 'You', '10:13');
+addMessage('see you then', 'Alice Aster', '10:14');
+
+function caretToEnd() {
+  composer.focus();
+  const range = document.createRange();
+  range.selectNodeContents(composer);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+// Mention popup: an unfinished "@word" at the end of the text opens it.
+composer.addEventListener('input', () => {
+  const text = composer.textContent;
+  const match = /@([^@\s]*)$/.exec(text);
+  listbox.innerHTML = '';
+  if (!match) { listbox.hidden = true; return; }
+  const partial = match[1].toLowerCase();
+  const hits = ROSTER.filter(n => n.toLowerCase().startsWith(partial));
+  if (!hits.length) { listbox.hidden = true; return; }
+  for (const name of hits) {
+    const option = document.createElement('div');
+    option.setAttribute('role', 'option');
+    option.textContent = name;
+    option.onclick = () => {
+      composer.textContent = composer.textContent.replace(/@[^@\s]*$/, name + ' ');
+      listbox.hidden = true;
+      listbox.innerHTML = '';
+      caretToEnd();
+    };
+    listbox.append(option);
+  }
+  listbox.hidden = false;
+});
+
+composer.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  const body = composer.textContent.trim();
+  const count = previews.querySelectorAll('img').length;
+  if (!body && !count) return;
+  const prefix = replyPreview.hidden ? '' : 'Re: ' + replyTarget.textContent + ' — ';
+  const suffix = count ? ' [' + count + ' attachment(s)]' : '';
+  addMessage(prefix + body + suffix, 'You', '10:15');
+  composer.textContent = '';
+  previews.innerHTML = '';
+  replyPreview.hidden = true;
+});
+
+document.querySelector('input[type=file]').addEventListener('change', (event) => {
+  for (const file of event.target.files) {
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    img.setAttribute('aria-label', 'Remove ' + file.name);
+    previews.append(img);
+  }
+});
+</script>
+</body>
+</html>

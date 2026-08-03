@@ -28,6 +28,11 @@ persists across commands.
 | Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` |
 | Control | `diff` `status` `shutdown` |
 
+Some sequences that always run together are also packaged as their own
+endpoints — see `/messenger/*` in [messenger.md](messenger.md). They are
+shortcuts over these same ops, never a replacement: when one does not fit what
+you need, drive the page with the ops directly.
+
 ## Targeting and refs
 
 - Ops that touch an element take exactly **one** of `css`, `xpath`, `text`

@@ -9,6 +9,15 @@ profile, stays up waiting for commands, and only stops when you send `shutdown`.
 > [`guidelines/`](guidelines/README.md) for the site you touch.** They encode
 > the concepts and the traps so you skip the trial-and-error.
 
+> ⚠️ **Licence — attribution is required.** This project is
+> [Apache 2.0](LICENSE). If you use this code, in whole or in part, in your own
+> project, you **must credit it**: name the repository in your README, or cite
+> it, and link back to
+> <https://github.com/skssmd/Ai-Browser-Toolkit>. Keep the `LICENSE` file and
+> the copyright notice with any copy or derivative, and state what you changed.
+> Attribution is not a courtesy here — it is the condition the licence grants
+> you these rights on.
+
 ```
 abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome/Edge (persistent profile)
                              ^
@@ -112,6 +121,51 @@ Every response is `{"ok": true, "result": ...}` or
 
 Batches stop at the first failure by default. Send
 `{"commands": [...], "continue_on_error": true}` to run them all regardless.
+
+## Messenger
+
+Driving `messenger.com` through the generic ops takes a dozen round trips and
+the order matters — a stale draft glued to your text, an Enter that fires
+before the upload finished. That sequence is packaged as its own endpoints:
+
+```bash
+curl -s localhost:8765/messenger/sendmessage -H 'content-type: application/json' -d '{
+  "thread_url": "https://www.messenger.com/t/927345869967156/",
+  "message": "@Yaleed @Samin here is the capture",
+  "mentions": ["Yaleed", "Samin"],
+  "attachments": ["C:/shots/page.png", "https://example.com/logo.png"],
+  "reply_to": "Step 1/4 DONE"
+}'
+```
+
+`mentions` are real @-mentions: each name must appear in `message` as
+`@<name>`, and that spot is typed through Messenger's suggestion popup, so
+`@Yaleed` lands as `@Yaleed Haque`. `attachments` take local paths or http(s)
+links, which are downloaded first. `reply_to` is a substring of the message
+you are answering, or an index into the thread.
+
+Every failure raises **before** Enter is pressed — an attachment that never
+staged, a mention with no suggestion — so a bad send stays a draft instead of
+going out wrong.
+
+`POST /messenger/sendmessage/async` answers immediately with a `job_id` and
+does the work in a new tab that it closes afterwards, leaving your current tab
+untouched. Poll `GET /messenger/jobs/{id}`.
+
+Reading:
+
+```bash
+curl -s 'localhost:8765/messenger/threads?url=https://www.messenger.com/'
+curl -s 'localhost:8765/messenger/messages?thread_url=…&since_last=true'
+```
+
+`/messenger/threads` gives each thread's name, preview, time, and URL.
+`/messenger/messages` parses rows into `{sender, time, text}`; `since_last=true`
+returns only what arrived since your last read of that thread — matched by
+content, not position, because Messenger trims the top of a long thread as it
+grows.
+
+Full details and the traps behind them: [guidelines/messenger.md](guidelines/messenger.md).
 
 ## Two ways to read a page
 
@@ -430,6 +484,16 @@ abt logs
 abt shutdown
 ```
 
+The Messenger endpoints have their own group:
+
+```bash
+abt messenger threads --url https://www.messenger.com/
+abt messenger read -t https://www.messenger.com/t/<id>/ --new
+abt messenger send "@Yaleed here it is" -t <thread-url> -m Yaleed -a C:/shots/page.png
+abt messenger send "step 2 done" -t <thread-url> --async
+abt messenger jobs <job-id>
+```
+
 ## Tests
 
 ```bash
@@ -438,3 +502,19 @@ abt shutdown
 
 The suite drives a real headless Chrome against static fixture pages served from a
 local port — no network, deterministic.
+
+## Licence
+
+[Apache License 2.0](LICENSE) — © the Ai-Browser-Toolkit contributors.
+
+You may use, modify, and redistribute this code, including commercially. In
+return the licence asks for three things, and they are not optional:
+
+1. **Credit the project.** Mention this repository in your own README, or cite
+   it, with a link to <https://github.com/skssmd/Ai-Browser-Toolkit>.
+2. **Ship the licence.** Keep `LICENSE` and the copyright and attribution
+   notices with any copy or derivative work.
+3. **Say what you changed.** Mark modified files as modified.
+
+Taking the code without the credit is not "borrowing" — it is using it outside
+the terms that made it available to you.
