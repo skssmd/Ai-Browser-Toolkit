@@ -24,6 +24,7 @@ persists across commands.
 |---|---|
 | Navigate | `goto` `back` `forward` `reload` `current_url` |
 | Read | `find` `find_full` `get_text` `get_html` `run_js` `screenshot` |
+| Inspect | `read_console` `read_network` |
 | Interact | `click` `input` `press` `select` `hover` `scroll` `wait_for` |
 | Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` |
 | Control | `diff` `status` `shutdown` |
@@ -105,11 +106,45 @@ external downloads. Downloads and exports lag; the diff is live.
 - **Waiting:** `wait_for` with `state` = `present|visible|clickable|absent` and
   a `timeout`. Use it before acting on slow-loading content.
 
+## When the page won't say what went wrong
+
+The DOM tells you what a page *is*. `read_console` and `read_network` tell you
+what it *did* — and a failed request usually leaves nothing in the DOM at all.
+
+- `read_console` — everything the page logged, plus uncaught errors and
+  unhandled rejections. Captured from **document start**, so a reload gives you
+  what a page said while loading, which is where the useful errors are. Filter
+  with `pattern` (regex on the text) and `levels`.
+- `read_network` — every request with its status, duration, and size.
+  `failures_only: true` is the one you want: it keeps 4xx/5xx and anything the
+  browser refused to disclose. `pattern` filters on URL.
+
+A real case: a site showed "Failed to load PDF" and nothing else. The DOM had no
+more to give. `read_network` with `failures_only` showed a 404 on a storage key
+— the whole diagnosis in one call.
+
+Statuses and URLs, not bodies. A cross-origin response without
+`Timing-Allow-Origin` reports `status: null` and `opaque: true`; the browser
+genuinely will not say, so neither does this.
+
+## Typing into dates
+
+`input` on `<input type="date|time|month|week|datetime-local">` sets the value
+directly rather than typing, and fires the events a framework listens for.
+Typing into these is a trap: the browser feeds keystrokes to *locale* segment
+boxes, so `2026-08-03` on an en-US date input lands as `60803-02-20` and the
+form submits silently wrong.
+
+Use the field's own format — `YYYY-MM-DD`, `HH:MM`, `YYYY-MM`, `YYYY-Www`,
+`YYYY-MM-DDTHH:MM` — and anything the field rejects raises `not_interactable`
+instead of quietly emptying itself.
+
 ## Errors
 
 A closed set of `error.type` values to branch on: `invalid_op`,
 `element_not_found`, `stale_ref`, `not_interactable`, `not_a_select`, `timeout`,
-`navigation_failed`, `js_error`, `last_tab`, `tab_not_found`, `browser_dead`.
+`navigation_failed`, `js_error`, `last_tab`, `tab_not_found`, `browser_dead`,
+`bad_browser`.
 
 Failed ops never quietly continue: batches stop unless `continue_on_error`.
 
@@ -127,7 +162,10 @@ Failed ops never quietly continue: batches stop unless `continue_on_error`.
 ## Hygiene
 
 - Keep bulk operations on `"diff": false` and do one verification pass at the
-  end — huge diffs are noise.
+  end — huge diffs are noise. **Except across a form fill:** the text track
+  captures input values, so a diff after typing is the cheapest way to catch a
+  field that took something other than what you sent. A whole form filled on
+  `"diff": false` once hid a mangled date until the server rejected it twice.
 - Tabs you create for downloads/export are often closed by the human operator;
   never assume a tab id survives. Create a fresh tab for each export check and
   read the newest file in the Downloads folder.

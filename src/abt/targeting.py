@@ -6,6 +6,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     StaleElementReferenceException,
     TimeoutException,
+    WebDriverException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webelement import WebElement
@@ -51,6 +52,21 @@ _CONDITIONS = {
     "clickable": EC.element_to_be_clickable,
 }
 
+# States that mean "a person could act on this". Only these need the element on
+# screen; "present" deliberately does not, so you can assert something exists
+# without disturbing the scroll position.
+_NEEDS_VIEWPORT = frozenset({"visible", "clickable"})
+
+
+def scroll_into_view(session: BrowserSession, element: WebElement) -> None:
+    """Centre an element in the viewport. Never fails a command."""
+    try:
+        session.driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element
+        )
+    except WebDriverException:
+        pass
+
 
 def resolve_one(
     session: BrowserSession,
@@ -60,7 +76,10 @@ def resolve_one(
 ) -> WebElement:
     """Resolve a single element, waiting up to `timeout` for it to reach `state`."""
     if getattr(cmd, "ref", None) is not None:
-        return session.refs.get(session.active_tab, cmd.ref)
+        element = session.refs.get(session.active_tab, cmd.ref)
+        if state in _NEEDS_VIEWPORT:
+            scroll_into_view(session, element)
+        return element
 
     wait_for = timeout if timeout is not None else session.action_timeout
     by, selector = locator(cmd)
@@ -68,6 +87,17 @@ def resolve_one(
 
     if index == 0:
         try:
+            if state in _NEEDS_VIEWPORT:
+                # Selenium judges an element where it currently sits, so
+                # anything below the fold fails as "not interactable" even
+                # though a real user would just scroll to it. Bring it into
+                # view first, then ask whether it is interactable.
+                scroll_into_view(
+                    session,
+                    WebDriverWait(session.driver, wait_for).until(
+                        EC.presence_of_element_located((by, selector))
+                    ),
+                )
             return WebDriverWait(session.driver, wait_for).until(
                 _CONDITIONS[state]((by, selector))
             )

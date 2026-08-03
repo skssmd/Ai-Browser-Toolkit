@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Inspect</title>
+<style>
+  body { font: 14px sans-serif; }
+  #spacer { height: 1600px; }
+  #low { padding: 8px; }
+</style>
+</head>
+<body>
+  <h1>Inspect</h1>
+
+  <form id="dates">
+    <input type="date" id="d">
+    <input type="time" id="t">
+    <input type="month" id="m">
+    <input type="datetime-local" id="dt">
+    <input type="text" id="plain">
+    <output id="echo"></output>
+  </form>
+
+  <div id="spacer">scroll down</div>
+  <button id="low" type="button">Far Below</button>
+  <div id="clicked"></div>
+
+<script>
+console.log('page loaded');
+console.warn('a warning about widgets');
+console.error('boom: something failed');
+console.info('info line');
+
+document.getElementById('low').addEventListener('click', () => {
+  document.getElementById('clicked').textContent = 'the low button was clicked';
+});
+
+// Report every date-ish field's value so a test can see what actually landed.
+for (const id of ['d','t','m','dt']) {
+  document.getElementById(id).addEventListener('change', (e) => {
+    document.getElementById('echo').textContent = e.target.id + '=' + e.target.value;
+  });
+}
+
+// One request that succeeds and one that 404s, so read_network has both.
+fetch('cards.html').catch(() => {});
+fetch('no-such-file-xyz.json').catch(() => {});
+</script>
+</body>
+</html>

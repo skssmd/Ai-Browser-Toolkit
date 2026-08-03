@@ -46,6 +46,7 @@ class BrowserSession:
         self._handles: dict[str, str] = {}  # tab_id -> window handle
         self._order: list[str] = []
         self._counter = 0
+        self._captured: set[str] = set()  # handles already armed for console
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -59,7 +60,68 @@ class BrowserSession:
         # Implicit waits interact badly with explicit waits and make every failed
         # lookup cost the full timeout. All waiting here is explicit.
         self._driver.implicitly_wait(0)
+        self._install_console_capture()
         self._sync_tabs()
+
+    # A page's console output is gone by the time anyone thinks to ask for it,
+    # so the buffer has to exist before the page does. This runs at document
+    # start on every page and every frame, for the browser's whole life.
+    _CONSOLE_CAPTURE = """
+    (() => {
+      if (window.__abtConsole) return;
+      const buffer = window.__abtConsole = [];
+      const LIMIT = 500;
+      const render = (value) => {
+        if (typeof value === 'string') return value;
+        if (value instanceof Error) return (value.stack || value.message);
+        try { return JSON.stringify(value); } catch (e) { return String(value); }
+      };
+      const push = (level, parts) => {
+        try {
+          buffer.push({level: level, at: Date.now(),
+                       text: Array.from(parts).map(render).join(' ').slice(0, 2000)});
+          if (buffer.length > LIMIT) buffer.shift();
+        } catch (e) {}
+      };
+      for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+        const original = console[level];
+        console[level] = function (...parts) { push(level, parts); return original.apply(this, parts); };
+      }
+      addEventListener('error', (e) =>
+        push('error', [(e.message || 'error') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || 0)]));
+      addEventListener('unhandledrejection', (e) =>
+        push('error', ['unhandled rejection: ' + render(e.reason)]));
+    })();
+    """
+
+    def _install_console_capture(self) -> None:
+        """Arm console capture on the tab that is active right now.
+
+        CDP registers the init script against one *target*, so a tab opened
+        later gets nothing -- and `tab_new`, a click with `new_tab`, and every
+        background Messenger send all open one. Install per tab, once each:
+        registering twice on the same target stacks duplicate scripts.
+
+        Best effort throughout: a browser without CDP still works, just without
+        a console.
+        """
+        try:
+            handle = self._driver.current_window_handle
+        except WebDriverException:
+            return
+        if handle in self._captured:
+            return
+        try:
+            self._driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": self._CONSOLE_CAPTURE},
+            )
+            # The init script only fires on the *next* document, so seed the
+            # page already loaded. It misses whatever was logged before now.
+            self._driver.execute_script(self._CONSOLE_CAPTURE)
+            self._captured.add(handle)
+        except Exception:
+            pass
 
     def _make_options(self):
         if self.browser == "edge":
@@ -116,6 +178,7 @@ class BrowserSession:
         """
         live = self.driver.window_handles
         known = set(self._handles.values())
+        self._captured &= set(live)  # a closed tab's handle can be reissued
         for tab_id in [t for t, h in self._handles.items() if h not in live]:
             del self._handles[tab_id]
             self._order.remove(tab_id)
@@ -160,6 +223,7 @@ class BrowserSession:
     def new_tab(self, url: str | None, activate: bool) -> str:
         before = self.driver.current_window_handle
         self.driver.switch_to.new_window("tab")
+        self._install_console_capture()  # before anything loads in it
         self._sync_tabs()
         tab_id = self.active_tab
         if url:
@@ -177,6 +241,8 @@ class BrowserSession:
                 f"no tab {tab_id!r}; open tabs: {', '.join(self._order) or 'none'}",
             )
         self.driver.switch_to.window(handle)
+        # A tab we never opened ourselves (target=_blank) still needs arming.
+        self._install_console_capture()
 
     def close_tab(self, tab_id: str | None) -> None:
         self._sync_tabs()
@@ -200,6 +266,7 @@ class BrowserSession:
         # Activate the nearest surviving tab so the session is never adrift.
         neighbour = self._order[min(position, len(self._order) - 1)]
         self.driver.switch_to.window(self._handles[neighbour])
+        self._install_console_capture()
 
     # --- navigation -----------------------------------------------------------
 

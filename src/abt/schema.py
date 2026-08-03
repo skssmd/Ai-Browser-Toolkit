@@ -276,6 +276,37 @@ class Diff(Base):
     max_tokens: int = Field(default=1000, ge=1, le=100_000)
 
 
+class ReadConsole(Base):
+    """What the page logged. Captured from document start, so a reload gives you
+    everything a page said while loading -- which is where the useful errors
+    usually are."""
+
+    op: Literal["read_console"]
+    pattern: str | None = None
+    """Case-insensitive regex over the message text."""
+    levels: list[Literal["log", "info", "warn", "error", "debug"]] = Field(
+        default_factory=list
+    )
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class ReadNetwork(Base):
+    """What the page requested, and how each request answered.
+
+    Statuses and URLs, not bodies. A cross-origin response without
+    Timing-Allow-Origin reports `status: null` and `opaque: true` -- the browser
+    genuinely will not say, so neither will this.
+    """
+
+    op: Literal["read_network"]
+    pattern: str | None = None
+    """Case-insensitive regex over the URL."""
+    failures_only: bool = False
+    """Keep only 4xx/5xx and responses the browser would not disclose."""
+    min_status: int | None = Field(default=None, ge=100, le=599)
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
 class Status(Base):
     op: Literal["status"]
 
@@ -291,6 +322,7 @@ Command = Annotated[
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
         TabNew, TabList, TabSwitch, TabClose,
         RunJs, Diff, Status, Shutdown, Alert,
+        ReadConsole, ReadNetwork,
     ],
     Field(discriminator="op"),
 ]

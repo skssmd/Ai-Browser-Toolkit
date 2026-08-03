@@ -28,9 +28,16 @@ def _port_option() -> int:
 
 
 def _choose_browser(browser: str | None) -> str:
-    """Resolve the browser choice, prompting interactively when omitted."""
+    """Resolve the browser choice, prompting interactively when omitted.
+
+    Only prompt when someone is there to answer. `abt serve` is routinely
+    launched detached -- `nohup abt serve &`, `Start-Process`, an agent starting
+    its own server -- and a prompt with no stdin hangs or aborts the launch.
+    """
     if browser is not None:
         chosen = browser.strip().lower()
+    elif not sys.stdin.isatty():
+        chosen = "chrome"
     else:
         chosen = typer.prompt(
             "Select browser to use", default="chrome", type=str

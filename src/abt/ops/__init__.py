@@ -7,7 +7,7 @@ from typing import Any, Callable
 from ..browser import BrowserSession
 from ..diff import diff_html, diff_text, page_key, page_text
 from ..errors import OpError
-from . import control, interact, navigate, read, tabs
+from . import control, inspect, interact, navigate, read, tabs
 
 Handler = Callable[[BrowserSession, Any], Any]
 
@@ -33,6 +33,8 @@ REGISTRY: dict[str, Handler] = {
     "tab_list": tabs.tab_list,
     "tab_switch": tabs.tab_switch,
     "tab_close": tabs.tab_close,
+    "read_console": inspect.read_console,
+    "read_network": inspect.read_network,
     "run_js": control.run_js,
     "alert": control.alert,
     "diff": control.diff,
@@ -54,12 +56,18 @@ NAVIGATION_OPS = frozenset({"goto", "back", "forward", "reload"})
 # the next manual `diff`.
 DOM_TOUCHING_OPS = DIFFABLE_OPS | NAVIGATION_OPS | {"tab_new", "tab_close"}
 
+# The health check exists to fail fast instead of hanging on a dead driver. But
+# these two are exactly what you reach for *when* it has died -- gating them
+# behind it means a server whose browser crashed can never be shut down.
+NO_HEALTH_CHECK = frozenset({"shutdown", "status"})
+
 
 def dispatch(session: BrowserSession, cmd) -> Any:
     handler = REGISTRY.get(cmd.op)
     if handler is None:
         raise OpError("invalid_op", f"no handler registered for op {cmd.op!r}")
-    session.health_check()
+    if cmd.op not in NO_HEALTH_CHECK:
+        session.health_check()
 
     want_diff = session.diff_enabled if getattr(cmd, "diff", None) is None else cmd.diff
     if cmd.op in DIFFABLE_OPS and want_diff:

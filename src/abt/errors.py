@@ -15,6 +15,7 @@ ERROR_TYPES = frozenset(
         "last_tab",
         "tab_not_found",
         "browser_dead",
+        "bad_browser",
     }
 )
 

@@ -152,8 +152,41 @@ def _clear_field(session: BrowserSession, element) -> None:
     ).key_up(Keys.CONTROL).send_keys(Keys.DELETE).perform()
 
 
+# Fields the browser renders as locale-formatted segment boxes rather than as
+# text. Typing into them is not a matter of keystrokes.
+_SEGMENTED_TYPES = {
+    "date": "YYYY-MM-DD",
+    "time": "HH:MM",
+    "datetime-local": "YYYY-MM-DDTHH:MM",
+    "month": "YYYY-MM",
+    "week": "YYYY-Www",
+}
+
+# React keeps its own record of the last value it wrote and ignores a plain
+# assignment, so the write has to go through the prototype's own setter for the
+# framework to notice it changed.
+_SET_VALUE_JS = """
+const el = arguments[0], value = arguments[1];
+const proto = el instanceof HTMLTextAreaElement
+  ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+el.dispatchEvent(new Event('input', {bubbles: true}));
+el.dispatchEvent(new Event('change', {bubbles: true}));
+return el.value;
+"""
+
+
 def input(session: BrowserSession, cmd) -> dict:
     element = resolve_one(session, cmd, state="visible")
+
+    field_type = ""
+    try:
+        field_type = (element.get_attribute("type") or "").lower()
+    except WebDriverException:
+        pass
+    if field_type in _SEGMENTED_TYPES:
+        return _set_segmented(session, cmd, element, field_type)
+
     try:
         if cmd.clear:
             _clear_field(session, element)
@@ -164,6 +197,34 @@ def input(session: BrowserSession, cmd) -> dict:
             f"could not type into {describe(cmd)}: {exc.msg or exc}",
         ) from exc
     return {"target": describe(cmd), "value": _field_value(element)}
+
+
+def _set_segmented(session: BrowserSession, cmd, element, field_type: str) -> dict:
+    """Write a date/time field instead of typing into it.
+
+    `send_keys` feeds the browser's *locale* segments, not the ISO value: on an
+    en-US date input "2026-08-03" arrives as 60803-02-20, because the dashes are
+    consumed as segment separators and the digits shift. The field then submits
+    silently wrong. Setting the value is the only reliable route.
+    """
+    try:
+        landed = session.driver.execute_script(_SET_VALUE_JS, element, cmd.value)
+    except WebDriverException as exc:
+        raise OpError(
+            "not_interactable",
+            f"could not set {describe(cmd)}: {exc.msg or exc}",
+        ) from exc
+
+    if landed != cmd.value:
+        # An <input type=date> silently empties itself when handed something it
+        # cannot parse, which would otherwise look like a successful write.
+        raise OpError(
+            "not_interactable",
+            f"{describe(cmd)} is a {field_type} input and rejected "
+            f"{cmd.value!r} (it now holds {landed!r}); it needs the format "
+            f"{_SEGMENTED_TYPES[field_type]}",
+        )
+    return {"target": describe(cmd), "value": landed, "set_directly": True}
 
 
 def _field_value(element) -> str | None:

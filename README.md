@@ -167,6 +167,21 @@ grows.
 
 Full details and the traps behind them: [guidelines/messenger.md](guidelines/messenger.md).
 
+## Console and network
+
+The DOM cannot tell you why a request failed. These can:
+
+```bash
+curl -s localhost:8765/command -d '{"op":"read_network","failures_only":true}'
+curl -s localhost:8765/command -d '{"op":"read_console","levels":["error"]}'
+```
+
+`read_console` captures from **document start**, so a reload hands back what the
+page logged while loading — uncaught errors and unhandled rejections included.
+`read_network` returns each request with its status, duration, and size;
+`failures_only` keeps the 4xx/5xx and anything the browser would not disclose.
+Both take a `pattern` regex.
+
 ## Two ways to read a page
 
 `find` returns element **shells** — each match's own tag and attributes, with all
