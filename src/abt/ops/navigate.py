@@ -38,4 +38,5 @@ def _history(session: BrowserSession, action: str) -> dict:
     code = session.error_page_code()
     if code:
         raise OpError("navigation_failed", f"{action} landed on a chrome error: {code}")
+    session.settle()
     return session.location()

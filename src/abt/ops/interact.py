@@ -92,6 +92,56 @@ return el.tagName.toLowerCase()
 """
 
 
+# Selenium judges an element by its own state -- displayed, enabled -- and not
+# by what is painted on top of it. When something else is, the click can be
+# dispatched and swallowed, and the op reports success having done nothing.
+# That is the worst answer an agent can be handed, so hit-test first: whatever
+# sits at the element's centre must be the element, an ancestor of it (a label
+# wrapping its input), or a descendant (the span inside a button).
+_HIT_TEST_JS = """
+const el = arguments[0];
+const r = el.getBoundingClientRect();
+if (!r.width && !r.height) { return {ok: false, reason: 'zero size'}; }
+const x = r.left + r.width / 2, y = r.top + r.height / 2;
+// Off-screen centres are not this check's business: the caller already scrolled
+// the element into view, and a partially visible target is still clickable.
+if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
+  return {ok: true};
+}
+const top = document.elementFromPoint(x, y);
+if (!top || top === el || el.contains(top) || top.contains(el)) { return {ok: true}; }
+return {ok: false, hit: top.tagName.toLowerCase()
+  + (top.id ? '#' + top.id : '')
+  + (top.className && typeof top.className === 'string'
+      ? '.' + top.className.trim().split(/\\s+/).slice(0, 2).join('.') : '')};
+"""
+
+
+def _require_hit(session: BrowserSession, element, cmd) -> None:
+    """Refuse a click that would land on something other than its target.
+
+    Never invents a failure: any trouble running the test is treated as a pass,
+    because this exists to catch a silent success, not to add a new way to fail.
+    """
+    try:
+        verdict = session.driver.execute_script(_HIT_TEST_JS, element)
+    except WebDriverException:
+        return
+    if not isinstance(verdict, dict) or verdict.get("ok"):
+        return
+    if verdict.get("reason") == "zero size":
+        raise OpError(
+            "not_interactable",
+            f"{describe(cmd)} has no size on screen, so a click cannot reach it",
+        )
+    raise OpError(
+        "not_interactable",
+        f"{describe(cmd)} is covered by {verdict.get('hit')}, which would receive "
+        "the click instead. Pass force:true to dispatch it anyway, or new_tab:true "
+        "if the target is a link",
+    )
+
+
 def click(session: BrowserSession, cmd) -> dict:
     if cmd.at is not None:
         return _click_at(session, cmd)
@@ -109,6 +159,11 @@ def click(session: BrowserSession, cmd) -> dict:
             "not_interactable",
             f"{describe(cmd)} is disabled; force defeats occlusion, not intent",
         )
+
+    if not cmd.force:
+        # force exists precisely to click through an overlay, so it skips the
+        # test rather than being blocked by it.
+        _require_hit(session, element, cmd)
 
     try:
         element.click()
@@ -244,14 +299,81 @@ return el.value;
 """
 
 
+# chromedriver refuses send_keys to an element with no size, file input or not,
+# so the input has to exist on screen for the instant the path is written. It is
+# given a 5px corner at 1% opacity, then put back exactly as it was -- a page
+# left mutated would show up as a phantom change in the next diff.
+UNHIDE_FILE_INPUT_JS = """
+const el = arguments[0];
+const previous = el.style.cssText;
+el.style.cssText = 'display:block !important; visibility:visible !important;'
+  + 'opacity:0.01 !important; position:fixed !important; top:0; left:0;'
+  + 'width:5px; height:5px; z-index:99999;';
+return previous;
+"""
+
+_RESTORE_STYLE_JS = "arguments[0].style.cssText = arguments[1] || '';"
+
+
+def _write_hidden_file(session: BrowserSession, cmd, element) -> dict:
+    """Write a path to a file input that is hidden by design."""
+    try:
+        previous = session.driver.execute_script(UNHIDE_FILE_INPUT_JS, element)
+    except WebDriverException:
+        previous = ""
+    try:
+        element.send_keys(cmd.value)
+    except WebDriverException as exc:
+        raise OpError(
+            "not_interactable",
+            f"could not stage {cmd.value!r} on {describe(cmd)}: {exc.msg or exc}",
+        ) from exc
+    finally:
+        try:
+            session.driver.execute_script(_RESTORE_STYLE_JS, element, previous)
+        except WebDriverException:
+            pass
+    return {"target": describe(cmd), "value": _field_value(element), "staged": True}
+
+
+def _hidden_file_input(session: BrowserSession, cmd, original: OpError):
+    """Recover a file input that failed the visibility gate.
+
+    Uploads are the one control the web hides on purpose: the standard pattern
+    styles a custom button and keeps the real `<input type=file>` at
+    display:none, so requiring it to be visible means it can never be used. A
+    path can be written to it hidden -- nothing else can, so nothing else gets
+    this exemption, and anything that is not a file input re-raises untouched.
+    """
+    try:
+        element = resolve_one(session, cmd, state="present")
+        if (element.get_attribute("type") or "").lower() == "file":
+            return element
+    except (OpError, WebDriverException):
+        pass
+    raise original
+
+
 def input(session: BrowserSession, cmd) -> dict:
-    element = resolve_one(session, cmd, state="visible")
+    try:
+        element = resolve_one(session, cmd, state="visible")
+    except OpError as exc:
+        return _write_hidden_file(session, cmd, _hidden_file_input(session, cmd, exc))
 
     field_type = ""
     try:
         field_type = (element.get_attribute("type") or "").lower()
     except WebDriverException:
         pass
+
+    # Every file input goes through the staged writer, however it was targeted.
+    # A `ref` resolves straight out of the cache without a visibility check, so
+    # a hidden upload reaches here rather than raising -- which meant the ref
+    # the actionable track hands out for an upload was the one way of reaching
+    # it that did not work.
+    if field_type == "file":
+        return _write_hidden_file(session, cmd, element)
+
     if field_type in _SEGMENTED_TYPES:
         return _set_segmented(session, cmd, element, field_type)
 

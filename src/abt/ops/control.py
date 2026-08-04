@@ -65,13 +65,14 @@ def diff(session: BrowserSession, cmd) -> dict:
     after = session.snapshot()
     session.set_baseline(after)
     url_after = session.driver.current_url
+    navigated = page_key(entry["url"]) != page_key(url_after)
     payload = {
         "baseline": "present",
         "tab_id": tab_id,
         "url_before": entry["url"],
         "url_after": url_after,
     }
-    if page_key(entry["url"]) != page_key(url_after):
+    if navigated:
         payload["navigation"] = True
         payload["note"] = (
             "the page changed since the baseline; text is the new page in full, "
@@ -86,6 +87,15 @@ def diff(session: BrowserSession, cmd) -> dict:
         )
         if cmd.element_diff:
             payload["elements"] = diff_html(entry["dom"], after["dom"], cmd.max_tokens)
+
+        # Imported here: the op registry imports this module, so importing
+        # the registry at module scope would close the loop.
+        from . import actionable_report
+
+        if cmd.actionable:
+            controls = actionable_report(session, entry.get("actionable", []), after)
+            if controls is not None:
+                payload["actionable"] = controls
     return payload
 
 

@@ -34,6 +34,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 from .browser import BrowserSession
+from .ops.interact import UNHIDE_FILE_INPUT_JS
 from .errors import OpError
 
 # This endpoint types into whatever it finds and then presses Enter. Pointing it
@@ -216,11 +217,9 @@ def _download(link: str, scratch: Path) -> Path:
 
 # --- page plumbing ------------------------------------------------------------
 
-_UNHIDE_JS = """
-arguments[0].style.cssText = 'display:block !important; visibility:visible !important;'
-  + 'opacity:0.01 !important; position:fixed !important; top:0; left:0;'
-  + 'width:5px; height:5px; z-index:99999;';
-"""
+# Shared with the generic `input` op, which needs the same trick for any page
+# that hides its upload behind a custom control.
+_UNHIDE_JS = UNHIDE_FILE_INPUT_JS
 
 # One probe for both halves of "is the upload done": how many attachment
 # previews are staged, and is anything still spinning.

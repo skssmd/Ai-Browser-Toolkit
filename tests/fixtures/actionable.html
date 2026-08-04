@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>actionable</title>
+<style>
+  #menu { display: none; }
+  #menu.open { display: block; }
+  /* The standard upload pattern: the real input is hidden and a custom
+     control is shown in its place. */
+  input[type=file] { display: none; }
+  .cover { position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 999; }
+</style>
+
+<button id="open">Insert</button>
+
+<div id="menu">
+  <div role="menuitem" tabindex="0">Chart</div>
+  <div role="menuitem" tabindex="0">Pivot table</div>
+  <button disabled>Macro</button>
+  <span>Not a control</span>
+  <button aria-label=""></button>
+</div>
+
+<label for="upload">Attach a photo</label>
+<input id="upload" type="file" multiple>
+
+<input type="file" name="bare_upload">
+
+<p id="plain">Static paragraph</p>
+
+<button id="reveal-overlay">Cover everything</button>
+<a id="under" href="#nowhere">Link beneath the overlay</a>
+
+<script>
+  document.getElementById('open').addEventListener('click', () => {
+    document.getElementById('menu').classList.add('open');
+  });
+  document.getElementById('reveal-overlay').addEventListener('click', () => {
+    const cover = document.createElement('div');
+    cover.className = 'cover';
+    cover.id = 'blocker';
+    document.body.appendChild(cover);
+  });
+</script>

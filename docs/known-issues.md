@@ -96,20 +96,155 @@ error, which is why the guideline prefers it.
 there is no stdin to answer with. It now defaults to chrome when
 `sys.stdin.isatty()` is false, and still prompts for a human.
 
-## Open
-
-### 7. A click can report `ok: true` and do nothing
+### 7. A click could report `ok: true` and do nothing — fixed 2026-08-04
 
 Seen on `hr.dataclans.com`: with the site's own error dialog open, a
 `click {"text": "Create Employee"}` returned `ok: true`, made no request, and
 changed nothing.
 
-**Not diagnosed** — this is an observation, not a root cause, and issue 3 above
-may have been part of it. Worth reproducing deliberately: does
-`element_to_be_clickable` actually reject an element covered by an overlay, and
-what does a click dispatched on a covered element report?
+Root cause: `element_to_be_clickable` judges an element by its *own* state —
+displayed, enabled — and never asks what is painted over it. An overlay at a
+higher z-index therefore passes the gate, swallows the click, and the op
+reports success. Issue 3 was a separate symptom of the same blind spot.
 
-"Succeeded and changed nothing" is the worst failure an agent can be handed, so
-this matters more than its size suggests.
+`interact.click` now hit-tests before dispatching: `elementFromPoint` at the
+target's centre must return the element, an ancestor of it (a `<label>` wrapping
+its input), or a descendant (the `<span>` inside a button). Anything else raises
+`not_interactable` naming what would have received the click instead.
 
-*(Issue 8, no coordinate click, is fixed — see below.)*
+`force: true` skips the test, because clicking through an overlay is exactly
+what force is for. Any failure *running* the test counts as a pass — this
+exists to catch a silent success, not to invent a new way to fail.
+
+Covered by `tests/test_hit_test.py`.
+
+### 9. A dead ref could silently hit a different element — fixed 2026-08-04
+
+`RefCache.invalidate` dropped the ref table *and reset the counter*, so the next
+`find` after a navigation started again at `el_0`. Anything still holding `el_0`
+from the previous page then resolved — to a completely unrelated element on the
+new one. Confirmed by driving the pre-fix `RefCache` directly:
+
+```
+page one: find allocated 'el_0' -> BUTTON ON PAGE ONE
+page two: find allocated 'el_0' -> BUTTON ON PAGE TWO
+holding the OLD 'el_0' now resolves to: BUTTON ON PAGE TWO
+```
+
+This is precisely what `stale_ref` exists to prevent, and the guarantee the
+README makes ("it never quietly hits a different element"). It stayed hidden
+because the test for it used a dead ref *before* anything reallocated, which is
+the one order where the bug cannot show.
+
+The counter now survives navigation and is dropped only when the tab closes, so
+a name is never reused within a tab's life. Ref numbers climb over a long
+session; that is the cheaper problem by a wide margin.
+
+*Found while adding the actionable track (issue 10), which allocates refs after
+an op and so hit the collision immediately.*
+
+### 10. Nothing connected the text diff to what could be clicked — fixed 2026-08-04
+
+The text diff said *what appeared*; acting on any of it still meant a `find` to
+turn a string into something addressable. Every action cost an extra round trip
+and an extra model turn.
+
+The snapshot now has a third track. In the same `TreeWalker` pass, interactive
+elements are collected with their role and accessible name, and the diff reports
+the ones that are new, each with a ref:
+
+```json
+"text": {"added": ["Chart", "Pivot table"], "removed_count": 0},
+"actionable": {"added": [{"ref": "el_7", "role": "menuitem", "name": "Pivot table"}]}
+```
+
+Two rules keep it a decoration on the text track rather than a second inventory:
+
+* **A control with no accessible name is dropped.** Text is the anchor; an entry
+  the agent cannot tie to something it has read is noise.
+* **It never runs after a navigation.** On a new document every control is
+  "new", so the diff degenerates into a listing of the whole page — which the
+  text track already returned in full.
+
+*Caught while measuring:* the first version returned every collected element
+handle on every snapshot and cost **+52%** on a diffed op (26.5 ms → 40.4 ms on
+a 400-element page). Handles are now parked on the page in `window.__abtActionable`
+and only the few positions the diff actually picked are fetched, and the
+per-element checks were reordered cheapest-first.
+
+### 11. A hidden file input could not be used — fixed 2026-08-04
+
+The standard upload pattern hides the real `<input type=file>` and fronts it
+with a custom control that validates or resizes. `input` resolved its target
+with `state="visible"`, so the one element that must receive the path was the
+one element it refused to touch.
+
+Two changes. The actionable track exempts file inputs from "must be rendered" —
+the sole exception, since nothing else is both invisible and unreachable by
+other means. And `input` falls back to a `present` lookup when the visible one
+fails, confirms the target really is a file input, then borrows the unhide trick
+`messenger.py` already used (`UNHIDE_FILE_INPUT_JS`, now shared rather than
+duplicated) — and restores the original style afterwards, which the Messenger
+version does not, so the next diff does not report a phantom change.
+
+An ordinary missing or hidden field still reports its real error; the exemption
+checks the type before it applies.
+
+### 12. A navigation reported the spinner as the page — fixed 2026-08-04
+
+Found by watching a blind agent drive `hr.dataclans.com`. Every `goto` came back
+with the same 19 strings: navigation chrome plus `Loading dashboard...`,
+`Processing`, `Please wait while we process your request.` The staff list was
+not in there. The agent re-read the body after every navigation — and was right
+to, because the diff genuinely did not contain the answer.
+
+`driver.get` returns when the *document* has loaded. On a React app that is the
+instant a spinner mounts and nothing else has rendered, so the snapshot
+photographed a loading state and `page_text` labelled it "the full page you
+landed on".
+
+It survived 261 passing tests because every fixture was complete at load —
+nothing in the suite had ever rendered after load. `tests/fixtures/late.html`
+and `slowfetch.html` now do, and the test server understands `?delay=` so a
+fetch can be made genuinely slow.
+
+`BrowserSession.settle()` waits on **two** signals before snapshotting, and
+neither is sufficient alone:
+
+* **No request in flight**, and none finished in the last 150 ms. This is the
+  one that matters on a real app: while a slow fetch is outstanding the DOM
+  holds *perfectly* still, so a DOM-only check calls the spinner settled. An
+  in-flight counter patched over `fetch` and `XMLHttpRequest` is installed at
+  document start, the same way console capture is. Completion counts whatever
+  the status — a 404 or a dropped connection ends a request just as a 200 does,
+  and waiting for success would hang on every page with a failing call.
+* **A DOM that has stopped changing** for 350 ms. Catches a render that owes
+  nothing to the network, which the counter cannot see at all. The window has to
+  be this wide because a page that has not *started* rendering looks exactly
+  like one that has *finished*.
+
+Verified load-bearing by disabling the network term: exactly the two fetch tests
+fail and the DOM-quiet ones still pass.
+
+### 13. The ref for a hidden upload was the one thing that could not use it — fixed 2026-08-04
+
+Also from the blind run:
+
+```
+input ref='el_14'              FAIL  not_interactable: has no size and location
+input css='input[type=file]'   ok
+```
+
+Same element. `targeting.resolve_one` returns a `ref` straight from the cache
+without a visibility check, so `state="visible"` never raised, so the
+`_hidden_file_input` fallback added earlier the same day never fired, and
+`send_keys` hit the raw Selenium error.
+
+The irony was exact: the actionable track exists to hand out a ref for the
+hidden upload, and a ref was the one way of reaching it that did not work.
+`input` now routes **every** file input through the staged writer regardless of
+how it was targeted.
+
+## Open
+
+*(none currently)*

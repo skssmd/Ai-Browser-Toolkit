@@ -6,6 +6,8 @@ import functools
 import http.server
 import tempfile
 import threading
+import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,24 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):  # keep the test output readable
         pass
+
+    def do_GET(self):
+        """Support `?delay=0.8` so a fixture can model a slow API call.
+
+        Everything served here is local and instant, which is precisely the
+        condition under which a broken settle check still looks correct. A
+        request that actually takes a while is the only way to prove the
+        in-flight counter is doing the work.
+        """
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        if "delay" in params:
+            try:
+                time.sleep(min(float(params["delay"][0]), 5.0))
+            except ValueError:
+                pass
+        self.path = parsed.path
+        super().do_GET()
 
 
 @pytest.fixture(scope="session")

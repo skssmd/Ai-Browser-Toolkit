@@ -44,12 +44,37 @@ you need, drive the page with the ops directly.
   `find` then `click {"ref": "el_0"}` — no re-selecting.
 - Refs die on navigation or when the element leaves the DOM. A dead ref returns
   `stale_ref`, never silently hits a different element.
+- Numbering never restarts, so ref numbers climb through a session. That is
+  deliberate: a reused name would let a new page's `el_0` answer to a handle you
+  were holding for the old one. Do not read meaning into the numbers.
+- The `actionable` track on a diff also hands out refs — see below. Reaching for
+  `find` right after a click is usually a wasted round trip.
 
 ## Diffs: your primary feedback loop
 
+> **Trust the diff. Do not re-read the page to check what a command did.**
+>
+> This is the most common and most expensive mistake made with this toolkit: a
+> click succeeds, returns a `dom_diff` saying exactly what changed — and the
+> agent then fires `get_text {"css": "body"}` or a broad `find_full` to "see
+> what happened". You already have what happened. That follow-up costs a round
+> trip and can cost tens of thousands of tokens on a real page, to learn what
+> was in the response you just received.
+>
+> The diff is the designed answer to "what did that do", it is snapshotted from
+> the live DOM either side of the command, and it is the most heavily tested
+> part of this codebase. It is not a hint to be confirmed. **Read it and act.**
+>
+> This is worth stating plainly because it was once untrue: navigations used to
+> snapshot before a single-page app had rendered, so the diff came back holding
+> a spinner and agents learned, correctly, to re-read the page. Navigation now
+> waits for the network to go idle and the DOM to stop moving before it looks.
+> If you still see `Loading…` in a diff, that is a bug worth reporting, not a
+> reason to go back to reading the body.
+
 Interactive ops (`click input press select hover scroll wait_for run_js`) and
 navigation ops (`goto back forward reload`) snapshot the page before/after and
-return `dom_diff`. This is how you see what an action *did*, in real time. Two
+return `dom_diff`. This is how you see what an action *did*, in real time. Three
 tracks:
 
 **`text` — always on, no budget.** The strings that appeared on screen, one
@@ -76,6 +101,43 @@ So you do **not** need a `find` or `get_text` just to see what is on a page you
 just opened; read `dom_diff.text.added` and act. The element track is skipped
 here.
 
+**`actionable` — on by default.** The controls among those additions, each with
+a **ref you can act on immediately**. This is the shortest path in the toolkit:
+click, read what appeared, click the thing that appeared — no `find` in between.
+
+```json
+{"op": "click", "css": "#insert-menu"}
+→ "text":       {"added": ["Chart", "Pivot table", "Macro"]},
+  "actionable": {"added": [
+     {"ref": "el_7", "role": "menuitem", "name": "Chart"},
+     {"ref": "el_9", "role": "button",   "name": "Macro", "disabled": true}]}
+
+{"op": "click", "ref": "el_7"}
+```
+
+Every `name` here is also a string in `text.added`, so the two line up — read
+the text to decide, use the ref to act. `role` tells you what a thing is when
+the label alone is ambiguous, and `disabled` warns you off a control that has
+appeared but is not ready.
+
+Two things it deliberately does not do. It **skips navigations**, because on a
+new page every control is "new" and the list would just be the page again — use
+`find` after you land. And it **drops controls with no accessible name**, so you
+never get a ref you cannot tie to something you read.
+
+The exception worth knowing: **file inputs are reported even when invisible**.
+Sites hide the real `<input type=file>` behind a custom uploader, so the element
+you must send a path to is never the one on screen. Look for `role: "file"`,
+then write the path straight to it — `input` handles the hiding for you:
+
+```json
+{"op": "input", "ref": "el_4", "value": "C:/shots/page.png"}
+```
+
+Unlike the text track this one is not free — roughly a quarter again on a diffed
+op. Pass `"actionable": false` on batch steps whose new controls you will never
+click.
+
 **`elements` — pass `element_diff: true`.** The line-per-element unified diff
 with tags, ids, classes, and attributes. Reach for it when the change was an
 attribute with no visible text, or when you need a selector for something the
@@ -91,15 +153,42 @@ text track told you appeared. Budget it with `diff_max_tokens` (per command) or
   `{"op": "diff"}` to catch async SPA updates. The manual `diff` is explicit, so
   it returns everything by default: both tracks, removals listed.
 
+### When the diff looks empty
+
+An empty diff is the one case that tempts you back into re-reading the page.
+Do not. An empty `text.added` has three possible causes, and each has a cheaper
+answer than dumping the body:
+
+1. **The change had no visible text** — a class flip, `aria-expanded`, a
+   `data-` attribute. The text track drops exactly that churn on purpose, which
+   is why it stays clean. Ask for the element track instead:
+   `{"op": "click", "css": "…", "element_diff": true}`.
+2. **The change has not landed yet** — an SPA that updates after the command
+   returned. Take a second look with `{"op": "diff"}`, which compares against
+   the state the last command left behind. That is what it is for.
+3. **Nothing actually happened** — a real outcome, and worth knowing. Before
+   this was reported honestly, a click could be swallowed by an overlay and
+   still return `ok: true`; `click` now hit-tests first and raises
+   `not_interactable` naming what covered it. So `ok: true` with an empty diff
+   now genuinely means the click landed and the page did not react.
+
+`get_text {"css": "body"}` answers none of these better than the three commands
+above, and costs more than all of them together.
+
 **Rule of thumb:** verify *effects* with the diff, not with screenshots or
 external downloads. Downloads and exports lag; the diff is live.
+
+**The loop, in one line:** act, read `dom_diff.text.added` to see what appeared,
+act on `dom_diff.actionable.added[].ref` to use it. A `find` between those steps
+is usually a round trip you did not need.
 
 ## Types of work
 
 - **Reading a page:** `find` shells → `find_full` the interesting ones →
   `get_text`/`get_html` for specifics. `run_js` for anything the ops don't cover.
 - **Typing:** `input` clears then types into a **visible** target (use
-  `"clear": false` to append). `press` sends keystrokes to whatever has focus —
+  `"clear": false` to append). The one exception is `<input type=file>`, which
+  sites hide on purpose — `input` writes a path to it anyway. `press` sends keystrokes to whatever has focus —
   use it when there is no visible input element (see google-docs.md).
 - **Press chords:** `press` accepts `ctrl+v`, `ctrl+alt+1`, `shift+enter`, …
   modifiers are `ctrl/control`, `shift`, `alt/option`, `meta/command/cmd/windows`.

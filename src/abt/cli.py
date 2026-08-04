@@ -333,6 +333,23 @@ def logs(
 
 
 @app.command()
+def mcp(
+    api: str = typer.Option(
+        "http://127.0.0.1:8765", "--api", help="Where the toolkit server is listening."
+    ),
+) -> None:
+    """Speak MCP on stdin/stdout, forwarding to a running toolkit server.
+
+    Meant to be spawned by an MCP client, not run by hand. It owns nothing:
+    `abt serve` keeps the browser, so this can come and go with your editor
+    while the session, tabs and logins stay put.
+    """
+    from . import mcp as mcp_module
+
+    mcp_module.serve(api)
+
+
+@app.command()
 def shutdown(port: int = _port_option()) -> None:
     """Close the browser and stop the server."""
     _call(port, "/command", {"op": "shutdown"})

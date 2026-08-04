@@ -58,15 +58,23 @@ def test_a_ref_from_find_can_be_acted_on(clean_session, base_url):
     assert run(clean_session, op="input", ref=ref, value="via-ref")["value"] == "via-ref"
 
 
-def test_refs_are_numbered_from_zero(clean_session):
+def _number(ref: str) -> int:
+    return int(ref.removeprefix("el_"))
+
+
+def test_refs_are_numbered_consecutively(clean_session):
+    """Absolute numbers are not the contract -- the counter runs for the tab's
+    life so names are never reused. Consecutive allocation is."""
     refs = [m["ref"] for m in run(clean_session, op="find", css=".card")["matches"]]
-    assert refs == ["el_0", "el_1", "el_2"]
+    assert len(refs) == 3
+    first = _number(refs[0])
+    assert [_number(r) for r in refs] == [first, first + 1, first + 2]
 
 
 def test_a_second_find_keeps_allocating(clean_session):
-    run(clean_session, op="find", css=".card")
+    first = run(clean_session, op="find", css=".card")["matches"]
     more = run(clean_session, op="find", css="#p1")["matches"]
-    assert more[0]["ref"] == "el_3"
+    assert _number(more[0]["ref"]) == _number(first[-1]["ref"]) + 1
 
 
 def test_refs_die_on_navigation(clean_session, base_url):
@@ -92,7 +100,19 @@ def test_unknown_ref_is_stale_not_silent(clean_session):
     assert caught.value.type == "stale_ref"
 
 
-def test_ref_numbering_restarts_after_navigation(clean_session, base_url):
-    run(clean_session, op="find", css=".card")
+def test_ref_names_are_never_reused_after_navigation(clean_session, base_url):
+    """A new document must not answer to the old one's ref names.
+
+    Numbering deliberately does not restart. If it did, the new page's el_0
+    would resolve for a caller still holding el_0 from the page before it --
+    the silent wrong-element hit that stale_ref exists to prevent.
+    """
+    old = run(clean_session, op="find", css=".card")["matches"][0]["ref"]
     run(clean_session, op="goto", url=f"{base_url}/form.html")
-    assert run(clean_session, op="find", css="#name")["matches"][0]["ref"] == "el_0"
+
+    fresh = run(clean_session, op="find", css="#name")["matches"][0]["ref"]
+    assert fresh != old
+
+    with pytest.raises(OpError) as caught:
+        run(clean_session, op="click", ref=old)
+    assert caught.value.type == "stale_ref"

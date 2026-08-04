@@ -51,12 +51,21 @@ class RefCache:
         return element
 
     def invalidate(self, tab_id: str) -> None:
-        """Drop every ref for a tab. Called whenever the tab navigates."""
+        """Drop every ref for a tab. Called whenever the tab navigates.
+
+        The counter deliberately survives, so names are never reused within a
+        tab's life. If numbering restarted, the new page's el_0 would answer to
+        a caller still holding el_0 from the old one -- the silent wrong-element
+        hit that stale_ref exists to prevent. Names climbing into the thousands
+        on a long session is the cheaper problem.
+        """
         self._tabs.pop(tab_id, None)
-        self._counters.pop(tab_id, None)
 
     def drop_tab(self, tab_id: str) -> None:
+        """Forget a closed tab entirely. Tab ids are never reissued, so the
+        counter can go with it."""
         self.invalidate(tab_id)
+        self._counters.pop(tab_id, None)
 
     def count(self, tab_id: str) -> int:
         return len(self._tabs.get(tab_id, {}))

@@ -64,11 +64,17 @@ class Diffable(Base):
     or when the change was an attribute with no visible text at all.
     `diff_max_tokens` budgets that element diff, and supplying it implies
     `element_diff` since a budget for something you did not ask for is a typo.
+
+    `actionable` is the ref-and-role decoration on the text track, on by
+    default. Unlike the text track it is not free -- it costs roughly a quarter
+    again on top of a diffed op -- so it can be switched off for the commands in
+    a batch whose new controls you are never going to click.
     """
 
     diff: bool | None = None
     include_removed: bool = False
     element_diff: bool = False
+    actionable: bool = True
     diff_max_tokens: int | None = Field(default=None, ge=1, le=100_000)
 
     @model_validator(mode="after")
@@ -291,6 +297,7 @@ class Diff(Base):
     reset: bool = False
     include_removed: bool = True
     element_diff: bool = True
+    actionable: bool = True
     max_tokens: int = Field(default=1000, ge=1, le=100_000)
 
 

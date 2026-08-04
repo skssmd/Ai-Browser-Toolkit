@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>slow fetch</title>
+<!--
+  The case a DOM-only settle check gets wrong. The document finishes loading
+  with a spinner, then fetches before rendering anything. While that request is
+  outstanding the DOM holds *perfectly* still, so "nothing has changed for a
+  while" reads as "the page is ready" and the diff reports the spinner.
+
+  Only the in-flight request count can tell these apart.
+-->
+<div id="app">
+  <p>Loading dashboard...</p>
+  <p>Please wait while we process your request.</p>
+</div>
+
+<script>
+  // Two chained requests, so the gap between them also has to be tolerated:
+  // the counter drops to zero briefly before the second one starts.
+  fetch('cards.html?delay=0.8')
+    .then(() => fetch('links.html?delay=0.5'))
+    .then(() => {
+      document.getElementById('app').innerHTML =
+        '<h1>Fetched report</h1>' +
+        '<p>Revenue: $88,000</p>' +
+        '<button id="export">Export</button>';
+    });
+</script>

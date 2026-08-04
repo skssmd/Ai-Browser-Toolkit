@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..browser import BrowserSession
-from ..diff import diff_html, diff_text, page_key, page_text
+from ..diff import diff_actionable, diff_html, diff_text, page_key, page_text
 from ..errors import OpError
 from . import control, inspect, interact, navigate, read, tabs
 
@@ -81,6 +81,55 @@ def dispatch(session: BrowserSession, cmd) -> Any:
     return result
 
 
+def actionable_report(
+    session: BrowserSession,
+    before: list[dict],
+    after: dict,
+) -> dict | None:
+    """Refs and roles for the controls that just appeared, or None if none did.
+
+    This decorates the text track, it does not compete with it: every entry
+    carries the same string the text diff already reported, plus the role that
+    says what it is and the ref that acts on it. Controls with no name never
+    reach here -- the snapshot drops them -- so nothing is handed back that the
+    agent cannot tie to something it has read.
+
+    Deliberately not run after a navigation. On a new document every control is
+    "new", so the diff degenerates into a full inventory of the page -- which
+    the text track already handed over in full, and which would spend a ref on
+    every control to say it. The value here is precision: you clicked, three
+    things appeared, here they are.
+    """
+    entries, indices, truncated = diff_actionable(before, after["actionable"])
+    if not entries:
+        return None
+
+    # Only now, knowing the handful that matter, are live handles fetched.
+    elements = session.actionable_elements(indices)
+    if not elements:
+        return None
+
+    # Ref allocation is a convenience, never the point of the command: a driver
+    # that will not hand back handles must not turn a successful click into a
+    # failure.
+    try:
+        refs = session.refs.allocate(session.active_tab, elements)
+    except Exception:
+        return None
+
+    added = []
+    for entry, ref in zip(entries, refs):
+        item = {"ref": ref, "role": entry["role"], "name": entry["name"]}
+        if entry.get("disabled"):
+            item["disabled"] = True
+        if entry.get("multiple"):
+            item["multiple"] = True
+        added.append(item)
+    if not added:
+        return None
+    return {"added": added, "truncated": truncated}
+
+
 def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     """Run an interactive op, then report what it changed on the page.
 
@@ -97,6 +146,13 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         session.set_baseline(after)
         raise
 
+    # A click that redirected has landed on a document that may still be
+    # rendering, exactly like a goto. Settle before looking, or the diff reports
+    # the destination's spinner as though it were the destination.
+    navigated = page_key(url_before) != page_key(session.driver.current_url)
+    if navigated:
+        session.settle()
+
     after = session.snapshot()
     session.set_baseline(after)
     if not isinstance(result, dict):
@@ -104,7 +160,7 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
 
     url_after = session.driver.current_url
     info = {"url_before": url_before, "url_after": url_after}
-    if page_key(url_before) != page_key(url_after):
+    if navigated:
         # The click redirected. The old document is gone, so there is nothing to
         # diff -- but the question the caller was asking ("what am I looking at
         # now?") still has an answer, and it is the new page's text.
@@ -121,6 +177,11 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         if cmd.element_diff:
             budget = cmd.diff_max_tokens or session.diff_max_tokens
             info["elements"] = diff_html(before["dom"], after["dom"], budget)
+
+        if getattr(cmd, "actionable", True):
+            controls = actionable_report(session, before["actionable"], after)
+            if controls is not None:
+                info["actionable"] = controls
     result["dom_diff"] = info
     return result
 
@@ -145,10 +206,11 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     if not isinstance(result, dict):
         return result
 
-    result["dom_diff"] = {
+    info = {
         "url_after": session.driver.current_url,
         "navigation": True,
         "note": "text is the full page you landed on, not a diff",
         "text": page_text(after["text"], before["text"], cmd.include_removed),
     }
+    result["dom_diff"] = info
     return result

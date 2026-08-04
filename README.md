@@ -5,9 +5,14 @@ sending JSON. The server process is the loop: it opens the chosen browser with a
 profile, stays up waiting for commands, and only stops when you send `shutdown`.
 
 > **Agents: read [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md)
-> before driving anything, and the site playbooks in
-> [`guidelines/`](guidelines/README.md) for the site you touch.** They encode
-> the concepts and the traps so you skip the trial-and-error.
+> before driving anything.** Not "if your site looks tricky", not "if there is a
+> playbook for it" — always. Most sites have no playbook, and that file is the
+> whole answer for them. Then, only if one exists, add the site playbook from
+> [`guidelines/`](guidelines/README.md).
+>
+> Skipping it costs you the things that are hard to guess: that `find` hands
+> back refs you act on directly, that a click already reports what changed so
+> you need not re-read the page, and that ops can be sent in batches.
 
 > ⚠️ **Licence — attribution is required.** This project is
 > [Apache 2.0](LICENSE). If you use this code, in whole or in part, in your own
@@ -41,7 +46,7 @@ python -m venv .venv
 Check it worked:
 
 ```bash
-.venv/Scripts/python -m pytest -q     # 168 tests, needs Chrome
+.venv/Scripts/python -m pytest -q     # 300 tests, needs Chrome
 ```
 
 The `abt` command lands in the venv. Either activate it
@@ -84,6 +89,7 @@ abt serve --headless                 # no window
 abt serve --port 9000                # another port
 abt serve --profile ~/work-profile   # another profile
 abt serve --no-log --no-diff         # leanest responses
+abt serve --settle-timeout 10        # give a slow SPA longer to render
 ```
 
 Stop it with `abt shutdown` (or `POST {"op":"shutdown"}`), which closes Chrome
@@ -216,6 +222,12 @@ Refs die when the tab navigates or the element leaves the DOM. Using a dead ref
 returns `stale_ref` telling you to search again — it never quietly hits a different
 element. Each tab keeps its own refs.
 
+Numbering does **not** restart after a navigation: the counter runs for the tab's
+life, so `el_0` never means two different elements. That is what makes the
+guarantee above true — if numbering restarted, the new page's `el_0` would answer
+to a handle you were still holding for the old one. Expect the numbers to climb
+over a long session.
+
 ## Targeting
 
 Ops that touch an element take exactly one of `ref`, `css`, `xpath`, or `text`
@@ -231,7 +243,7 @@ snapshotted before and after; the two snapshots `difflib` into what appeared and
 what disappeared. This is the feedback loop — you find out what a command did
 without re-fetching the page.
 
-There are two tracks, and they answer different questions.
+There are three tracks, and they answer different questions.
 
 ### The text track — always on
 
@@ -274,7 +286,18 @@ rewrote itself.
 **When the page navigates, you get the page.** A diff against a document that no
 longer exists is meaningless, but the question behind it — *what am I looking at
 now?* — still has an answer. So `added` becomes the destination's full text
-instead of going empty, and you skip the separate read you would otherwise need:
+instead of going empty, and you skip the separate read you would otherwise need.
+
+The page is **waited for** first. `driver.get` returns when the *document* has
+loaded, which on a single-page app is the moment a spinner mounts and nothing
+else has rendered — so without this the diff reported `Loading dashboard…` /
+`Please wait while we process your request` as though that were the page, and an
+agent learned to distrust it and re-read the body every time. Navigation now
+settles on two signals before snapshotting: **no request in flight** (a slow
+fetch holds the DOM perfectly still, so a DOM-only check would call the spinner
+"done") and **a DOM that has stopped changing** (which catches a render that
+owes nothing to the network). A page that never stops — a poller, a clock —
+costs `--settle-timeout` and then proceeds, because a late diff beats no diff.
 
 ```json
 {"op": "goto", "url": "https://shop.example/cart"}
@@ -323,7 +346,61 @@ never asked for is a typo.
 {"op": "click", "css": "#menu", "include_removed": true}    // list what left too
 {"op": "click", "css": "#menu", "element_diff": true}       // both tracks
 {"op": "click", "css": "#menu", "diff_max_tokens": 20000}   // both, generous budget
+{"op": "click", "css": "#menu", "actionable": false}        // skip refs and roles
 ```
+
+### The actionable track — on by default
+
+**Which of what appeared you can actually click.** The text track hands you
+strings. A string is not addressable, so acting on one used to mean a `find` to
+turn it back into an element. This closes that gap: the interactive elements
+among the additions come back with their role, their name, and a **ref**.
+
+```json
+{"op": "click", "css": "#insert-menu"}
+→ {…, "dom_diff": {
+     "text": {"added": ["Chart", "Pivot table", "Macro"], "removed_count": 0},
+     "actionable": {"added": [
+       {"ref": "el_7", "role": "menuitem", "name": "Chart"},
+       {"ref": "el_8", "role": "menuitem", "name": "Pivot table"},
+       {"ref": "el_9", "role": "button", "name": "Macro", "disabled": true}
+     ], "truncated": false}
+   }}
+
+{"op": "click", "ref": "el_8"}     ← act on it directly; no find in between
+```
+
+`role` is the ARIA role, explicit if the element declares one and implicit from
+the tag otherwise. `name` is the accessible name — `aria-label`, then
+`aria-labelledby`, then the associated `<label>`, then the element's own text.
+`disabled` appears only when the control is disabled, so you can tell "it showed
+up but you cannot use it yet" from "it is ready".
+
+**Text is the anchor.** Every entry's `name` is a string the text track reported
+in the same response, so the two always line up. A control with **no** accessible
+name is dropped entirely rather than handed back as a nameless ref — an entry
+you cannot tie to something you have read is noise.
+
+**It does not run after a navigation.** On a new document every control is new,
+so the diff would degenerate into an inventory of the whole page — which the
+text track already returned in full, and which would burn a ref on every control
+to say it. Use `find` when you land somewhere; use this when something appeared.
+
+**Uploads are the one exception to "must be rendered".** The standard pattern
+hides the real `<input type=file>` behind a custom control that validates or
+resizes, so the element you must send a path to is never the one on screen. File
+inputs are therefore reported even when invisible, with `role: "file"`, a name
+taken from their `<label>` (falling back to `name` or `id`), and `multiple: true`
+when they accept more than one. `input` writes to them hidden:
+
+```json
+{"op": "input", "css": "#upload", "value": "C:/shots/page.png"}
+```
+
+**What it costs.** Unlike the text track this one is not free: about a quarter
+again on top of a diffed op, and more when controls actually appear. Turn it off
+per command with `"actionable": false` for the steps in a batch whose new
+controls you will never click.
 
 ### The manual check
 
@@ -404,6 +481,19 @@ names the intercepting element. Two opt-ins deal with it:
 `force` only defeats occlusion. Hidden and disabled targets are ruled out before
 it engages, so it never fakes input a user could not have given. The result says
 `"forced": true` only when the fallback actually fired.
+
+Without `force`, `click` **hit-tests before it dispatches**: whatever sits at the
+target's centre must be the target, an ancestor of it, or a descendant. Selenium
+judges an element by its own state and never asks what is painted over it, so
+without this check a click could be swallowed by an overlay while the op reported
+`ok: true` — the worst answer an agent can be handed. The error names the
+element that would have received the click instead:
+
+```
+not_interactable: css='a.result' is covered by div#promo-overlay, which would
+receive the click instead. Pass force:true to dispatch it anyway, or
+new_tab:true if the target is a link
+```
 
 `new_tab` reads the target's `href` and opens it in a fresh tab, returning its
 `tab_id`. Nothing is clicked, so an overlay is irrelevant — which makes it the
@@ -508,6 +598,31 @@ abt messenger send "@Yaleed here it is" -t <thread-url> -m Yaleed -a C:/shots/pa
 abt messenger send "step 2 done" -t <thread-url> --async
 abt messenger jobs <job-id>
 ```
+
+## MCP
+
+`abt mcp` serves the ops as typed tools over stdio, for any MCP client — Claude
+Code, Claude Desktop, Cursor, VS Code:
+
+```json
+{"mcpServers": {"browser": {"command": "abt", "args": ["mcp"]}}}
+```
+
+It is a **proxy, not a second server**. `abt serve` still owns the browser, so
+the window, its tabs and its logins outlive your editor — start it first. The
+shim owns nothing and can come and go.
+
+Why bother, when curl already works: driving the toolkit through a shell means
+the model writes each request as a shell command, and it gets them wrong. One
+66-command session against a live site produced five schema errors, every one a
+guessed parameter name — `label` on a `select`, `diff` on a `get_text`, a
+`run_js` script sent as an object. Typed schemas make those unrepresentable, and
+the JSON never meets a shell, which on Windows is its own source of quoting
+failures.
+
+Thirteen tools rather than one per op, since every schema sits in the model's
+context for the whole session. `browser_batch` sends a whole sequence in one
+call, and `browser_command` passes through any raw op the named tools miss.
 
 ## Tests
 

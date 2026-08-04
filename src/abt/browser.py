@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from selenium import webdriver
@@ -15,6 +16,36 @@ from .refs import RefCache
 
 _SUPPORTED_BROWSERS = ("chrome", "edge")
 
+# How long the DOM must hold still before a freshly loaded page counts as
+# settled, and how often to look.
+#
+# The quiet window cannot be short. A page that has not *started* rendering
+# looks exactly like one that has *finished* -- both are simply not changing --
+# so the only way to tell them apart from the DOM alone is to wait longer than
+# the gap between load and first paint. 0.35s bridges a fetch-then-render tick
+# on the apps this was built against, and a static page pays it once per
+# navigation, against the 1-2s the navigation already cost.
+_SETTLE_QUIET = 0.35
+_SETTLE_INTERVAL = 0.05
+
+# After the last response lands the app still has to render it, so idle is not
+# the same as done. A short grace period also absorbs a waterfall, where one
+# response immediately triggers the next request.
+_SETTLE_NETWORK_GRACE = 0.15
+
+# A cheap change fingerprint plus the network counter. Element count and text
+# length both move sharply when a spinner is replaced by real content, and
+# neither forces a reflow the way innerText would.
+_SETTLE_JS = """
+const b = document.body;
+if (!b) { return 'nobody|0|0|0|999999'; }
+const net = window.__abtNet;
+const inflight = net ? net.inflight : 0;
+const quiet = net ? (Date.now() - net.last) : 999999;
+return document.readyState + '|' + document.getElementsByTagName('*').length
+  + '|' + b.textContent.length + '|' + inflight + '|' + quiet;
+"""
+
 
 class BrowserSession:
     """Owns exactly one browser instance (chrome or edge) for the server's life."""
@@ -27,6 +58,7 @@ class BrowserSession:
         action_timeout: float = 5.0,
         diff_enabled: bool = True,
         diff_max_tokens: int = 1000,
+        settle_timeout: float = 5.0,
     ) -> None:
         browser = browser.lower()
         if browser not in _SUPPORTED_BROWSERS:
@@ -38,6 +70,7 @@ class BrowserSession:
         self.profile = Path(profile).expanduser().resolve()
         self.headless = headless
         self.action_timeout = action_timeout
+        self.settle_timeout = settle_timeout
         self.diff_enabled = diff_enabled
         self.diff_max_tokens = diff_max_tokens
         self.refs = RefCache()
@@ -94,6 +127,42 @@ class BrowserSession:
     })();
     """
 
+    # Counts requests that have started but not finished. A page is not ready
+    # while it is still fetching what it intends to display -- and the DOM
+    # cannot tell you that, because it holds perfectly still on a spinner while
+    # a slow request is in flight.
+    #
+    # Completion is what counts, not success: a 404, a 500 and a dropped
+    # connection all end a request, and treating only 2xx as done would hang
+    # here until the timeout on every page that has a failing call.
+    _NETWORK_PROBE = """
+    (() => {
+      if (window.__abtNet) return;
+      const state = window.__abtNet = {inflight: 0, last: Date.now()};
+      const started = () => { state.inflight++; state.last = Date.now(); };
+      const ended = () => {
+        state.inflight = Math.max(0, state.inflight - 1);
+        state.last = Date.now();
+      };
+      const originalFetch = window.fetch;
+      if (originalFetch) {
+        window.fetch = function (...args) {
+          started();
+          return originalFetch.apply(this, args).then(
+            (response) => { ended(); return response; },
+            (error) => { ended(); throw error; });
+        };
+      }
+      const send = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function (...args) {
+        started();
+        try { this.addEventListener('loadend', ended, {once: true}); }
+        catch (e) { ended(); }
+        return send.apply(this, args);
+      };
+    })();
+    """
+
     def _install_console_capture(self) -> None:
         """Arm console capture on the tab that is active right now.
 
@@ -112,13 +181,13 @@ class BrowserSession:
         if handle in self._captured:
             return
         try:
-            self._driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {"source": self._CONSOLE_CAPTURE},
-            )
-            # The init script only fires on the *next* document, so seed the
-            # page already loaded. It misses whatever was logged before now.
-            self._driver.execute_script(self._CONSOLE_CAPTURE)
+            for source in (self._CONSOLE_CAPTURE, self._NETWORK_PROBE):
+                self._driver.execute_cdp_cmd(
+                    "Page.addScriptToEvaluateOnNewDocument", {"source": source}
+                )
+                # The init script only fires on the *next* document, so seed the
+                # page already loaded. It misses whatever happened before now.
+                self._driver.execute_script(source)
             self._captured.add(handle)
         except Exception:
             pass
@@ -299,6 +368,67 @@ class BrowserSession:
             raise OpError(
                 "navigation_failed", f"could not load {url!r}: chrome reported {code}"
             )
+        self.settle()
+
+    def settle(self, timeout: float | None = None) -> bool:
+        """Wait for the DOM to stop changing. Returns whether it did.
+
+        `driver.get` returns when the *document* has loaded, which on a
+        single-page app is the moment a spinner mounts and nothing else has
+        rendered. Snapshotting there produced diffs whose entire content was
+        "Loading..." / "Please wait while we process your request" -- so the
+        promise that a navigation hands back the page it landed on was false
+        exactly where it mattered most.
+
+        Two signals, because neither is sufficient alone:
+
+        * **Network idle.** No request in flight, and none completed in the last
+          `_SETTLE_NETWORK_GRACE`. This is the one that matters on a real app:
+          while a slow fetch is outstanding the DOM holds *perfectly* still on
+          its spinner, so a DOM-only check would call that settled and hand back
+          "Please wait" as the page.
+        * **A still DOM.** Catches the render that owes nothing to the network --
+          a `setTimeout` that swaps in content, an animation that finishes.
+          Network idle cannot see those at all.
+
+        A page that never stops -- a poller, a ticking clock, an open
+        long-poll -- costs the timeout and then proceeds, because a late diff
+        beats no diff. Instrumentation is best effort: without it the network
+        term reads as idle and the DOM term carries the check alone.
+        """
+        deadline = time.monotonic() + (
+            self.settle_timeout if timeout is None else timeout
+        )
+        last = None
+        stable_since = 0.0
+        while True:
+            try:
+                fingerprint = self.driver.execute_script(_SETTLE_JS)
+            except WebDriverException:
+                return False
+            now = time.monotonic()
+            parts = str(fingerprint).split("|")
+            shape, inflight, net_quiet = parts[:3], parts[3:4], parts[4:5]
+            busy = inflight != ["0"]
+            recent = float(net_quiet[0]) / 1000.0 < _SETTLE_NETWORK_GRACE if net_quiet else False
+
+            # Only the DOM shape counts as "changed" -- the network figures move
+            # on their own and would reset the clock forever.
+            if shape != last:
+                last = shape
+                stable_since = now
+            elif (
+                parts[0] == "complete"
+                and not busy
+                and not recent
+                and now - stable_since >= _SETTLE_QUIET
+            ):
+                # "complete" alone is not enough: a document still loading is
+                # quiet between resources, and that lull is not readiness.
+                return True
+            if now >= deadline:
+                return False
+            time.sleep(_SETTLE_INTERVAL)
 
     def location(self) -> dict:
         return {"url": self.driver.current_url, "title": self.driver.title}
@@ -306,17 +436,32 @@ class BrowserSession:
     # --- DOM diff baselines ----------------------------------------------------
 
     def snapshot(self) -> dict:
-        """The active tab's state as {"dom": [element lines], "text": [strings]}."""
+        """The active tab's state as its dom, text, and actionable tracks."""
         return diff_util.snapshot(self.driver)
 
+    def actionable_elements(self, indices: list[int]) -> list:
+        """Live handles for actionable entries the last snapshot collected."""
+        return diff_util.actionable_elements(self.driver, indices)
+
     def baseline(self) -> dict | None:
-        """The stored (url, dom, text) state for the active tab, or None."""
+        """The stored (url, dom, text, actionable) state for the active tab."""
         return self._baselines.get(self.active_tab)
 
     def set_baseline(self, state: dict | None = None) -> dict:
-        """Record the current page as the state to diff the next command against."""
+        """Record the current page as the state to diff the next command against.
+
+        Keys only, never live elements: a baseline outlives the command that set
+        it, and a WebElement held that long is a stale handle waiting to happen.
+        Keys are all a diff needs, and the handles can be fetched later for the
+        few entries that turn out to matter.
+        """
         if state is None:
             state = self.snapshot()
-        entry = {"url": self.driver.current_url, **state}
+        entry = {
+            "url": self.driver.current_url,
+            "dom": state.get("dom", []),
+            "text": state.get("text", []),
+            "actionable": state.get("actionable", []),
+        }
         self._baselines[self.active_tab] = entry
         return entry

@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>late</title>
+<!--
+  An SPA-shaped page: the document finishes loading with nothing but a spinner,
+  and the real content is painted afterwards. Every fixture before this one was
+  complete at load, which is why a diff that photographed a loading state went
+  unnoticed by 253 passing tests.
+-->
+<div id="app">
+  <p>Loading dashboard...</p>
+  <p>Please wait while we process your request.</p>
+</div>
+
+<a href="cards.html" id="go">Slow link</a>
+
+<script>
+  setTimeout(() => {
+    document.getElementById('app').innerHTML =
+      '<h1>Quarterly report</h1>' +
+      '<p>Revenue: $42,000</p>' +
+      '<p>Headcount: 12</p>' +
+      '<button id="export">Export</button>';
+  }, 400);
+</script>

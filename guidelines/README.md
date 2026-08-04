@@ -6,17 +6,36 @@ these notes and skip the trial-and-error that produced them.
 
 ## How to use these
 
-1. Read `toolkit-workflow.md` first — the concepts of driving the toolkit
-   (ops, targeting, refs, DOM diffs, batching, verification).
-2. Then read the playbook for the site you are about to touch.
-3. Site-specific playbooks capture the *traps*: canvas-rendered editors,
-   offscreen iframes, stale exports, and the workarounds that work.
+> **If you read one file here, read [`toolkit-workflow.md`](toolkit-workflow.md).**
+> **Most sites have no playbook, and that is the normal case — not a dead end.**
+> Finding nothing for your site below does not mean there is no guidance for
+> it. It means `toolkit-workflow.md` *is* the guidance, and it is enough to
+> drive an ordinary site well. Read it and proceed.
+
+1. Read `toolkit-workflow.md` — **always, before anything else**. It is the
+   concepts of driving the toolkit: ops, targeting, refs, reading the DOM diff
+   instead of re-reading the page, batching, verification. This is where the
+   expensive habits get fixed, and it applies to every site that will ever
+   exist.
+2. *Then*, only if the site you are touching has a playbook below, read that
+   one too.
+3. Site-specific playbooks exist for sites that broke the normal rules —
+   canvas-rendered editors, offscreen iframes, stale exports. They are
+   additions to step 1, never replacements for it.
+
+**The failure this is written to prevent:** an agent looks for its site, finds
+no entry, concludes the folder has nothing to offer, and goes on to rediscover
+by trial and error that `find` returns refs, that a click already tells you what
+changed, and that ops can be batched. All of that is in step 1.
 
 ## Index
 
+Your site is probably not in this table. That is expected — see above; read
+`toolkit-workflow.md` and drive the site with the ordinary ops.
+
 | File | When to read it |
 |---|---|
-| `toolkit-workflow.md` | Before every session — how the toolkit thinks |
+| `toolkit-workflow.md` | **Always, every session, whatever the site** — how the toolkit thinks |
 | `google-docs.md` | Driving docs.google.com (rich paste, headings, tables, verification) |
 | `google-sheets.md` | Driving sheets.google.com (canvas grid, name box, formulas, menus, charts) |
 | `fojik-mlwbd.md` | Finding and downloading movies on fojik.site/MLWBD (WordPress search, verify gauntlet, boabd/R2) |
