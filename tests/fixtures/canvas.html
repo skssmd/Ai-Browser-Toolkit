@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Canvas</title>
+  <style>
+    body { font: 14px sans-serif; margin: 0; padding: 20px; }
+    #pad { border: 1px solid #333; display: block; }
+    #log { margin-top: 8px; }
+    #tall { height: 1400px; }
+  </style>
+</head>
+<body>
+  <h1>Canvas</h1>
+  <!-- Nothing inside a canvas is addressable: no children, no text, no refs.
+       A coordinate click is the only way in. -->
+  <canvas id="pad" width="400" height="300"></canvas>
+  <div id="log">no clicks</div>
+  <div id="tall">scroll space</div>
+  <canvas id="low" width="200" height="120"></canvas>
+  <div id="lowlog">low: none</div>
+
+<script>
+const pad = document.getElementById('pad');
+pad.addEventListener('click', (e) => {
+  const r = pad.getBoundingClientRect();
+  const x = Math.round(e.clientX - r.left), y = Math.round(e.clientY - r.top);
+  document.getElementById('log').textContent = 'hit ' + x + ',' + y;
+  const ctx = pad.getContext('2d');
+  ctx.fillStyle = '#c00';
+  ctx.fillRect(x - 3, y - 3, 6, 6);
+});
+
+const low = document.getElementById('low');
+low.addEventListener('click', (e) => {
+  const r = low.getBoundingClientRect();
+  document.getElementById('lowlog').textContent =
+    'low: ' + Math.round(e.clientX - r.left) + ',' + Math.round(e.clientY - r.top);
+});
+</script>
+</body>
+</html>

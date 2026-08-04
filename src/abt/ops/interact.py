@@ -77,7 +77,24 @@ def _resolve_press_keys(raw: str) -> list[str]:
     return modifiers + [main_key]
 
 
+_VIEWPORT_JS = "return [window.innerWidth, window.innerHeight];"
+
+# Report what is actually under the point. A coordinate click is blind by
+# nature, so saying what it landed on is the difference between a result and a
+# guess.
+_AT_POINT_JS = """
+const el = document.elementFromPoint(arguments[0], arguments[1]);
+if (!el) { return null; }
+return el.tagName.toLowerCase()
+  + (el.id ? '#' + el.id : '')
+  + (el.className && typeof el.className === 'string'
+      ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '');
+"""
+
+
 def click(session: BrowserSession, cmd) -> dict:
+    if cmd.at is not None:
+        return _click_at(session, cmd)
     if cmd.new_tab:
         return _open_in_new_tab(session, cmd)
 
@@ -110,6 +127,57 @@ def click(session: BrowserSession, cmd) -> dict:
             ) from inner
         return {"clicked": describe(cmd), "forced": True, **session.location()}
     return {"clicked": describe(cmd), "forced": False, **session.location()}
+
+
+def _click_at(session: BrowserSession, cmd) -> dict:
+    """Click a point with a real mouse event.
+
+    This is the escape hatch for anything the DOM cannot address -- a canvas, a
+    closed shadow root, an image map. It is a genuine pointer sequence, not a
+    dispatched event, so a page cannot tell it from a person.
+    """
+    offset_x, offset_y = cmd.at
+
+    if cmd.has_target:
+        # Relative to an element: scroll it into view first, so the offset means
+        # the same thing no matter where the page is scrolled to.
+        element = resolve_one(session, cmd, state="visible")
+        box = element.rect
+        origin = describe(cmd)
+        x = int(box["x"] + offset_x - session.driver.execute_script("return window.scrollX;"))
+        y = int(box["y"] + offset_y - session.driver.execute_script("return window.scrollY;"))
+    else:
+        origin = "viewport"
+        x, y = offset_x, offset_y
+
+    width, height = session.driver.execute_script(_VIEWPORT_JS)
+    if not (0 <= x < width and 0 <= y < height):
+        raise OpError(
+            "not_interactable",
+            f"({x}, {y}) is outside the {width}x{height} viewport; a mouse click "
+            "can only reach what is on screen, so scroll it into view first",
+        )
+
+    hit = session.driver.execute_script(_AT_POINT_JS, x, y)
+    try:
+        chain = ActionChains(session.driver)
+        pointer = chain.w3c_actions.pointer_action
+        pointer.move_to_location(x, y)
+        pointer.click()
+        chain.perform()
+    except WebDriverException as exc:
+        raise OpError(
+            "not_interactable",
+            f"could not click ({x}, {y}): {exc.msg or exc}",
+        ) from exc
+
+    return {
+        "clicked": f"at=({x}, {y})",
+        "relative_to": origin,
+        "hit": hit,
+        "forced": False,
+        **session.location(),
+    }
 
 
 def _open_in_new_tab(session: BrowserSession, cmd) -> dict:

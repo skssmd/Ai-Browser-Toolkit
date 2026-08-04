@@ -138,18 +138,36 @@ class Screenshot(OptionalTarget):
 # --- interaction --------------------------------------------------------------
 
 
-class Click(Diffable, Target):
+class Click(Diffable, OptionalTarget):
+    """A click on an element, or at a point.
+
+    `at: [x, y]` clicks a coordinate with a real synthesized mouse event, for
+    things the DOM cannot address: a canvas, a closed shadow root, an image map.
+    On its own it is a point in the viewport. Combined with a target it is an
+    offset inside that element -- `{"css": "canvas", "at": [120, 40]}` -- which
+    is what you almost always want, since it survives scrolling and does not
+    depend on where the page happens to sit.
+    """
+
     op: Literal["click"]
+    at: tuple[int, int] | None = None
     force: bool = False
     new_tab: bool = False
     activate: bool = True
 
     @model_validator(mode="after")
-    def _force_xor_new_tab(self):
+    def _target_or_point(self):
+        if not self.has_target and self.at is None:
+            raise ValueError(f"one of {', '.join(TARGET_FIELDS)}, or at, is required")
         if self.force and self.new_tab:
             raise ValueError(
                 "force and new_tab are mutually exclusive; new_tab opens the href "
                 "directly and never dispatches a click"
+            )
+        if self.at is not None and (self.force or self.new_tab):
+            raise ValueError(
+                "at is a raw mouse click: force has nothing to defeat, and there "
+                "is no href at a coordinate to open in a new tab"
             )
         return self
 

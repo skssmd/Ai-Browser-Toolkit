@@ -71,6 +71,25 @@ check failed first, and the process had to be killed by hand. `shutdown` and
 `browser.py` raised it for an unsupported `--browser`, but `bad_browser` was not
 in `ERROR_TYPES`, and `OpError.__init__` rejects unknown types. Added.
 
+### 8. No coordinate click — fixed 2026-08-04
+
+Every interactive op targeted by `css`/`xpath`/`text`/`ref`, so a control with
+no addressable DOM node — canvas, closed shadow DOM, an image map — could be
+seen in a `screenshot` and then not acted on. Hit while annotating a canvas PDF
+editor: the only available move was to click the canvas centre, with no way to
+place a mark anywhere specific.
+
+`click` now takes `at: [x, y]`, driven through the W3C pointer actions, so
+`event.isTrusted` is true. With a target it is an offset inside that element
+and the element is scrolled into view first; alone it is a viewport point. The
+response reports `hit` from `elementFromPoint`, because a coordinate click is
+blind and ought to say what it landed on. Off-screen points raise
+`not_interactable` rather than clicking nothing.
+
+A viewport point is only accurate to about a pixel — the mouse is on whole
+pixels while layout is fractional. The element-relative form has no such
+error, which is why the guideline prefers it.
+
 ### 6. `_choose_browser` prompted, breaking detached launches — fixed 2026-08-03
 
 `typer.prompt` needs a TTY, and `abt serve` is routinely started detached, where
@@ -93,15 +112,4 @@ what does a click dispatched on a covered element report?
 "Succeeded and changed nothing" is the worst failure an agent can be handed, so
 this matters more than its size suggests.
 
-### 8. No coordinate click
-
-Every interactive op targets by `css`/`xpath`/`text`/`ref`. A control with no
-addressable DOM node — canvas, closed shadow DOM, an image map — can be seen in
-a `screenshot` and then not acted on.
-
-Hit while annotating a canvas PDF editor: the only available move was to click
-the canvas centre, with no way to place a mark anywhere specific.
-
-`ActionChains.move_by_offset(...).click()` already exists in Selenium and
-`document.elementFromPoint(x, y)` works through `run_js` today; this is about
-making it a first-class op, e.g. `click {"at": [x, y]}`.
+*(Issue 8, no coordinate click, is fixed — see below.)*

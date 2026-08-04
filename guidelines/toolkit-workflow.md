@@ -106,6 +106,29 @@ external downloads. Downloads and exports lag; the diff is live.
 - **Waiting:** `wait_for` with `state` = `present|visible|clickable|absent` and
   a `timeout`. Use it before acting on slow-loading content.
 
+## Clicking what the DOM cannot address
+
+`click` takes `at: [x, y]` for a canvas, a closed shadow root, an image map —
+anything a selector cannot reach. It is a real synthesized pointer sequence, so
+`event.isTrusted` is true and a page cannot tell it from a person.
+
+```json
+{"op": "click", "css": "canvas#pad", "at": [120, 80]}   // inside that element
+{"op": "click", "at": [640, 400]}                        // in the viewport
+```
+
+**Prefer the element-relative form.** With a target, `at` is an offset from the
+element's top-left and the element is scrolled into view first, so the numbers
+mean the same thing however the page is scrolled. A bare viewport point is
+whole-pixel while layout is fractional, so it is only good to about a pixel.
+
+The response reports `hit` — what `elementFromPoint` found there. A coordinate
+click is blind by nature; check `hit` rather than assume. A point off screen
+raises `not_interactable` instead of clicking nothing.
+
+Reach for this only when targeting genuinely cannot work. A `css` selector
+survives a redesign; a coordinate does not.
+
 ## When the page won't say what went wrong
 
 The DOM tells you what a page *is*. `read_console` and `read_network` tell you
