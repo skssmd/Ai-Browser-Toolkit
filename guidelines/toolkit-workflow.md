@@ -10,6 +10,12 @@ not write WebDriver code; you POST small JSON commands and read JSON responses.
 The server keeps the browser up between calls, so state (tabs, logins, focus)
 persists across commands.
 
+Because it is long-running, **you never start it with `abt serve` from a tool
+call** — that command never returns and your call hangs on it. Run
+`start-server.bat` (Windows cmd) or `./start-server.sh` (bash) from the repo
+root: safe to call any time, no-ops when a server is already up, and exits once
+`/status` answers. `--status` alone just tells you whether one is running.
+
 - `POST /command` — run one command, wait for its result.
 - `POST /commands` — run a batch in order. Stops on first error unless you send
   `{"commands": [...], "continue_on_error": true}`.

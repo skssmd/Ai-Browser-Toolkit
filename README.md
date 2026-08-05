@@ -62,17 +62,44 @@ below.
 > script that launches it inline will hang there forever. Background it, or give
 > it its own terminal.
 
+**The safe way — use the start script.** It does the whole dance for you and is
+the only thing an agent or CI job should call:
+
+```bash
+./start-server.sh              # Linux / macOS / Git Bash / WSL
+start-server.bat               # Windows cmd
+```
+
+It no-ops if a server is already running, creates `.venv` and installs
+dependencies only when they are missing, launches the server detached with its
+output redirected to `server.log` / `server.err`, then polls `/status` and exits
+0 once the server answers (waiting up to 180s, since a cold Chrome on the
+persistent profile is slow). Exit 1 means it never came up — it prints the tail
+of `server.err`; exit 2 means dependencies failed.
+
+```bash
+./start-server.sh --status     # only report up/down, start nothing (exit 0 = up)
+./start-server.sh --no-wait    # launch and return immediately, skip polling
+./start-server.sh --browser edge --port 9000 --headless   # extra flags go to `abt serve`
+```
+
+A server on a non-default port writes `server-<port>.log` instead, so starting
+one never clobbers the logs of the server on 8765.
+
+**By hand,** if you prefer. Detaching is not enough on its own — redirect the
+output too, or the launching process keeps waiting on the inherited pipe:
+
 ```bash
 # Linux / macOS — background it and keep the log
-nohup abt serve > server.log 2>&1 &
+nohup abt serve --browser chrome > server.log 2>&1 &
 
 # Windows PowerShell
-Start-Process .venv\Scripts\python.exe `
-  -ArgumentList "-m","abt.cli","serve" `
-  -RedirectStandardOutput server.log -RedirectStandardError server.err -NoNewWindow
+Start-Process .venv\Scripts\abt.exe `
+  -ArgumentList "serve","--browser","chrome" `
+  -RedirectStandardOutput server.log -RedirectStandardError server.err
 
 # or just give it its own terminal and leave it there
-abt serve
+abt serve --browser chrome
 ```
 
 It is ready when `/status` answers — poll rather than sleeping a fixed amount,

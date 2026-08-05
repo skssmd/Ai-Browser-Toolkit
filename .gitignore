@@ -8,6 +8,8 @@ logs-demo/
 .e2e.err
 server.log
 server.err
+server-*.log
+server-*.err
 demo.log
 __pycache__/
 *.py[cod]

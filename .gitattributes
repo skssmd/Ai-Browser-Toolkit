@@ -1,0 +1,9 @@
+# Line endings are load-bearing for the start scripts.
+#
+# This repo is developed on Windows with core.autocrlf=true, which would hand a
+# CRLF start-server.sh to anyone cloning on Linux or macOS -- where bash reads
+# the trailing \r as part of the command and every line fails. Pin each script
+# to the endings its interpreter needs, whatever the cloning machine prefers.
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf

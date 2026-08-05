@@ -16,12 +16,31 @@ page and answers. It is a **separate process** that outlives your session.
 
 ```bash
 curl -s localhost:8765/status          # already running? almost always yes
-abt serve --browser chrome             # only if it is not
+./start-server.sh                      # only if it is not (Windows cmd: start-server.bat)
 ```
 
 **Check `/status` before starting anything.** The server usually is running,
-holding tabs and logins you must not throw away. `abt serve` never returns on
-its own — background it or give it its own terminal.
+holding tabs and logins you must not throw away.
+
+**Never run `abt serve` from a tool call.** It is the command loop — it never
+returns on its own, so the call that launched it hangs until it is killed, and
+the agent is stuck. Use **`start-server.bat`** (Windows cmd) or
+**`./start-server.sh`** (Linux/macOS/Git Bash/WSL) in the repo root instead.
+They are safe to run at any time: no-op if a server is already up, install
+dependencies only when missing, launch the server detached with its output
+redirected to a file, poll `/status`, and exit 0 once it answers (up to 180s —
+Chrome is slow to start on the persistent profile).
+
+```bash
+./start-server.sh              # start and wait until ready
+./start-server.sh --status     # only report up/down (exit 0 = up)
+./start-server.sh --no-wait    # launch and return immediately
+./start-server.sh --port 9000 --headless   # other flags pass through to `abt serve`
+```
+
+If you launch it by hand anyway, you must **both** detach it and redirect its
+stdout/stderr to a file. Detaching alone is not enough: the server inherits the
+open pipe and your call keeps waiting on it.
 
 `GET /ops` lists every operation and its parameters. Read it instead of
 guessing a parameter name.
