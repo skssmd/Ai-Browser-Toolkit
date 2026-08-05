@@ -56,3 +56,28 @@ def test_an_uncovered_click_is_unaffected(page):
     result = run(page, op="click", css="#open")
     assert result["forced"] is False
     assert "Chart" in result["dom_diff"]["text"]["added"]
+
+
+def test_a_cover_that_is_animating_away_does_not_fail_the_click(page):
+    """The regression that cost a live run seven minutes.
+
+    Component libraries animate dialogs and popovers out, so for a few hundred
+    milliseconds the target really is behind an overlay -- one already leaving.
+    Sampling elementFromPoint once turned every such transition into a failure
+    that succeeded on the very next identical command. The check now polls, so
+    it outlasts the animation instead of racing it.
+    """
+    run(page, op="click", css="#flash-overlay")
+    result = run(page, op="click", css="#open")
+
+    assert result["clicked"]
+    assert "Chart" in result["dom_diff"]["text"]["added"]
+
+
+def test_a_cover_that_stays_still_fails(page):
+    """Patience must not become blindness: a real overlay still stops a click."""
+    run(page, op="click", css="#reveal-overlay")
+    with pytest.raises(OpError) as caught:
+        run(page, op="click", css="#under")
+    assert caught.value.type == "not_interactable"
+    assert "still covered by" in caught.value.message

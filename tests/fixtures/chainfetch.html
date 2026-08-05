@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>chained fetch with a gap</title>
+<!--
+  The case a short network-idle grace gets wrong.
+
+  A very common shape: fetch something that names a second resource, do a little
+  work, then fetch that. Between the two the in-flight count is genuinely zero
+  and the DOM is genuinely still -- the page looks finished, and it is not.
+
+  Nothing observable distinguishes "between two requests" from "done" except
+  waiting longer than the gap.
+-->
+<div id="app">
+  <p>Loading dashboard...</p>
+  <p>Please wait while we process your request.</p>
+</div>
+
+<script>
+  fetch('cards.html?delay=0.3')
+    .then(() => {
+      // The gap. No request in flight, no DOM change -- for twice the 150ms
+      // grace the first version of settle() used.
+      return new Promise((resolve) => setTimeout(resolve, 300));
+    })
+    .then(() => fetch('links.html?delay=0.2'))
+    .then(() => {
+      document.getElementById('app').innerHTML =
+        '<h1>Chained report</h1>' +
+        '<p>Revenue: $17,500</p>' +
+        '<button id="export">Export</button>';
+    });
+</script>

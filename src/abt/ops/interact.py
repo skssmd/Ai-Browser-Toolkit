@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
@@ -117,18 +119,43 @@ return {ok: false, hit: top.tagName.toLowerCase()
 """
 
 
+# How long an obstruction has to persist before it counts as real.
+#
+# Deliberately shorter than action_timeout. Component libraries animate dialogs
+# and popovers in and out, so for a few hundred milliseconds the thing you asked
+# for really is behind an overlay -- one that is on its way out. Sampling once
+# turned every such transition into a spurious failure; waiting the full action
+# timeout would instead double how long a genuinely blocked click takes to
+# report. A second covers any animation worth the name.
+_HIT_TEST_WINDOW = 1.0
+_HIT_TEST_INTERVAL = 0.05
+
+
 def _require_hit(session: BrowserSession, element, cmd) -> None:
     """Refuse a click that would land on something other than its target.
+
+    Polls rather than sampling: `resolve_one` has just *waited* for the element
+    to become clickable, and a check that gives up instantly disagrees with the
+    patience of the wait in front of it. Observed against a shadcn dialog, where
+    every close animation produced a not_interactable that succeeded on the very
+    next identical command.
 
     Never invents a failure: any trouble running the test is treated as a pass,
     because this exists to catch a silent success, not to add a new way to fail.
     """
-    try:
-        verdict = session.driver.execute_script(_HIT_TEST_JS, element)
-    except WebDriverException:
-        return
-    if not isinstance(verdict, dict) or verdict.get("ok"):
-        return
+    deadline = time.monotonic() + _HIT_TEST_WINDOW
+    verdict = None
+    while True:
+        try:
+            verdict = session.driver.execute_script(_HIT_TEST_JS, element)
+        except WebDriverException:
+            return
+        if not isinstance(verdict, dict) or verdict.get("ok"):
+            return
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(_HIT_TEST_INTERVAL)
+
     if verdict.get("reason") == "zero size":
         raise OpError(
             "not_interactable",
@@ -136,9 +163,9 @@ def _require_hit(session: BrowserSession, element, cmd) -> None:
         )
     raise OpError(
         "not_interactable",
-        f"{describe(cmd)} is covered by {verdict.get('hit')}, which would receive "
-        "the click instead. Pass force:true to dispatch it anyway, or new_tab:true "
-        "if the target is a link",
+        f"{describe(cmd)} is still covered by {verdict.get('hit')} after "
+        f"{_HIT_TEST_WINDOW}s, and it would receive the click instead. Pass "
+        "force:true to dispatch it anyway, or new_tab:true if the target is a link",
     )
 
 

@@ -29,9 +29,16 @@ _SETTLE_QUIET = 0.35
 _SETTLE_INTERVAL = 0.05
 
 # After the last response lands the app still has to render it, so idle is not
-# the same as done. A short grace period also absorbs a waterfall, where one
-# response immediately triggers the next request.
-_SETTLE_NETWORK_GRACE = 0.15
+# the same as done. This also has to absorb the *gap* in a chain: fetch a URL,
+# parse it, fetch that -- between the two the in-flight count is genuinely zero
+# and the DOM is genuinely still, and nothing observable distinguishes that from
+# being finished except waiting longer than the gap.
+#
+# Reported from a live app, where 150ms settled mid-chain and the diff went out
+# holding the spinner. No fixed value can be right for every gap; 500ms covers a
+# parse-and-refetch and costs a fraction of the 1-2s the navigation already
+# spent. Raise it with --settle-network-grace for an app that pauses longer.
+_SETTLE_NETWORK_GRACE = 0.5
 
 # A cheap change fingerprint plus the network counter. Element count and text
 # length both move sharply when a spinner is replaced by real content, and
@@ -59,6 +66,7 @@ class BrowserSession:
         diff_enabled: bool = True,
         diff_max_tokens: int = 1000,
         settle_timeout: float = 5.0,
+        settle_network_grace: float = _SETTLE_NETWORK_GRACE,
     ) -> None:
         browser = browser.lower()
         if browser not in _SUPPORTED_BROWSERS:
@@ -71,6 +79,7 @@ class BrowserSession:
         self.headless = headless
         self.action_timeout = action_timeout
         self.settle_timeout = settle_timeout
+        self.settle_network_grace = settle_network_grace
         self.diff_enabled = diff_enabled
         self.diff_max_tokens = diff_max_tokens
         self.refs = RefCache()
@@ -410,7 +419,7 @@ class BrowserSession:
             parts = str(fingerprint).split("|")
             shape, inflight, net_quiet = parts[:3], parts[3:4], parts[4:5]
             busy = inflight != ["0"]
-            recent = float(net_quiet[0]) / 1000.0 < _SETTLE_NETWORK_GRACE if net_quiet else False
+            recent = float(net_quiet[0]) / 1000.0 < self.settle_network_grace if net_quiet else False
 
             # Only the DOM shape counts as "changed" -- the network figures move
             # on their own and would reset the clock forever.

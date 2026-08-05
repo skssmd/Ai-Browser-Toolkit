@@ -28,11 +28,21 @@
 <p id="plain">Static paragraph</p>
 
 <button id="reveal-overlay">Cover everything</button>
+<button id="flash-overlay">Flash a cover</button>
 <a id="under" href="#nowhere">Link beneath the overlay</a>
 
 <script>
   document.getElementById('open').addEventListener('click', () => {
     document.getElementById('menu').classList.add('open');
+  });
+  // A cover that removes itself, the way a component library animates a dialog
+  // out. It is genuinely in the way for a moment, and gone shortly after.
+  document.getElementById('flash-overlay').addEventListener('click', () => {
+    const cover = document.createElement('div');
+    cover.className = 'cover';
+    cover.id = 'flash';
+    document.body.appendChild(cover);
+    setTimeout(() => cover.remove(), 400);
   });
   document.getElementById('reveal-overlay').addEventListener('click', () => {
     const cover = document.createElement('div');

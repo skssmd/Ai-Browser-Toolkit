@@ -198,3 +198,44 @@ def test_serve_survives_a_malformed_line():
     stdout = io.StringIO()
     serve(api="http://127.0.0.1:9", stdin=stdin, stdout=stdout)
     assert json.loads(stdout.getvalue().strip())["id"] == 1
+
+
+def test_responses_are_compact_not_pretty_printed():
+    """Whitespace is tokens. Measured at ~1.6x inflation from indent=2, paid on
+    every response the model reads back."""
+    import httpx
+
+    class _Stub(Bridge):
+        def __init__(self):
+            self.api = "http://stub"
+            self.client = httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda r: httpx.Response(200, json={"ok": True, "result": {"a": 1, "b": 2}})
+                )
+            )
+
+    text, failed = _Stub().call("browser_navigate", {"url": "u"})
+    assert failed is False
+    assert "\n" not in text and ", " not in text
+    assert text == '{"ok":true,"result":{"a":1,"b":2}}'
+
+
+def test_run_js_is_a_typed_tool_not_only_an_escape_hatch():
+    """Both blind runs reached run_js through browser_command and guessed its
+    parameter name -- `code` instead of `script`. A typed tool cannot."""
+    assert to_op("browser_run_js", {"script": "return 1;"}) == {"op": "run_js", "script": "return 1;"}
+    props = tool("browser_run_js")["inputSchema"]["properties"]
+    assert "script" in props and "code" not in props
+    assert tool("browser_run_js")["inputSchema"]["required"] == ["script"]
+
+
+def test_screenshot_is_typed_and_takes_no_path():
+    """The first blind run guessed `path`, then `filename`, then gave up."""
+    assert to_op("browser_screenshot", {"css": "#chart"}) == {"op": "screenshot", "css": "#chart"}
+    props = tool("browser_screenshot")["inputSchema"]["properties"]
+    assert "path" not in props and "filename" not in props
+
+
+def test_the_escape_hatch_warns_that_it_does_not_validate():
+    desc = tool("browser_command")["description"]
+    assert "WITHOUT" in desc and "GET /ops" in desc

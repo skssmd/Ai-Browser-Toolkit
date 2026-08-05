@@ -116,3 +116,28 @@ def test_the_network_probe_survives_navigation(clean, base_url):
     run(clean, op="goto", url=f"{base_url}/slowfetch.html")
     present = clean.driver.execute_script("return !!window.__abtNet;")
     assert present is True
+
+
+def test_a_gap_between_chained_requests_is_not_mistaken_for_done(clean, base_url):
+    """Reported from a live app: fetch a URL, process it, fetch that URL.
+
+    Between the two the in-flight count is zero and the DOM is still, so a
+    short grace period settles mid-chain and the diff goes out holding the
+    spinner. Nothing observable separates "between requests" from "finished"
+    except waiting longer than the gap.
+    """
+    text = added(run(clean, op="goto", url=f"{base_url}/chainfetch.html"))
+
+    assert "Chained report" in text
+    assert "Revenue: $17,500" in text
+    assert "Loading dashboard..." not in text
+
+
+def test_the_grace_period_is_tunable(session):
+    """No fixed value fits every app, so the knob has to exist and be wired."""
+    assert session.settle_network_grace > 0
+    from abt.browser import BrowserSession
+    from pathlib import Path
+
+    tuned = BrowserSession(profile=Path("."), settle_network_grace=2.5)
+    assert tuned.settle_network_grace == 2.5

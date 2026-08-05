@@ -99,6 +99,18 @@ def serve(
     diff_max_tokens: int = typer.Option(
         1000, "--diff-max-tokens", help="Budget for dom_diff, in tokens."
     ),
+    settle_timeout: float = typer.Option(
+        5.0,
+        "--settle-timeout",
+        help="Seconds to wait for a page to finish rendering after a navigation "
+        "before snapshotting it.",
+    ),
+    settle_network_grace: float = typer.Option(
+        0.5,
+        "--settle-network-grace",
+        help="Seconds of network silence that count as idle. Raise it for an app "
+        "that pauses between chained requests; the gap looks like being finished.",
+    ),
 ) -> None:
     """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
@@ -115,6 +127,8 @@ def serve(
         action_timeout=action_timeout,
         diff_enabled=not no_diff,
         diff_max_tokens=diff_max_tokens,
+        settle_timeout=settle_timeout,
+        settle_network_grace=settle_network_grace,
     )
     typer.echo(f"starting {browser} (profile: {session.profile})")
     session.start()
