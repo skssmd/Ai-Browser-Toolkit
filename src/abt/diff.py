@@ -16,6 +16,11 @@ A snapshot has three tracks, all produced by one walk of the document:
   no extra `find`. It rides along in the same walk, and because it keeps only
   elements a person could operate it stays a small fraction of the page.
 
+A page's frames are walked the same way and folded into the same three tracks,
+because a frame is a separate document that no amount of walking the parent will
+reach. Each snapshot also reports the frames its own document embeds, so the
+walk pays for itself only where there is something to walk -- see `frames.py`.
+
 Two snapshots diff with difflib. The text track reports what appeared, counts
 what left, and lists what left only on request -- a page that replaces its body
 would otherwise return the whole old document as removals. The element track
