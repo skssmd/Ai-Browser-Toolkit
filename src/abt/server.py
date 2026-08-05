@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import BackgroundTasks, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from selenium.common.exceptions import WebDriverException
 from starlette.concurrency import run_in_threadpool
 
 from . import messenger as messenger_api
+from . import shots as shots_util
 from .browser import BrowserSession
 from .errors import OpError
 from .ops import dispatch
@@ -27,6 +28,7 @@ from .recorder import (
     list_sessions,
     now_ms,
     read_events,
+    shot_path,
     sites_index,
 )
 from .schema import OP_NAMES, parse_command
@@ -49,6 +51,9 @@ def create_app(
     session: BrowserSession,
     request_stop: Callable[[], None] | None = None,
     recorder: SessionRecorder | None = None,
+    shots: bool = True,
+    shot_quality: int = shots_util.DEFAULT_QUALITY,
+    shot_width: int = shots_util.DEFAULT_WIDTH,
 ) -> FastAPI:
     app = FastAPI(title="aibrowsertoolkit", version="0.1.0")
     app.state.session = session
@@ -62,6 +67,7 @@ def create_app(
     def run_one(data: Any, op_index: int) -> dict:
         """Validate then execute one command. Never raises."""
         started = now_ms()
+        session.last_target = None
         try:
             cmd = parse_command(data)
             response = ok(dispatch(session, cmd))
@@ -83,8 +89,19 @@ def create_app(
             url = session.driver.current_url
         except Exception:
             pass
+        shot = None
+        if shots:
+            # Captured after the command, so the frame shows what it produced --
+            # including the error page, when it produced one.
+            try:
+                op = data.get("op") if isinstance(data, dict) else None
+                shot = shots_util.take(
+                    session, op, bool(response.get("ok")), shot_quality, shot_width
+                )
+            except Exception:
+                shot = None
         try:
-            recorder.record(data, response, tab_id, url, elapsed)
+            recorder.record(data, response, tab_id, url, elapsed, shot=shot)
         except Exception:
             pass
 
@@ -167,6 +184,7 @@ def create_app(
     def run_locked(work: Callable[[], Any], request: dict) -> dict:
         """Run one browser job under the command lock, logged like a command."""
         started = now_ms()
+        session.last_target = None
         try:
             with lock:
                 session.health_check()
@@ -355,6 +373,24 @@ def create_app(
                 "sites": sorted({e["site"] for e in events if e.get("site")}),
                 "events": events,
             }
+        )
+
+    @app.get("/logs/{session_id}/shots/{name}")
+    async def logs_shot(session_id: str, name: str):
+        """One recorded frame. Named in the event that produced it."""
+        root = _root()
+        path = None if root is None else shot_path(root, session_id, name)
+        if path is None:
+            return JSONResponse(
+                status_code=404,
+                content=fail(OpError("invalid_op", f"no frame {name!r}")),
+            )
+        return FileResponse(
+            path,
+            media_type="image/jpeg" if path.suffix == ".jpg" else "image/png",
+            # A stored frame never changes, so the viewer should never refetch
+            # one while scrolling a long session.
+            headers={"cache-control": "public, max-age=31536000, immutable"},
         )
 
     @app.get("/viewer", response_class=HTMLResponse)

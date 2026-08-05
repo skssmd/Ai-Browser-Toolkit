@@ -84,6 +84,62 @@ VIEWER_HTML = r"""<!doctype html>
   }
   .pane-title { font-size: 11px; color: var(--muted); padding: 8px 13px 0; text-transform: uppercase; letter-spacing: .06em; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+
+  /* --- the audit timeline: one row per command, frame on the left ---------- */
+  .summary {
+    display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px;
+    padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); font-size: 12.5px;
+  }
+  .summary b { font-size: 15px; display: block; font-variant-numeric: tabular-nums; }
+  .summary span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .summary .bad b { color: var(--bad); }
+  .step {
+    display: grid; grid-template-columns: 178px 1fr; gap: 14px;
+    padding: 12px 0; border-bottom: 1px solid var(--line); align-items: start;
+  }
+  .step.failed { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+  .shot { position: relative; cursor: zoom-in; line-height: 0; }
+  .shot img {
+    width: 100%; display: block; border-radius: 5px; border: 1px solid var(--line);
+    background: var(--code);
+  }
+  /* Where the command acted. Shared by the thumbnail and the lightbox -- they
+     hold the box in different parents, so this cannot be scoped to either. */
+  .box {
+    position: absolute; border: 2px solid var(--bad); border-radius: 2px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.12); pointer-events: none;
+  }
+  .noshot {
+    border: 1px dashed var(--line); border-radius: 5px; color: var(--muted);
+    font-size: 11px; display: flex; align-items: center; justify-content: center;
+    height: 74px; text-align: center; padding: 6px;
+  }
+  .step-head { display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap; }
+  .step-what {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px;
+    word-break: break-word;
+  }
+  .step-meta { color: var(--muted); font-size: 12px; margin-top: 3px; word-break: break-all; }
+  .step-err { color: var(--bad); font-size: 12.5px; margin-top: 5px; }
+  .step details { margin-top: 7px; }
+  .step details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .clock { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+  @media (max-width: 700px) { .step { grid-template-columns: 1fr; } }
+
+  #lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,.82); display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    z-index: 50; padding: 24px; cursor: zoom-out;
+  }
+  #lightbox.on { display: flex; }
+  #lightbox .frame { position: relative; max-width: 100%; max-height: 84vh; line-height: 0; }
+  #lightbox img { max-width: 100%; max-height: 84vh; border-radius: 6px; }
+  #lightbox .cap {
+    color: #fff; font-size: 13px; text-align: center; max-width: 900px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  #lightbox .hint { color: #bbb; font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -102,13 +158,24 @@ VIEWER_HTML = r"""<!doctype html>
   </aside>
   <main>
     <div class="filters" id="filters" hidden>
+      <select id="f-view">
+        <option value="timeline">timeline</option>
+        <option value="log">raw log</option>
+      </select>
       <select id="f-tab"><option value="">all tabs</option></select>
       <select id="f-site"><option value="">all sites</option></select>
       <select id="f-op"><option value="">all ops</option></select>
       <label><input type="checkbox" id="f-err"> errors only</label>
+      <label><input type="checkbox" id="f-shot"> with frames only</label>
     </div>
     <div id="events"><div class="empty">Pick a session or a site.</div></div>
   </main>
+</div>
+
+<div id="lightbox">
+  <div class="frame"><img id="lb-img" alt=""><div class="box" id="lb-box" hidden></div></div>
+  <div class="cap" id="lb-cap"></div>
+  <div class="hint">← → to step through frames · esc to close</div>
 </div>
 
 <script>
@@ -144,7 +211,7 @@ function draw() {
     ? sessions.map(s => ({
         key: s.session_id,
         title: s.session_id + (s.ended_at ? "" : " · live"),
-        sub: `${s.events} events · ${s.errors} error(s) · ${when(s.started_at)}`
+        sub: `${s.events} events · ${s.errors} error(s) · ${s.shots || 0} frame(s) · ${when(s.started_at)}`
       }))
     : sites.map(s => ({
         key: s.site,
@@ -199,14 +266,129 @@ function fillFilters(tabs, siteList) {
   set($("#f-op"), [...new Set(events.map(e => e.op).filter(Boolean))].sort(), "all ops");
 }
 
-function render() {
-  const tab = $("#f-tab").value, site = $("#f-site").value;
-  const op = $("#f-op").value, only = $("#f-err").checked;
-  const shown = events.filter(e =>
-    (!tab || e.tab_id === tab) && (!site || e.site === site) &&
-    (!op || e.op === op) && (!only || !e.ok));
+// What the agent did, in words. The raw request is one click away; this line is
+// what makes an hour of unattended work skimmable.
+function describe(e) {
+  const r = e.request || {}, op = e.op || "?";
+  const target = r.ref || r.css || r.xpath || (r.text ? `"${r.text}"` : "") || "";
+  const nth = (r.index ? ` [#${r.index}]` : "");
+  switch (op) {
+    case "goto": return `goto ${r.url || ""}`;
+    case "input": return `input ${target}${nth} ← ${JSON.stringify(r.value ?? "")}`;
+    case "press": return `press ${r.key || ""}${target ? ` on ${target}` : ""}`;
+    case "select": return `select ${JSON.stringify(r.value ?? r.label ?? r.option ?? "")} in ${target}`;
+    case "scroll": return `scroll ${r.to || (r.by != null ? `by ${r.by}` : "") || target}`;
+    case "click_at": return `click at ${r.x},${r.y}`;
+    case "messenger_send": return `messenger send → ${r.thread_url || r.to || r.query || ""}`;
+    case "messenger_threads": return "messenger: list threads";
+    case "messenger_messages": return `messenger: read ${r.thread_url || ""}`;
+    default: return target ? `${op} ${target}${nth}` : op;
+  }
+}
 
-  $("#events").innerHTML = shown.length ? shown.map(e => `
+// One line of "and then what happened", pulled from whichever shape the op
+// answers with. Anything richer is in the collapsed request/response pane.
+function outcome(e) {
+  if (!e.ok) return "";
+  const r = e.response;
+  if (r == null || typeof r !== "object") return r == null ? "" : String(r);
+  if (typeof r.count === "number") return `${r.count} match(es)`;
+  if (r.tab_id && e.op && e.op.startsWith("tab")) return `now on ${r.tab_id}`;
+  if (Array.isArray(r.messages)) return `${r.messages.length} message(s)`;
+  if (Array.isArray(r.threads)) return `${r.threads.length} thread(s)`;
+  if (r.sent) return "sent";
+  return "";
+}
+
+function shotUrl(e) {
+  return `/logs/${encodeURIComponent(e.session_id)}/shots/${encodeURIComponent(e.shot)}`;
+}
+
+function boxStyle(b) {
+  return `left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%`;
+}
+
+function visible() {
+  const tab = $("#f-tab").value, site = $("#f-site").value;
+  const op = $("#f-op").value, only = $("#f-err").checked, framed = $("#f-shot").checked;
+  return events.filter(e =>
+    (!tab || e.tab_id === tab) && (!site || e.site === site) &&
+    (!op || e.op === op) && (!only || !e.ok) && (!framed || e.shot));
+}
+
+function summaryBar(shown) {
+  if (!shown.length) return "";
+  const errors = shown.filter(e => !e.ok).length;
+  const framed = shown.filter(e => e.shot).length;
+  const first = shown[0].at, last = shown[shown.length - 1].at;
+  let span = "—";
+  if (first && last) {
+    const secs = Math.max(0, (new Date(last) - new Date(first)) / 1000);
+    span = secs >= 3600 ? `${Math.floor(secs / 3600)}h ${Math.round((secs % 3600) / 60)}m`
+         : secs >= 60 ? `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`
+         : `${secs.toFixed(1)}s`;
+  }
+  const sites = [...new Set(shown.map(e => e.site).filter(Boolean))];
+  const cell = (label, value, bad) =>
+    `<div class="${bad ? "bad" : ""}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+  return `<div class="summary">
+    ${cell("commands", shown.length)}
+    ${cell("errors", errors, errors > 0)}
+    ${cell("elapsed", span)}
+    ${cell("frames", framed)}
+    ${cell("sites", sites.length === 1 ? sites[0] : sites.length)}
+    ${cell("started", when(first))}
+  </div>`;
+}
+
+function render() {
+  const shown = visible();
+  const view = $("#f-view").value;
+  if (!shown.length) {
+    $("#events").innerHTML = `<div class="empty">no events match these filters</div>`;
+    return;
+  }
+  $("#events").innerHTML = summaryBar(shown) +
+    (view === "log" ? shown.map(logRow).join("") : shown.map(stepRow).join(""));
+  $("#events").querySelectorAll(".shot").forEach(el => {
+    el.onclick = () => openShot(Number(el.dataset.seq), el.dataset.session);
+  });
+}
+
+function stepRow(e) {
+  const frame = e.shot
+    ? `<div class="shot" data-seq="${e.seq}" data-session="${esc(e.session_id)}">
+         <img loading="lazy" src="${esc(shotUrl(e))}" alt="frame for #${e.seq}">
+         ${e.shot_box ? `<div class="box" style="${boxStyle(e.shot_box)}"></div>` : ""}
+       </div>`
+    : `<div class="noshot">no frame<br>(read-only step)</div>`;
+  const err = e.ok ? "" :
+    `<div class="step-err">${esc(e.error_type || "error")}: ${esc((e.response && e.response.message) || "")}</div>`;
+  const out = outcome(e);
+  return `<div class="step ${e.ok ? "" : "failed"}">
+    ${frame}
+    <div>
+      <div class="step-head">
+        <span class="clock">${esc(e.at ? new Date(e.at).toLocaleTimeString() : "")}</span>
+        <span class="step-what">${esc(describe(e))}</span>
+        <span class="pill ${e.ok ? "ok" : "err"}">${e.ok ? "ok" : esc(e.error_type || "error")}</span>
+        <span class="grow"></span>
+        <span class="pill">${esc(e.tab_id || "—")}</span>
+        <span class="pill">${e.duration_ms}ms</span>
+      </div>
+      <div class="step-meta">${esc(e.url || "")}${out ? ` · ${esc(out)}` : ""}</div>
+      ${err}
+      <details>
+        <summary>request &amp; ${e.ok ? "response" : "error"}</summary>
+        <pre>${esc(JSON.stringify(e.request, null, 2))}</pre>
+        <pre>${esc(JSON.stringify(e.response, null, 2))}</pre>
+      </details>
+    </div>
+  </div>`;
+}
+
+function logRow(e) {
+  return `
     <details class="ev">
       <summary>
         <span class="seq">#${e.seq}</span>
@@ -221,13 +403,48 @@ function render() {
       <pre>${esc(JSON.stringify(e.request, null, 2))}</pre>
       <div class="pane-title">${e.ok ? "response" : "error"}</div>
       <pre>${esc(JSON.stringify(e.response, null, 2))}</pre>
-    </details>`).join("")
-    : `<div class="empty">no events match these filters</div>`;
+    </details>`;
 }
+
+// --- lightbox: step through the frames without leaving the timeline ---------
+let framed = [], atFrame = -1;
+
+function openShot(seq, sessionId) {
+  framed = visible().filter(e => e.shot);
+  atFrame = framed.findIndex(e => e.seq === seq && e.session_id === sessionId);
+  if (atFrame < 0) return;
+  showFrame();
+  $("#lightbox").classList.add("on");
+}
+
+function showFrame() {
+  const e = framed[atFrame];
+  if (!e) return;
+  $("#lb-img").src = shotUrl(e);
+  const box = $("#lb-box");
+  if (e.shot_box) { box.hidden = false; box.style.cssText = boxStyle(e.shot_box); }
+  else box.hidden = true;
+  $("#lb-cap").textContent =
+    `#${e.seq} · ${describe(e)} · ${e.ok ? "ok" : (e.error_type || "error")} · ${e.url || ""}`;
+}
+
+function stepFrame(delta) {
+  if (atFrame < 0) return;
+  atFrame = Math.min(framed.length - 1, Math.max(0, atFrame + delta));
+  showFrame();
+}
+
+$("#lightbox").onclick = () => $("#lightbox").classList.remove("on");
+document.addEventListener("keydown", (ev) => {
+  if (!$("#lightbox").classList.contains("on")) return;
+  if (ev.key === "Escape") $("#lightbox").classList.remove("on");
+  if (ev.key === "ArrowRight") { stepFrame(1); ev.preventDefault(); }
+  if (ev.key === "ArrowLeft") { stepFrame(-1); ev.preventDefault(); }
+});
 
 $("#tab-sessions").onclick = () => { mode = "sessions"; draw(); };
 $("#tab-sites").onclick = () => { mode = "sites"; draw(); };
-["#f-tab", "#f-site", "#f-op", "#f-err"].forEach(s => $(s).onchange = render);
+["#f-view", "#f-tab", "#f-site", "#f-op", "#f-err", "#f-shot"].forEach(s => $(s).onchange = render);
 
 boot().catch(e => { $("#hint").textContent = "error: " + e.message; });
 </script>

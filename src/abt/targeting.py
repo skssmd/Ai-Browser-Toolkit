@@ -107,7 +107,23 @@ def resolve_one(
     state: str = "present",
     timeout: float | None = None,
 ) -> WebElement:
-    """Resolve a single element, waiting up to `timeout` for it to reach `state`."""
+    """Resolve a single element, waiting up to `timeout` for it to reach `state`.
+
+    Also remembers the element as the command's target, so a recorded frame can
+    draw a box around whatever was acted on. Kept here rather than in each op
+    because this is the one place every targeted op passes through.
+    """
+    element = _resolve_one(session, cmd, state, timeout)
+    session.last_target = element
+    return element
+
+
+def _resolve_one(
+    session: BrowserSession,
+    cmd,
+    state: str = "present",
+    timeout: float | None = None,
+) -> WebElement:
     if getattr(cmd, "ref", None) is not None:
         element = session.resolve_ref(cmd.ref)
         if state in _NEEDS_VIEWPORT:

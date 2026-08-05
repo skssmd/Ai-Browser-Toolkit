@@ -123,6 +123,22 @@ def serve(
     max_frame_depth: int = typer.Option(
         2, "--max-frame-depth", help="How far to descend into nested frames."
     ),
+    no_shots: bool = typer.Option(
+        False,
+        "--no-shots",
+        help="Stop capturing the screenshot beside each logged command.",
+    ),
+    shot_quality: int = typer.Option(
+        60, "--shot-quality", help="JPEG quality for captured frames (1-100)."
+    ),
+    shot_width: int = typer.Option(
+        1280, "--shot-width", help="Downscale captured frames to this width."
+    ),
+    shots_max_mb: float = typer.Option(
+        200.0,
+        "--shots-max-mb",
+        help="Stop capturing once one session's frames reach this size.",
+    ),
 ) -> None:
     """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
@@ -148,15 +164,20 @@ def serve(
     typer.echo(f"starting {browser} (profile: {session.profile})")
     session.start()
 
-    recorder = None if no_log else SessionRecorder(log_dir)
+    recorder = None if no_log else SessionRecorder(log_dir, max_shot_mb=shots_max_mb)
     if recorder is not None:
         typer.echo(f"recording session {recorder.session_id} -> {recorder.path}")
+        if not no_shots:
+            typer.echo(f"capturing frames -> {recorder.shots_dir}")
 
     holder: dict[str, Any] = {}
     application = create_app(
         session,
         request_stop=lambda: holder["server"].__setattr__("should_exit", True),
         recorder=recorder,
+        shots=not no_shots,
+        shot_quality=shot_quality,
+        shot_width=shot_width,
     )
     config = uvicorn.Config(
         application, host=HOST, port=port, log_level="warning", access_log=False

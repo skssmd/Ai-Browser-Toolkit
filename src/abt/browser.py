@@ -96,6 +96,9 @@ class BrowserSession:
         self._order: list[str] = []
         self._counter = 0
         self._captured: set[str] = set()  # handles already armed for console
+        # The element the command in flight acted on, for the audit frame's
+        # highlight box. Set by `targeting.resolve_one`, cleared per command.
+        self.last_target = None
         # Whether the driver may be pointed at a frame rather than the top
         # document. See `leave_frames` for why this is tracked rather than asked.
         self._in_frame = False

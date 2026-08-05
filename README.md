@@ -647,9 +647,43 @@ abt serve --log-dir ./logs   # default
 abt serve --no-log           # off
 ```
 
+### Frames: the visual audit trail
+
+Alongside each command the server stores **a screenshot of the page it produced**.
+An agent that worked unattended for an hour leaves a log saying it clicked Save;
+the frame beside that line is how you check it clicked Save on the right page.
+
+Frames are captured for the ops that change what is on screen — `goto`, `click`,
+`input`, `press`, `select`, `hover`, `scroll`, the tab ops — **plus every failure,
+whatever the op was**. A `find` or `get_text` changes nothing, so it gets none.
+They are JPEGs, downscaled to 1280px at quality 60, and consecutive identical
+frames are stored once, which puts a long session in the single-digit megabytes.
+
+When the command acted on an element, the frame records where that element sat as
+fractions of the viewport, and the viewer draws a box on it — so you see *what*
+was clicked, not just that something was. A click that navigated away leaves no
+box: the element is gone, and a box would be pointing at a page that no longer
+exists.
+
+```bash
+abt serve --no-shots            # off
+abt serve --shot-quality 40     # smaller files
+abt serve --shot-width 900      # smaller still
+abt serve --shots-max-mb 50     # stop capturing past this much, per session
+```
+
+Frames live in `logs/<session-id>/shots/` and are served at
+`GET /logs/{session_id}/shots/{name}`, where `name` is the `shot` field on the
+event. **They contain whatever was on screen**, including logged-in accounts and
+private messages — treat `logs/` as secret.
+
 **Browse them in the browser** at `http://127.0.0.1:8765/viewer` — a self-contained
-page that lists sessions and sites down the side, and each command with its request
-and response expandable. Filter by tab, site, op, or errors only.
+page that lists sessions and sites down the side. It opens on a **timeline**: one
+row per command, its frame on the left, what the agent did and what came back on
+the right, failures tinted red, with a header counting commands, errors, elapsed
+time and sites. Click any frame to enlarge it and step through the session with
+the arrow keys. Switch the first dropdown to **raw log** for the older
+request/response view. Filter by tab, site, op, errors only, or frames only.
 
 **Or over the API:**
 
@@ -658,6 +692,7 @@ and response expandable. Filter by tab, site, op, or errors only.
 | `GET /logs` | Every session, newest first, with event and error counts |
 | `GET /logs/sites` | Every site seen across all sessions |
 | `GET /logs/{session_id}` | That session's events |
+| `GET /logs/{session_id}/shots/{name}` | One captured frame, as named by an event's `shot` |
 
 `/logs/{session_id}` accepts `?site=`, `?tab=`, `?op=`, and `?errors_only=true`,
 which combine.
@@ -678,8 +713,14 @@ An event looks like this:
  "op": "click", "ok": false, "error_type": "element_not_found",
  "duration_ms": 5190.7,
  "request": {"op": "click", "css": "#does-not-exist"},
- "response": {"type": "element_not_found", "message": "nothing matched …"}}
+ "response": {"type": "element_not_found", "message": "nothing matched …"},
+ "shot": "00004.jpg",
+ "shot_box": {"x": 0.2, "y": 0.15, "w": 0.6, "h": 0.04}}
 ```
+
+`shot` names a file under `logs/<session-id>/shots/`; `shot_box` is where the
+command's target sat, as fractions of the frame. Both are absent when there was
+nothing to capture or nothing to point at.
 
 ## CLI
 
