@@ -175,6 +175,15 @@ answer than dumping the body:
 `get_text {"css": "body"}` answers none of these better than the three commands
 above, and costs more than all of them together.
 
+There used to be a fourth cause, and it was the bad one: **the change happened
+inside an iframe**, where nothing could see it. A frame is a separate document,
+so the snapshot walk, `innerText` and every selector all stopped at its edge —
+and stopped *quietly*. On `linkedin.com/login`, `find text:"Continue with
+Google"` returned `count: 0` while the button sat on screen. All three tracks
+now read into frames and refs from inside them act normally, so this is no
+longer on the list. Nothing is required of you: you never switch frames, and a
+frame's content arrives in the same `text.added` as the page's own.
+
 **Rule of thumb:** verify *effects* with the diff, not with screenshots or
 external downloads. Downloads and exports lag; the diff is live.
 
