@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>controls behind a shadow boundary</title>
+<!--
+  The other place a control can hide. A shadow root is a separate tree: the
+  snapshot's TreeWalker does not cross into it, `innerText` stops at the host,
+  and `querySelectorAll` from the document never sees inside. Same silence as
+  an iframe, different mechanism.
+
+  Unlike frames this is left out of the tracks on purpose. Most pages have no
+  author shadow roots at all, and walking every one on every snapshot would tax
+  all of them for the few that need it. So the snapshot counts hosts without
+  looking inside, and `shadow: true` is what looks.
+
+  The closed root at the bottom is the honest limit: `mode: "closed"` makes
+  `.shadowRoot` null, so no JavaScript can read it *or even prove it is there*.
+  Nothing here can find what is inside it, and the guideline says so.
+-->
+<body>
+  <h1>Profile setup</h1>
+  <p>Upload a recent resume</p>
+
+  <div id="widget"></div>
+  <div id="nested"></div>
+  <div id="sealed"></div>
+
+  <script>
+    // An open root holding the control the page is actually about.
+    const open = document.getElementById('widget').attachShadow({mode: 'open'});
+    open.innerHTML =
+      '<button id="pick">Choose file</button>' +
+      '<input type="file" id="resume" accept=".pdf">' +
+      '<p>Drop your resume here</p>';
+
+    // A root inside a root, to prove the walk recurses.
+    const outer = document.getElementById('nested').attachShadow({mode: 'open'});
+    outer.innerHTML = '<div id="inner"></div>';
+    const inner = outer.getElementById('inner').attachShadow({mode: 'open'});
+    inner.innerHTML = '<button id="deep">Buried control</button>';
+
+    // Unreachable by anything, including this toolkit.
+    const shut = document.getElementById('sealed').attachShadow({mode: 'closed'});
+    shut.innerHTML = '<button id="invisible">Sealed away</button>';
+  </script>
+</body>

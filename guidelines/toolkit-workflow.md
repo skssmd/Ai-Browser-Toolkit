@@ -191,6 +191,65 @@ external downloads. Downloads and exports lag; the diff is live.
 act on `dom_diff.actionable.added[].ref` to use it. A `find` between those steps
 is usually a round trip you did not need.
 
+## Searching for something that should be there
+
+The rule above is about *verifying what a command did*. This one is about
+*looking for something*, and it has its own failure mode: a search comes back
+empty, the agent reads that as "my selector was wrong", and starts guessing.
+
+It is expensive. On a live LinkedIn profile page an agent searched for
+`input[type=file]`, got `count: 0`, and spent **fifteen commands and six
+minutes** on progressively wider `run_js` DOM scans. There was no file input.
+The page creates it when you engage the drop zone, so no selector would ever
+have found one.
+
+**A search that finds nothing is an answer.** Climb this ladder once, in order,
+and then believe it:
+
+| | step | what it covers |
+|---|---|---|
+| 1 | **Re-read the response you have** | A navigation already returned the whole page in `text.added` |
+| 2 | **`find`** — `css`, then `text` | The document and every frame |
+| 3 | **`get_text`** | Rendered text, *including open shadow roots* |
+| 4 | **`find` with `"shadow": true`** | Turns shadow content into a ref you can act on |
+| 5 | **Stop** | It is not there |
+
+Step 3 is worth knowing: `get_text` reports *rendered* text, which follows the
+composed tree, so a component's internals are in it without any flag. Discovery
+is free. Step 4 exists only because reading a label is not the same as being
+able to click it — `shadow: true` is how you get the ref.
+
+**You will be told when step 4 is worth taking.** Shadow roots are counted on
+every snapshot but never walked, so:
+
+```json
+{"op": "find", "css": "#resume"}
+→ {"count": 0, "shadow_hosts": 2,
+   "note": "nothing matched, but this page has 2 shadow root(s) … retry with \"shadow\": true"}
+
+{"op": "click", "css": "#next"}
+→ {"dom_diff": {"text": {"added": []},
+                "shadow": {"hosts": 2, "note": "not walked; …"}}}
+```
+
+No hosts, no note — so on the overwhelming majority of pages this costs you
+nothing and says nothing.
+
+**What not to do:** `run_js` with `querySelectorAll` to "look harder". Steps 2–4
+already searched the document, its frames and its open shadow roots. Repeating
+that in JavaScript finds the same nothing, one round trip and a few thousand
+tokens later.
+
+**The usual real cause.** When a control is genuinely absent it is almost always
+because *the page has not created it yet*. Hidden file inputs are the classic:
+they are mounted when you click the visible upload button or drop zone. Act on
+the control the page is showing you, then look again.
+
+**The one limit, stated honestly.** A `mode: "closed"` shadow root returns
+`null` from `.shadowRoot` — no JavaScript can read it or even prove it exists,
+so nothing here can. "Not there" therefore means *nothing reachable has it*.
+Closed roots are rare outside browser internals like `<video>` controls.
+
 ## Types of work
 
 - **Reading a page:** `find` shells → `find_full` the interesting ones →

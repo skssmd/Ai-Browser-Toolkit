@@ -6,6 +6,7 @@ from itertools import groupby
 
 from selenium.common.exceptions import WebDriverException
 
+from .. import shadow
 from ..browser import BrowserSession
 from ..targeting import resolve_many, resolve_one
 
@@ -73,20 +74,43 @@ def find(session: BrowserSession, cmd) -> dict:
     matches: list[dict] = []
     try:
         for home, group in groupby(pairs, key=lambda pair: pair[1]):
-            elements = [element for element, _ in group]
+            batch = list(group)
+            elements = [element for element, _, _ in batch]
             if not session.enter_frame(home):
                 continue
             refs = session.refs.allocate(session.active_tab, elements, home)
             serialized = session.driver.execute_script(
                 _SERIALIZE, elements, mode == "full"
             )
-            matches.extend(
-                {"ref": ref, "html": item["html"], "visible": bool(item["visible"])}
-                for ref, item in zip(refs, serialized)
-            )
+            for (_el, _home, in_shadow), ref, item in zip(batch, refs, serialized):
+                found = {
+                    "ref": ref,
+                    "html": item["html"],
+                    "visible": bool(item["visible"]),
+                }
+                # Only worth saying when it is true: it tells the caller this
+                # one was out of reach of an ordinary search.
+                if in_shadow:
+                    found["shadow"] = True
+                matches.append(found)
     finally:
         session.leave_frames()
-    return {"count": len(matches), "truncated": truncated, "matches": matches}
+
+    result = {"count": len(matches), "truncated": truncated, "matches": matches}
+
+    # Nothing found is the moment an agent decides to give up, so it is the one
+    # moment it has to know where nobody looked. A bare zero is what sent a live
+    # agent through fifteen commands of escalating run_js scans; with the count
+    # attached, zero is either an answer or an instruction, and it says which.
+    if not matches and not getattr(cmd, "shadow", False):
+        hosts = shadow.host_count(session.driver)
+        if hosts:
+            result["shadow_hosts"] = hosts
+            result["note"] = (
+                f"nothing matched, but this page has {hosts} shadow root(s) that "
+                f"an ordinary search cannot see into; retry with \"shadow\": true"
+            )
+    return result
 
 
 def find_full(session: BrowserSession, cmd) -> dict:

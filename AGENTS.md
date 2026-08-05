@@ -26,7 +26,7 @@ its own — background it or give it its own terminal.
 `GET /ops` lists every operation and its parameters. Read it instead of
 guessing a parameter name.
 
-## The seven rules
+## The eight rules
 
 **1. Read the response you already got.** Every command that changes the page
 returns `dom_diff`, saying what changed. Do **not** follow a click with
@@ -78,6 +78,29 @@ hiding.
 ```json
 {"op": "input", "ref": "el_4", "value": "C:/docs/passport.pdf"}
 ```
+
+**8. A search that finds nothing is an answer.** `count: 0` does not mean your
+selector was wrong. Climb this ladder once, then stop:
+
+1. **Re-read the response you already have.** A navigation returned the whole
+   page in `dom_diff.text.added`. The thing is probably in it.
+2. **Pinpoint with `find`** — `css` first, `text` second.
+3. **`get_text`** if you need the rendered page. This includes text inside open
+   shadow roots, so a component's own labels are already in it.
+4. **`{"op": "find", "css": "…", "shadow": true}`** to turn something you can
+   read into a ref you can click. Only needed for shadow-root internals, and
+   the response tells you when: an empty `find` on such a page comes back with
+   `shadow_hosts`, and a diff that changed nothing there carries `"shadow"`.
+5. **Nothing? It is not there.** Do not escalate to `run_js` DOM scans — a live
+   agent burned fifteen commands and six minutes doing exactly that.
+
+The usual reason a control is missing is that **it does not exist yet**. Upload
+inputs in particular are created when you engage the drop zone or button, not
+before. Click the thing that would create it, then look again.
+
+One honest limit: a `mode: "closed"` shadow root cannot be read by *any*
+JavaScript, so "not there" means nothing reachable has it. Closed roots are
+rare outside browser internals.
 
 ## Errors are a closed set
 

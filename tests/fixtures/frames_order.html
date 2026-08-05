@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>frames whose two orders disagree</title>
+<!--
+  Taken from linkedin.com/login, where it broke a fix that had passed every
+  other test.
+
+  A page has two orderings of its frames and they are not the same list:
+
+    * document order -- where the <iframe> elements sit in the DOM
+    * browsing context order -- what `window.frames` indexes
+
+  Chrome orders `window.frames` by when each context was attached, so a widget
+  that creates its real frame first and then inserts a hidden boot frame *ahead*
+  of it in the DOM ends up with the two orders swapped. On LinkedIn:
+
+      DOM position 0 = the 0x0 boot frame  = window.frames[1]
+      DOM position 1 = the visible button  = window.frames[0]
+
+  That matters because a frame identified in one ordering and entered in the
+  other lands somewhere else entirely -- and lands there *silently*, reporting
+  the wrong document's content as the page. It only shows when a frame is
+  skipped, which is why the boot frame here is 0x0: with both walked, either
+  ordering reads both and the mistake hides.
+
+  This file reproduces the swap: the visible frame is created first (so it is
+  window.frames[0]) and inserted second (so it is DOM position 1).
+-->
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in with Microsoft</p>
+  <div id="host"></div>
+
+  <script>
+    const host = document.getElementById('host');
+
+    // Created first, so first among the browsing contexts.
+    const visible = document.createElement('iframe');
+    visible.src = 'framed_button.html';
+    visible.width = 420;
+    visible.height = 60;
+    host.appendChild(visible);
+
+    // Created second, inserted before it, and too small to be worth walking.
+    const boot = document.createElement('iframe');
+    boot.src = 'framed_preload.html';
+    boot.style.cssText = 'width:0;height:0;border:0';
+    host.insertBefore(boot, visible);
+  </script>
+</body>

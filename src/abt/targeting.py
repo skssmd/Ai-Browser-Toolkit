@@ -13,6 +13,7 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from . import shadow
 from .browser import BrowserSession
 from .errors import OpError
 
@@ -174,20 +175,26 @@ def resolve_many(
     cmd,
     limit: int,
     visible_only: bool,
-) -> tuple[list[tuple[WebElement, tuple[int, ...]]], bool]:
-    """Every match on the page, each paired with the frame it was found in.
+) -> tuple[list[tuple[WebElement, tuple[int, ...], bool]], bool]:
+    """Every match on the page, each with where it was found.
 
-    The host document first, then each frame in reading order -- so results
-    arrive in the order a person would come across them, and the caller knows
-    which document to switch into before touching any of them.
+    Returns `(element, frame, in_shadow)`. The host document first, then each
+    frame in reading order -- so results arrive in the order a person would come
+    across them, and the caller knows which document to switch into before
+    touching any of them.
+
+    With `shadow: true` the search in each document also descends its open
+    shadow roots, so "the whole page" means every tree reachable from it. That
+    is what lets an empty result be reported as an answer instead of a shrug.
     """
     if getattr(cmd, "ref", None) is not None:
         home = session.refs.frame_of(session.active_tab, cmd.ref)
-        return [(session.resolve_ref(cmd.ref), home)], False
+        return [(session.resolve_ref(cmd.ref), home, False)], False
 
+    pierce = bool(getattr(cmd, "shadow", False))
     by, selector = locator(cmd)
     homes = [()] + session.frame_paths()
-    found: list[tuple[WebElement, tuple[int, ...]]] = []
+    found: list[tuple[WebElement, tuple[int, ...], bool]] = []
     try:
         for home in homes:
             if not session.enter_frame(home):
@@ -195,10 +202,25 @@ def resolve_many(
             try:
                 elements = session.driver.find_elements(by, selector)
             except WebDriverException:
-                continue
+                elements = []
             if visible_only:
                 elements = [e for e in elements if _is_displayed(e)]
-            found.extend((element, home) for element in elements)
+            found.extend((element, home, False) for element in elements)
+
+            if pierce:
+                light = set(elements)
+                mode = "css" if cmd.css is not None else "text"
+                value = cmd.css if cmd.css is not None else cmd.text
+                for element in shadow.search(session.driver, value, mode, limit + 1):
+                    # The walk starts at the document, so it re-finds what the
+                    # ordinary search already returned. Report each once, and
+                    # mark only the ones that were genuinely out of reach.
+                    if element in light:
+                        continue
+                    if visible_only and not _is_displayed(element):
+                        continue
+                    found.append((element, home, True))
+
             if len(found) > limit:
                 break
     finally:

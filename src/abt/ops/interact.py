@@ -110,8 +110,29 @@ const x = r.left + r.width / 2, y = r.top + r.height / 2;
 if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
   return {ok: true};
 }
-const top = document.elementFromPoint(x, y);
+// `elementFromPoint` answers from the document's point of view, so anything
+// inside a shadow root comes back as its *host* -- and a component's own
+// button would read as covered by the element it lives in. Descend through
+// each root under the point to find what would really be hit.
+let top = document.elementFromPoint(x, y);
+for (let depth = 0; depth < 10 && top && top.shadowRoot; depth++) {
+  const inner = top.shadowRoot.elementFromPoint(x, y);
+  if (!inner || inner === top) break;
+  top = inner;
+}
 if (!top || top === el || el.contains(top) || top.contains(el)) { return {ok: true}; }
+// `contains` does not cross a shadow boundary either, so ask the composed
+// path: if the target is on the way from the hit element to the window, the
+// click lands on it.
+try {
+  if (typeof el.getRootNode === 'function') {
+    let node = top;
+    while (node) {
+      if (node === el) { return {ok: true}; }
+      node = node.parentNode || (node.host || null);
+    }
+  }
+} catch (e) {}
 return {ok: false, hit: top.tagName.toLowerCase()
   + (top.id ? '#' + top.id : '')
   + (top.className && typeof top.className === 'string'

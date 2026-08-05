@@ -427,13 +427,65 @@ fields, CAPTCHAs, embedded editors, and most OAuth widgets.
 **What it costs.** Nothing on a page with no frames — the snapshot script
 already walks the document, so it reports the frames it found in the call that
 was happening anyway, and a frameless answer ends there without one extra
-request. Measured on a frameless page: **10.8 ms before, 10.5 ms after.** A page
-with one frame pays about **+43 ms** per snapshot for content it previously
+request. Measured on a frameless page: **9.9 ms before, 9.2 ms after.** A page
+with one frame pays about **+60 ms** per snapshot for content it previously
 could not see at all. At most 8 frames and 2 levels deep, and frames too small
 to see or click are skipped — including the 0×0 preload sign-in widgets mount
 beside their real button.
 
+A faster version of this entered frames by number instead of by element, which
+saved about 32 ms a frame. It was wrong. A page has *two* orderings of its
+frames — document order, and the `window.frames` order the WebDriver spec says
+a number indexes — and on `linkedin.com/login` they are exactly reversed. It
+skipped Google's 0×0 boot frame, entered it anyway, and reported its contents
+as the page. See `frames.enter` if you are ever tempted to speed this up.
+
 Turn it off with `--no-frames`, or tune with `--max-frames` / `--max-frame-depth`.
+
+### Shadow roots — counted, not walked
+
+Frames are folded into the tracks because a page that has them almost always has
+content in them. **Shadow roots are the opposite trade**, so they are opt-in:
+most pages have no author roots at all, and the ones that do keep component
+internals there. On the LinkedIn page that prompted this there was one root and
+nothing in it — walking it every snapshot would have cost the whole session and
+bought nothing.
+
+So the snapshot **counts** hosts without looking inside. That is one property
+read on a walk already happening (measured: no change from ~11 ms), and it turns
+an empty diff from a silence into a signpost:
+
+```json
+{"op": "click", "css": "#next"}
+→ {"dom_diff": {"text": {"added": []},
+                "shadow": {"hosts": 2, "note": "not walked; …"}}}
+
+{"op": "find", "css": "#resume"}
+→ {"count": 0, "shadow_hosts": 2, "note": "… retry with \"shadow\": true"}
+```
+
+Both appear **only** when hosts exist and the result is otherwise silent, so an
+ordinary diff on an ordinary page carries neither.
+
+To look inside, ask:
+
+```json
+{"op": "find", "css": "input[type=file]", "shadow": true}
+→ {"count": 1, "matches": [{"ref": "el_12", "html": "…", "shadow": true}]}
+```
+
+Refs from a shadow root click like any other. `css` and `text` only — the walk
+is `querySelectorAll` on each root, which is the only way across the boundary
+and does not speak xpath.
+
+Note that `get_text` **already** reports open shadow content, because rendered
+text follows the composed tree. So discovery is free and `shadow: true` is only
+needed to turn something you can read into something you can act on.
+
+**The limit:** `mode: "closed"` makes `.shadowRoot` null. No JavaScript can read
+such a root or prove it exists, so nothing here can either. "Not found" means
+nothing reachable has it — see the search ladder in
+[`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md).
 
 ### The manual check
 

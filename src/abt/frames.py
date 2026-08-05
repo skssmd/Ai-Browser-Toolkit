@@ -22,14 +22,23 @@ written for.
 toolkit is for, so the budget is round trips rather than work. A page with no
 frames pays *nothing*: the snapshot script already walks the document, so it
 reports the frames it found in the same call that was happening anyway, and a
-frameless answer ends the matter without a single extra request. A page with
-frames pays one switch and one snapshot each, bounded on both depth and count,
-and skips anything too small to see or click.
+frameless answer ends the matter without one extra request. A page with frames
+pays a lookup, a switch and a snapshot for each, bounded on both depth and
+count, and skips anything too small to see or click.
+
+There was a cheaper version that dropped the lookup. See `enter` for what it
+cost instead.
 """
 
 from __future__ import annotations
 
 from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.common.by import By
+
+# Frames, in the one ordering everything here uses: where the elements sit in
+# the document. `find_elements` and `querySelectorAll` agree on it, which is
+# what makes a position mean the same thing to the scan and to the switch.
+_FRAME_SELECTOR = "iframe, frame"
 
 # Frames walked per snapshot. An ad-heavy page can carry dozens, all of them
 # somebody else's inventory; the cap keeps a pathological page from turning one
@@ -59,9 +68,7 @@ for (let i = 0; i < nodes.length; i++) {
   const f = nodes[i];
   if (f.getClientRects().length === 0) continue;
   if (f.offsetWidth < min || f.offsetHeight < min) continue;
-  for (let k = 0; k < window.length; k++) {
-    if (window[k] === f.contentWindow) { out.push(k); break; }
-  }
+  out.push(i);
 }
 return out;
 """
@@ -92,19 +99,36 @@ def leave(driver) -> None:
 def enter(driver, path: tuple[int, ...]) -> bool:
     """Switch into the frame at `path`, from the top down. False if it is gone.
 
-    A path is positions among the child browsing contexts, not handles, because
-    a WebElement for a frame is only valid in its parent and there is nothing
-    else durable to hold. Positions are what the driver switches by natively,
-    so each step is a single request rather than a lookup and a switch.
+    A path is document positions -- where each `<iframe>` sits among its
+    siblings -- not handles, because a WebElement for a frame is only valid in
+    its parent and there is nothing else durable to hold. The cost is that a
+    page which adds or removes a frame between snapshot and use shifts the ones
+    after it: the same exposure `find` has always had, and the reason a ref
+    still verifies the element it lands on.
 
-    The cost of positions is that a page which adds or removes a frame between
-    snapshot and use shifts the ones after it -- the same exposure `find` has
-    always had, and the reason a ref still verifies the element it lands on.
+    **Each step fetches the element rather than passing the number.** Handing
+    the driver an integer is one request instead of two and was worth 32ms a
+    frame, but it means something else. A page has two orderings of its frames
+    -- document order, and the `window.frames` order that the WebDriver spec
+    says an integer indexes -- and they are not always the same list. On
+    linkedin.com/login they are exactly reversed: Google's 0x0 boot frame is
+    first in the DOM and second in `window.frames`, because Chrome orders that
+    list by when each context attached.
+
+    So the fast version skipped the boot frame, entered it anyway, and reported
+    its contents as the page while the real sign-in button stayed invisible --
+    the same silent wrong answer this whole module exists to remove, now one
+    level further in and harder to see. An element reference means the same
+    frame under either ordering, which is worth more than the 32ms.
     """
     leave(driver)
-    for slot in path:
+    for index in path:
         try:
-            driver.switch_to.frame(slot)
+            siblings = driver.find_elements(By.CSS_SELECTOR, _FRAME_SELECTOR)
+            if index >= len(siblings):
+                leave(driver)
+                return False
+            driver.switch_to.frame(siblings[index])
         except WebDriverException:
             leave(driver)
             return False

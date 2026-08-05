@@ -124,14 +124,39 @@ class GetText(OptionalTarget):
     op: Literal["get_text"]
 
 
-class Find(Target):
+class ShadowSearch(Target):
+    """A search that can also look inside open shadow roots.
+
+    Off by default. Most pages have no author shadow roots at all, and the ones
+    that do keep component internals there rather than anything you came for --
+    so the walk is opt-in and a plain search stays the cheap common case. When
+    a search comes back empty on a page that has hosts, the response says so,
+    which is the cue to turn this on.
+
+    css and text only. The walk is `querySelectorAll` on each root, which is
+    the only way across the boundary and does not speak xpath.
+    """
+
+    shadow: bool = False
+
+    @model_validator(mode="after")
+    def _shadow_needs_a_reachable_selector(self):
+        if self.shadow and (self.xpath is not None or self.ref is not None):
+            raise ValueError(
+                "shadow search takes css or text; xpath cannot cross a shadow "
+                "boundary and a ref already names an element"
+            )
+        return self
+
+
+class Find(ShadowSearch):
     op: Literal["find"]
     mode: Literal["shell", "full"] = "shell"
     limit: int = Field(default=100, ge=1, le=1000)
     visible_only: bool = False
 
 
-class FindFull(Target):
+class FindFull(ShadowSearch):
     op: Literal["find_full"]
     limit: int = Field(default=100, ge=1, le=1000)
     visible_only: bool = False

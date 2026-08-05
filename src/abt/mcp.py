@@ -76,9 +76,13 @@ TOOLS: list[dict] = [
     {
         "name": "browser_find",
         "description": (
-            "Search the page. Each match returns its tag and attributes with "
-            "children stripped, plus a ref. full=true adds inner content and is "
-            "much larger."
+            "Search the page, iframes included. Each match returns its tag and "
+            "attributes with children stripped, plus a ref. full=true adds inner "
+            "content and is much larger. count=0 is an answer, not a bad "
+            "selector: do not retry with wider selectors or run_js DOM scans. If "
+            "the reply carries shadow_hosts, retry once with shadow=true; "
+            "otherwise the element does not exist yet, so click whatever would "
+            "create it (upload inputs are mounted on click)."
         ),
         "inputSchema": _schema({
             "css": {"type": "string"},
@@ -87,6 +91,13 @@ TOOLS: list[dict] = [
             "full": {"type": "boolean"},
             "limit": {"type": "integer"},
             "visible_only": {"type": "boolean"},
+            "shadow": {
+                "type": "boolean",
+                "description": (
+                    "Also search open shadow roots. css/text only. Use when a "
+                    "reply reported shadow_hosts."
+                ),
+            },
         }),
     },
     {
@@ -228,7 +239,9 @@ def to_op(tool: str, args: dict) -> Any:
 
     if tool == "browser_find":
         payload = {"op": "find_full" if args.get("full") else "find"}
-        payload.update(_one_of(args, "css", "xpath", "text", "limit", "visible_only"))
+        payload.update(
+            _one_of(args, "css", "xpath", "text", "limit", "visible_only", "shadow")
+        )
         return payload
 
     if tool == "browser_click":

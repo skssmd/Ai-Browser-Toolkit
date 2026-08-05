@@ -74,16 +74,19 @@ const text = [];
 const actionable = [];
 const els = [];
 const frames = [];
-if (!document.body) { return {dom: dom, text: text, actionable: actionable, frames: frames}; }
+// Hosts are counted, never entered. See shadow.py: the count is what turns an
+// empty diff from a silence into "nothing changed where I looked".
+let shadowHosts = 0;
+if (!document.body) { return {dom: dom, text: text, actionable: actionable, frames: frames, shadowHosts: 0}; }
 
 // Which frames this document embeds, answered here because the snapshot is
 // already a round trip and a second one to ask "are there any?" would be the
 // whole cost of frame support on the pages that have none.
 //
-// Reported as positions among the child browsing contexts, which is what the
-// driver switches by -- one call instead of fetching the elements and sending
-// one back. Reference identity is the only thing about a cross-origin window
-// that still works, and it is exactly what is needed here.
+// Reported as document positions -- where the <iframe> sits among its
+// siblings. A page has a second, different ordering of the same frames in
+// `window.frames`, and on linkedin.com/login the two disagree; see frames.py
+// for why everything here stays in this one.
 const framesOf = () => {
   const nodes = document.querySelectorAll('iframe, frame');
   for (let i = 0; i < nodes.length; i++) {
@@ -92,9 +95,7 @@ const framesOf = () => {
     // that sign-in widgets mount beside their real button is the usual one.
     if (f.getClientRects().length === 0) continue;
     if (f.offsetWidth < MIN_FRAME || f.offsetHeight < MIN_FRAME) continue;
-    for (let k = 0; k < window.length; k++) {
-      if (window[k] === f.contentWindow) { frames.push(k); break; }
-    }
+    frames.push(i);
   }
 };
 try { framesOf(); } catch (e) {}
@@ -210,6 +211,10 @@ while (node) {
     // this loop and both the text and actionable tracks gate on it.
     const rendered = el.getClientRects().length > 0;
 
+    // One property read on a node the walk already has in hand. Not entered:
+    // this says how many places were not looked at, never what is in them.
+    if (el.shadowRoot) shadowHosts++;
+
     if (text.length < MAX_TEXT && rendered) {
       let value = null;
       if (tag === 'INPUT') {
@@ -299,7 +304,8 @@ while (node) {
 // back. Only the handful the diff turns out to care about are ever fetched, and
 // the array is replaced by the next snapshot, so nothing is pinned for long.
 window.__abtActionable = els;
-return {dom: dom, text: text, actionable: actionable, frames: frames};
+return {dom: dom, text: text, actionable: actionable, frames: frames,
+        shadowHosts: shadowHosts};
 """
 
 
@@ -312,7 +318,7 @@ return arguments[0].map((i) => stash[i] || null);
 """
 
 def _blank() -> dict:
-    return {"dom": [], "text": [], "actionable": [], "frames": []}
+    return {"dom": [], "text": [], "actionable": [], "frames": [], "shadow_hosts": 0}
 
 
 def snapshot(
@@ -368,6 +374,7 @@ def snapshot(
         "text": [str(line) for line in raw.get("text") or []],
         "actionable": actionable,
         "frames": [int(slot) for slot in raw.get("frames") or []],
+        "shadow_hosts": int(raw.get("shadowHosts") or 0),
     }
 
 
@@ -507,6 +514,8 @@ def merge_frame(state: dict, sub: dict, path: tuple[int, ...]) -> None:
     """
     state["dom"].extend(sub.get("dom") or [])
     state["text"].extend(sub.get("text") or [])
+    # A frame's unwalked roots are unwalked places too, so they add up.
+    state["shadow_hosts"] = state.get("shadow_hosts", 0) + sub.get("shadow_hosts", 0)
     tag = ".".join(str(index) for index in path)
     for entry in sub.get("actionable") or []:
         entry["frame"] = path

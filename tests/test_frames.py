@@ -78,6 +78,49 @@ def test_the_cross_origin_fixture_is_genuinely_cross_origin(cross):
     assert reachable is False
 
 
+@pytest.fixture
+def swapped(one_tab, base_url):
+    run(one_tab, op="goto", url=f"{base_url}/frames_order.html")
+    return one_tab
+
+
+def test_the_two_frame_orderings_really_do_disagree(swapped):
+    """Guards the tests again: no mismatch, no test.
+
+    If Chrome ever orders `window.frames` in document order, this fixture stops
+    reproducing the LinkedIn failure and the test below starts passing for the
+    wrong reason. Assert the premise rather than trust it.
+    """
+    slots = swapped.driver.execute_script(
+        "return [...document.querySelectorAll('iframe')].map((f) => {"
+        "  for (let k = 0; k < window.length; k++) {"
+        "    if (window[k] === f.contentWindow) return k;"
+        "  } return -1; });"
+    )
+    assert slots == [1, 0], f"expected the orders to be swapped, got {slots}"
+
+
+def test_a_frame_is_entered_by_document_position_not_context_position(swapped):
+    """The bug that survived every other test, found on the live page.
+
+    A frame picked out in one ordering and entered in the other lands in a
+    different document and says nothing about it -- here, the walk would skip
+    the 0x0 boot frame, then enter it anyway and report its contents as the
+    page while the real button stayed invisible.
+    """
+    text = run(swapped, op="get_text")
+
+    assert "Continue with Google" in text
+    assert "gis provider button boot" not in text
+
+
+def test_a_ref_lands_in_the_right_document_when_the_orders_disagree(swapped):
+    """And acting on it hits the button, not whatever else was at that index."""
+    ref = run(swapped, op="find", css="#google")["matches"][0]["ref"]
+
+    assert "Signed in as Shahariar" in added(run(swapped, op="click", ref=ref))
+
+
 # --- the reported bug ---------------------------------------------------------
 
 

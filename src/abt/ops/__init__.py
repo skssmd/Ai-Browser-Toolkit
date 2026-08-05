@@ -146,6 +146,33 @@ def actionable_report(
     return {"added": added, "truncated": truncated}
 
 
+def note_shadow(info: dict, after: dict) -> None:
+    """Say how many trees this report did not look into, when that matters.
+
+    Shadow roots are counted by the snapshot and never walked, so a change
+    inside one shows up as no change at all. That silence is indistinguishable
+    from "the page did not react" -- which is exactly the reading that sends an
+    agent off hunting with `run_js`.
+
+    Added only where the silence is ambiguous: an empty text diff, or a
+    navigation whose "full page" is quietly missing part of itself. An ordinary
+    diff that already reports something needs no footnote, and putting one on
+    every response is the cost this design exists to avoid.
+    """
+    hosts = after.get("shadow_hosts", 0)
+    if not hosts:
+        return
+    if info.get("text", {}).get("added") and not info.get("navigation"):
+        return
+    info["shadow"] = {
+        "hosts": hosts,
+        "note": (
+            "not walked; content inside a shadow root is not in this report. "
+            'search it with {"shadow": true}'
+        ),
+    }
+
+
 def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     """Run an interactive op, then report what it changed on the page.
 
@@ -198,6 +225,8 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
             controls = actionable_report(session, before["actionable"], after)
             if controls is not None:
                 info["actionable"] = controls
+
+    note_shadow(info, after)
     result["dom_diff"] = info
     return result
 
@@ -228,5 +257,6 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
         "note": "text is the full page you landed on, not a diff",
         "text": page_text(after["text"], before["text"], cmd.include_removed),
     }
+    note_shadow(info, after)
     result["dom_diff"] = info
     return result
