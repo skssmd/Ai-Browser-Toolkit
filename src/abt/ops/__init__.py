@@ -68,6 +68,12 @@ def dispatch(session: BrowserSession, cmd) -> Any:
         raise OpError("invalid_op", f"no handler registered for op {cmd.op!r}")
     if cmd.op not in NO_HEALTH_CHECK:
         session.health_check()
+        # Every command starts on the top document. Frame context is sticky and
+        # survives the command that set it, so a click on something inside a
+        # sign-in widget would leave the next `run_js` or `get_html` evaluating
+        # in the widget. The handlers that need to be somewhere else go there
+        # themselves; nobody has to remember to come back.
+        session.leave_frames()
 
     want_diff = session.diff_enabled if getattr(cmd, "diff", None) is None else cmd.diff
     if cmd.op in DIFFABLE_OPS and want_diff:
@@ -105,15 +111,25 @@ def actionable_report(
         return None
 
     # Only now, knowing the handful that matter, are live handles fetched.
-    elements = session.actionable_elements(indices)
+    elements = session.actionable_elements(after["actionable"], indices)
     if not elements:
         return None
 
     # Ref allocation is a convenience, never the point of the command: a driver
     # that will not hand back handles must not turn a successful click into a
     # failure.
+    #
+    # Allocated one frame at a time, because a ref carries the document its
+    # element lives in and a single diff can pick up controls from several --
+    # the page's own and two widgets', all in the same click.
     try:
-        refs = session.refs.allocate(session.active_tab, elements)
+        refs: list[str] = []
+        for entry, element in zip(entries, elements):
+            refs.extend(
+                session.refs.allocate(
+                    session.active_tab, [element], tuple(entry.get("frame") or ())
+                )
+            )
     except Exception:
         return None
 

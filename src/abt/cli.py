@@ -111,6 +111,18 @@ def serve(
         help="Seconds of network silence that count as idle. Raise it for an app "
         "that pauses between chained requests; the gap looks like being finished.",
     ),
+    no_frames: bool = typer.Option(
+        False,
+        "--no-frames/--frames",
+        help="Stop reading inside iframes. Frames cost nothing on a page that has "
+        "none, so turn this off only for a page whose frames are all ads.",
+    ),
+    max_frames: int = typer.Option(
+        8, "--max-frames", help="Most frames to read per snapshot."
+    ),
+    max_frame_depth: int = typer.Option(
+        2, "--max-frame-depth", help="How far to descend into nested frames."
+    ),
 ) -> None:
     """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
@@ -129,6 +141,9 @@ def serve(
         diff_max_tokens=diff_max_tokens,
         settle_timeout=settle_timeout,
         settle_network_grace=settle_network_grace,
+        frames_enabled=not no_frames,
+        max_frames=max_frames,
+        max_frame_depth=max_frame_depth,
     )
     typer.echo(f"starting {browser} (profile: {session.profile})")
     session.start()

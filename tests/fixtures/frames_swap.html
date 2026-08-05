@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>a control handed over to a frame</title>
+<!--
+  The host document offers the control itself, then replaces it with the
+  widget's version of the same control -- the shape of a page that mounts a
+  real sign-in button once its script has loaded and drops the placeholder.
+
+  Nothing about the two buttons differs except which document they are in. If
+  that is not part of what identifies a control, this swap is invisible: the
+  diff sees the same label before and after and reports that nothing happened,
+  while the only clickable button on the page is now a different element that
+  nobody has been handed a ref to.
+-->
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in with Microsoft</p>
+  <button id="host-google">Continue with Google</button>
+  <iframe id="widget" src="framed_button.html" style="width:0;height:0;border:0"></iframe>
+
+  <script>
+    window.swap = () => {
+      document.getElementById('host-google').remove();
+      const f = document.getElementById('widget');
+      f.style.width = '420px';
+      f.style.height = '60px';
+    };
+  </script>
+</body>

@@ -90,6 +90,7 @@ abt serve --port 9000                # another port
 abt serve --profile ~/work-profile   # another profile
 abt serve --no-log --no-diff         # leanest responses
 abt serve --settle-timeout 10        # give a slow SPA longer to render
+abt serve --no-frames                # stop reading inside iframes
 ```
 
 Stop it with `abt shutdown` (or `POST {"op":"shutdown"}`), which closes Chrome
@@ -401,6 +402,38 @@ when they accept more than one. `input` writes to them hidden:
 again on top of a diffed op, and more when controls actually appear. Turn it off
 per command with `"actionable": false` for the steps in a batch whose new
 controls you will never click.
+
+### Frames — on by default
+
+**A frame is a separate document, and everything reads straight through it.**
+All three tracks, plus `find`, `get_text` and every selector, cover the frames a
+page embeds as well as the page itself. Refs from inside one act normally; the
+toolkit remembers which document each came from and goes back there.
+
+This exists because the alternative is silence. On `linkedin.com/login`, Google
+draws **Continue with Google** inside a frame from `accounts.google.com`. Before
+this, the button was plainly on screen and:
+
+```json
+{"op": "find", "text": "Continue with Google"}   → {"count": 0, "matches": []}
+{"op": "get_text"}                               → "…Sign in with Microsoft\nSign in with Apple…"
+```
+
+No error, no warning, no truncation notice — just a confident answer with the
+page's main control missing from it. An error is something an agent reacts to;
+an empty answer is something it believes. The same blindness covers Stripe card
+fields, CAPTCHAs, embedded editors, and most OAuth widgets.
+
+**What it costs.** Nothing on a page with no frames — the snapshot script
+already walks the document, so it reports the frames it found in the call that
+was happening anyway, and a frameless answer ends there without one extra
+request. Measured on a frameless page: **10.8 ms before, 10.5 ms after.** A page
+with one frame pays about **+43 ms** per snapshot for content it previously
+could not see at all. At most 8 frames and 2 levels deep, and frames too small
+to see or click are skipped — including the 0×0 preload sign-in widgets mount
+beside their real button.
+
+Turn it off with `--no-frames`, or tune with `--max-frames` / `--max-frame-depth`.
 
 ### The manual check
 

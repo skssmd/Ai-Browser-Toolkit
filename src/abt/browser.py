@@ -11,6 +11,7 @@ from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.edge.options import Options as EdgeOptions
 
 from . import diff as diff_util
+from . import frames as frame_util
 from .errors import OpError
 from .refs import RefCache
 
@@ -67,6 +68,9 @@ class BrowserSession:
         diff_max_tokens: int = 1000,
         settle_timeout: float = 5.0,
         settle_network_grace: float = _SETTLE_NETWORK_GRACE,
+        frames_enabled: bool = True,
+        max_frames: int = frame_util.MAX_FRAMES,
+        max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
     ) -> None:
         browser = browser.lower()
         if browser not in _SUPPORTED_BROWSERS:
@@ -80,6 +84,9 @@ class BrowserSession:
         self.action_timeout = action_timeout
         self.settle_timeout = settle_timeout
         self.settle_network_grace = settle_network_grace
+        self.frames_enabled = frames_enabled
+        self.max_frames = max_frames
+        self.max_frame_depth = max_frame_depth
         self.diff_enabled = diff_enabled
         self.diff_max_tokens = diff_max_tokens
         self.refs = RefCache()
@@ -89,6 +96,9 @@ class BrowserSession:
         self._order: list[str] = []
         self._counter = 0
         self._captured: set[str] = set()  # handles already armed for console
+        # Whether the driver may be pointed at a frame rather than the top
+        # document. See `leave_frames` for why this is tracked rather than asked.
+        self._in_frame = False
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -442,15 +452,146 @@ class BrowserSession:
     def location(self) -> dict:
         return {"url": self.driver.current_url, "title": self.driver.title}
 
+    # --- frames ----------------------------------------------------------------
+
+    def leave_frames(self) -> None:
+        """Put the driver back on the top document.
+
+        Free when it is already there. Every command begins with this call, so
+        on the frameless pages that are nearly all of them it must cost nothing:
+        only `enter_frame` ever moves the driver off the top document, so a flag
+        it sets is enough to know whether there is anything to undo. Erring
+        towards "maybe inside" only ever costs one redundant switch; the other
+        direction would silently retarget a command, so nothing sets it False
+        except actually arriving back.
+        """
+        if not self._in_frame:
+            return
+        frame_util.leave(self.driver)
+        self._in_frame = False
+
+    def enter_frame(self, path) -> bool:
+        """Switch into a frame by path. The top document for an empty path."""
+        path = tuple(path)
+        if not path:
+            self.leave_frames()
+            return True
+        self._in_frame = True
+        entered = frame_util.enter(self.driver, path)
+        if not entered:
+            self._in_frame = False  # a failed entry leaves the driver at the top
+        return entered
+
+    def frame_paths(self) -> list[tuple[int, ...]]:
+        """Frames on this page worth walking, in reading order.
+
+        For the callers that are not snapshotting. `snapshot` gets the same
+        answer for free out of its own walk and does not come through here.
+        """
+        if not self.frames_enabled:
+            return []
+        self.leave_frames()
+        found: list[tuple[int, ...]] = []
+        pending = [(slot,) for slot in frame_util.child_slots(self.driver)]
+        try:
+            while pending and len(found) < self.max_frames:
+                path = pending.pop(0)
+                found.append(path)
+                if len(path) < self.max_frame_depth and self.enter_frame(path):
+                    pending.extend(
+                        path + (slot,) for slot in frame_util.child_slots(self.driver)
+                    )
+        finally:
+            self.leave_frames()
+        return found
+
+    def resolve_ref(self, ref: str):
+        """A ref's element, with the driver switched into the document holding it.
+
+        Both halves matter and in this order: the staleness check inside the
+        cache asks the element a question, and asking it from the wrong document
+        answers "stale" for an element that is perfectly alive.
+        """
+        self.enter_frame(self.refs.frame_of(self.active_tab, ref))
+        return self.refs.get(self.active_tab, ref)
+
     # --- DOM diff baselines ----------------------------------------------------
 
     def snapshot(self) -> dict:
-        """The active tab's state as its dom, text, and actionable tracks."""
-        return diff_util.snapshot(self.driver)
+        """The active tab's state as its dom, text, and actionable tracks.
 
-    def actionable_elements(self, indices: list[int]) -> list:
-        """Live handles for actionable entries the last snapshot collected."""
-        return diff_util.actionable_elements(self.driver, indices)
+        The host document first, then each frame in reading order, folded into
+        one set of tracks. A frame is a separate document that no amount of
+        walking the parent will reach, so the only way its content reaches the
+        diff is to go in and walk it too.
+
+        The driver is returned to the top document afterwards, always: frame
+        context is sticky, and a leak would silently retarget every command
+        after this one.
+
+        Each document's snapshot reports the frames *it* embeds, so the walk is
+        driven by the snapshots themselves and a page with no frames pays
+        nothing at all -- no scan, no switch, not one extra request. That
+        matters more than it sounds: this runs twice per diffed command, and
+        the diff is the reason anyone is here.
+        """
+        self.leave_frames()
+        state = diff_util.snapshot(self.driver, min_frame_px=frame_util.MIN_FRAME_PX)
+        if not self.frames_enabled or not state["frames"]:
+            return state
+
+        pending = [(slot,) for slot in state["frames"]]
+        walked = 0
+        try:
+            while pending and walked < self.max_frames:
+                path = pending.pop(0)
+                if not self.enter_frame(path):
+                    continue
+                inner = diff_util.snapshot(
+                    self.driver, min_frame_px=frame_util.MIN_FRAME_PX
+                )
+                diff_util.merge_frame(state, inner, path)
+                walked += 1
+                if len(path) < self.max_frame_depth:
+                    pending.extend(path + (slot,) for slot in inner["frames"])
+        finally:
+            self.leave_frames()
+        return state
+
+    def actionable_elements(self, entries: list[dict], indices: list[int]) -> list:
+        """Live handles for the entries a diff picked, in the order it picked them.
+
+        Entries carry the frame they were collected in, so the picks are grouped
+        by document and each group fetched from inside its own -- the array the
+        walk parked belongs to that document's window and exists nowhere else.
+        """
+        if not indices:
+            return []
+        groups: dict[tuple[int, ...], list[tuple[int, int]]] = {}
+        for position, index in enumerate(indices):
+            if index >= len(entries):
+                return []
+            entry = entries[index]
+            home = tuple(entry.get("frame") or ())
+            groups.setdefault(home, []).append((entry.get("slot", index), position))
+
+        found: list = [None] * len(indices)
+        try:
+            for home, picks in groups.items():
+                if not self.enter_frame(home):
+                    return []
+                handles = diff_util.actionable_elements(
+                    self.driver, [slot for slot, _ in picks]
+                )
+                if len(handles) != len(picks):
+                    return []
+                for (_slot, position), handle in zip(picks, handles):
+                    found[position] = handle
+        finally:
+            self.leave_frames()
+        if any(handle is None for handle in found):
+            return []
+        return found
 
     def baseline(self) -> dict | None:
         """The stored (url, dom, text, actionable) state for the active tab."""

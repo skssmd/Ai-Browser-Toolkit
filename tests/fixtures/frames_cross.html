@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>a control behind an origin boundary</title>
+<!--
+  The real case, reduced. `?origin=` points at a second local server, and a
+  different port is a different origin, so the browser refuses the parent
+  document any access to what is inside.
+
+  This fixture exists to stop the easy wrong fix. Recursing into
+  `iframe.contentDocument` from the snapshot script passes every same-origin
+  test and then fails on exactly the page the bug was reported from -- the
+  frames worth seeing are usually somebody else's widget.
+-->
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in with Microsoft</p>
+  <script>
+    const origin = new URLSearchParams(location.search).get('origin');
+    const frame = document.createElement('iframe');
+    frame.src = origin + '/framed_button.html';
+    frame.width = 420;
+    frame.height = 60;
+    document.body.appendChild(frame);
+  </script>
+</body>

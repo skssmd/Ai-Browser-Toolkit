@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from itertools import groupby
+
+from selenium.common.exceptions import WebDriverException
+
 from ..browser import BrowserSession
 from ..targeting import resolve_many, resolve_one
 
@@ -24,26 +28,64 @@ def get_html(session: BrowserSession, cmd) -> str:
     return resolve_one(session, cmd).get_attribute("outerHTML")
 
 
-def get_text(session: BrowserSession, cmd) -> str:
-    if not cmd.has_target:
+def _body_text(session: BrowserSession) -> str:
+    try:
         return session.driver.find_element("tag name", "body").text
-    return resolve_one(session, cmd).text
+    except WebDriverException:
+        return ""
+
+
+def get_text(session: BrowserSession, cmd) -> str:
+    """The visible text of the page, frames included.
+
+    A frame's content is on the page, so it belongs in the answer -- and it is
+    appended plain, with no marker saying where the boundary was. Whose
+    document a string came from is not something a reader needs to know, and
+    inventing a divider would put text on screen that nobody can see.
+    """
+    if cmd.has_target:
+        return resolve_one(session, cmd).text
+
+    session.leave_frames()
+    parts = [_body_text(session)]
+    try:
+        for path in session.frame_paths():
+            if not session.enter_frame(path):
+                continue
+            inner = _body_text(session)
+            if inner:
+                parts.append(inner)
+    finally:
+        session.leave_frames()
+    return "\n".join(part for part in parts if part)
 
 
 def find(session: BrowserSession, cmd) -> dict:
-    mode = getattr(cmd, "mode", "full" if cmd.op == "find_full" else "shell")
-    elements, truncated = resolve_many(session, cmd, cmd.limit, cmd.visible_only)
-    refs = session.refs.allocate(session.active_tab, elements)
+    """Matches anywhere on the page, each with a ref that acts where it lives.
 
-    serialized = (
-        session.driver.execute_script(_SERIALIZE, elements, mode == "full")
-        if elements
-        else []
-    )
-    matches = [
-        {"ref": ref, "html": item["html"], "visible": bool(item["visible"])}
-        for ref, item in zip(refs, serialized)
-    ]
+    Serialisation and ref allocation happen inside the document each group came
+    from: a WebElement only answers from its own frame, so both have to be done
+    before moving on to the next one.
+    """
+    mode = getattr(cmd, "mode", "full" if cmd.op == "find_full" else "shell")
+    pairs, truncated = resolve_many(session, cmd, cmd.limit, cmd.visible_only)
+
+    matches: list[dict] = []
+    try:
+        for home, group in groupby(pairs, key=lambda pair: pair[1]):
+            elements = [element for element, _ in group]
+            if not session.enter_frame(home):
+                continue
+            refs = session.refs.allocate(session.active_tab, elements, home)
+            serialized = session.driver.execute_script(
+                _SERIALIZE, elements, mode == "full"
+            )
+            matches.extend(
+                {"ref": ref, "html": item["html"], "visible": bool(item["visible"])}
+                for ref, item in zip(refs, serialized)
+            )
+    finally:
+        session.leave_frames()
     return {"count": len(matches), "truncated": truncated, "matches": matches}
 
 

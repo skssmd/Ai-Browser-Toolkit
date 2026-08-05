@@ -54,6 +54,10 @@ usually a wasted round trip.
 two. Add `index` to pick the Nth match. Prefer `ref` > `css` > `text`; `text`
 matches ancestors too, so it often matches more than you meant.
 
+Selectors and all three tracks reach **inside iframes**, so an embedded sign-in
+widget, card field or editor is targetable like anything else and its refs act
+normally. You never switch frames yourself.
+
 **5. Batch what you already know.** `POST /commands` takes a list and runs it in
 order, in one round trip. Filling a form is one call, not six.
 

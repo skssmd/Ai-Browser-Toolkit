@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>a page whose controls are not all its own</title>
+<!--
+  The shape of the LinkedIn login page: the host document carries the heading
+  and the ordinary providers, and the one everybody actually clicks is drawn by
+  a widget inside a frame.
+
+  The second frame is the 0x0 preload Google Identity Services also mounts. It
+  is real, it is loaded, and nobody can see or click it -- walking it would cost
+  a round trip to report a duplicate of the visible one.
+-->
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in with Microsoft</p>
+  <iframe id="visible" src="framed_button.html" width="420" height="60"></iframe>
+  <iframe id="preload" src="framed_button.html" style="width:0;height:0;border:0"></iframe>
+  <button id="host-button">Forgot password?</button>
+</body>

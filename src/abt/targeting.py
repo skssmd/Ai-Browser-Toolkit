@@ -68,6 +68,38 @@ def scroll_into_view(session: BrowserSession, element: WebElement) -> None:
         pass
 
 
+def _aim_at_frame(session: BrowserSession, by: str, selector: str) -> None:
+    """Point the driver at whichever document holds a match, if not this one.
+
+    A selector only ever searches the frame the driver is switched into, so a
+    control inside an embedded widget is unreachable by css, xpath or text no
+    matter how long you wait for it. Finding it first means the wait below runs
+    where the element actually is.
+
+    The probe is a single unwaited lookup on the top document, which is where
+    the answer is on nearly every page, and only a miss pays to look further.
+    A miss everywhere leaves the driver at the top so the ordinary wait and the
+    ordinary "nothing matched" error still happen, unchanged.
+    """
+    session.leave_frames()
+    if not session.frames_enabled:
+        return
+    try:
+        if session.driver.find_elements(by, selector):
+            return
+    except WebDriverException:
+        return
+    for path in session.frame_paths():
+        if not session.enter_frame(path):
+            continue
+        try:
+            if session.driver.find_elements(by, selector):
+                return
+        except WebDriverException:
+            continue
+    session.leave_frames()
+
+
 def resolve_one(
     session: BrowserSession,
     cmd,
@@ -76,7 +108,7 @@ def resolve_one(
 ) -> WebElement:
     """Resolve a single element, waiting up to `timeout` for it to reach `state`."""
     if getattr(cmd, "ref", None) is not None:
-        element = session.refs.get(session.active_tab, cmd.ref)
+        element = session.resolve_ref(cmd.ref)
         if state in _NEEDS_VIEWPORT:
             scroll_into_view(session, element)
         return element
@@ -84,6 +116,7 @@ def resolve_one(
     wait_for = timeout if timeout is not None else session.action_timeout
     by, selector = locator(cmd)
     index = getattr(cmd, "index", 0)
+    _aim_at_frame(session, by, selector)
 
     if index == 0:
         try:
@@ -141,17 +174,38 @@ def resolve_many(
     cmd,
     limit: int,
     visible_only: bool,
-) -> tuple[list[WebElement], bool]:
-    """Resolve every match. Returns (elements, truncated)."""
+) -> tuple[list[tuple[WebElement, tuple[int, ...]]], bool]:
+    """Every match on the page, each paired with the frame it was found in.
+
+    The host document first, then each frame in reading order -- so results
+    arrive in the order a person would come across them, and the caller knows
+    which document to switch into before touching any of them.
+    """
     if getattr(cmd, "ref", None) is not None:
-        return [session.refs.get(session.active_tab, cmd.ref)], False
+        home = session.refs.frame_of(session.active_tab, cmd.ref)
+        return [(session.resolve_ref(cmd.ref), home)], False
 
     by, selector = locator(cmd)
-    elements = session.driver.find_elements(by, selector)
-    if visible_only:
-        elements = [e for e in elements if _is_displayed(e)]
-    truncated = len(elements) > limit
-    return elements[:limit], truncated
+    homes = [()] + session.frame_paths()
+    found: list[tuple[WebElement, tuple[int, ...]]] = []
+    try:
+        for home in homes:
+            if not session.enter_frame(home):
+                continue
+            try:
+                elements = session.driver.find_elements(by, selector)
+            except WebDriverException:
+                continue
+            if visible_only:
+                elements = [e for e in elements if _is_displayed(e)]
+            found.extend((element, home) for element in elements)
+            if len(found) > limit:
+                break
+    finally:
+        session.leave_frames()
+
+    truncated = len(found) > limit
+    return found[:limit], truncated
 
 
 def _is_displayed(element: WebElement) -> bool:

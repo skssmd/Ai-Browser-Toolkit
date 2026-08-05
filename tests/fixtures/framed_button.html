@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>a control living in a frame</title>
+<!--
+  Stands in for accounts.google.com/gsi/button: a real control, with a real
+  label, in a document the parent page cannot reach.
+-->
+<body>
+  <button id="google" onclick="document.getElementById('out').textContent = 'Signed in as Shahariar';">
+    Continue with Google
+  </button>
+  <p id="out"></p>
+</body>

@@ -62,11 +62,37 @@ _SNAPSHOT_JS = r"""
 const MAX = arguments[0] || 8000;
 const MAX_TEXT = arguments[1] || 4000;
 const MAX_ACT = arguments[2] || 300;
+// Not `|| 4`: 0 is a legitimate "walk everything" and would be swallowed.
+const MIN_FRAME = arguments[3] == null ? 4 : arguments[3];
 const dom = [];
 const text = [];
 const actionable = [];
 const els = [];
-if (!document.body) { return {dom: dom, text: text, actionable: actionable, els: els}; }
+const frames = [];
+if (!document.body) { return {dom: dom, text: text, actionable: actionable, frames: frames}; }
+
+// Which frames this document embeds, answered here because the snapshot is
+// already a round trip and a second one to ask "are there any?" would be the
+// whole cost of frame support on the pages that have none.
+//
+// Reported as positions among the child browsing contexts, which is what the
+// driver switches by -- one call instead of fetching the elements and sending
+// one back. Reference identity is the only thing about a cross-origin window
+// that still works, and it is exactly what is needed here.
+const framesOf = () => {
+  const nodes = document.querySelectorAll('iframe, frame');
+  for (let i = 0; i < nodes.length; i++) {
+    const f = nodes[i];
+    // Nothing can be read or clicked in a frame with no box. The 0x0 preload
+    // that sign-in widgets mount beside their real button is the usual one.
+    if (f.getClientRects().length === 0) continue;
+    if (f.offsetWidth < MIN_FRAME || f.offsetHeight < MIN_FRAME) continue;
+    for (let k = 0; k < window.length; k++) {
+      if (window[k] === f.contentWindow) { frames.push(k); break; }
+    }
+  }
+};
+try { framesOf(); } catch (e) {}
 
 // Roles a person can operate. An element whose role is not here is content,
 // not a control, and reporting it would drown the ones that matter.
@@ -268,7 +294,7 @@ while (node) {
 // back. Only the handful the diff turns out to care about are ever fetched, and
 // the array is replaced by the next snapshot, so nothing is pinned for long.
 window.__abtActionable = els;
-return {dom: dom, text: text, actionable: actionable};
+return {dom: dom, text: text, actionable: actionable, frames: frames};
 """
 
 
@@ -281,7 +307,7 @@ return arguments[0].map((i) => stash[i] || null);
 """
 
 def _blank() -> dict:
-    return {"dom": [], "text": [], "actionable": []}
+    return {"dom": [], "text": [], "actionable": [], "frames": []}
 
 
 def snapshot(
@@ -289,16 +315,22 @@ def snapshot(
     max_lines: int = MAX_SNAPSHOT_LINES,
     max_text: int = MAX_TEXT_LINES,
     max_actionable: int = MAX_ACTIONABLE_SCANNED,
+    min_frame_px: int = 4,
 ) -> dict:
-    """Return the page as its three tracks.
+    """Return the document as its three tracks, plus the frames it embeds.
 
     Keys only: the live elements behind the actionable entries stay parked in
     the page until `actionable_elements` asks for specific ones. A snapshot is
     taken twice per diffed op, so anything paid for here is paid for twice.
+
+    `frames` is the positions of the child documents worth walking. It rides
+    along because this call is already a round trip and asking separately would
+    cost every frameless page -- which is nearly all of them -- the price of
+    frame support for no benefit.
     """
     try:
         raw = driver.execute_script(
-            _SNAPSHOT_JS, max_lines, max_text, max_actionable
+            _SNAPSHOT_JS, max_lines, max_text, max_actionable, min_frame_px
         )
     except Exception:
         return _blank()
@@ -306,13 +338,19 @@ def snapshot(
         return _blank()
 
     actionable = []
-    for item in raw.get("actionable") or []:
+    for slot, item in enumerate(raw.get("actionable") or []):
         if not isinstance(item, dict):
             continue
         entry = {
             "key": str(item.get("key") or ""),
             "role": str(item.get("role") or ""),
             "name": str(item.get("name") or ""),
+            # Where this element sits in the array the walk parked on the page,
+            # and which document that array belongs to. Both are internal: they
+            # exist so a ref can be fetched later and acted on in the right
+            # frame, and neither is ever handed to a caller.
+            "slot": slot,
+            "frame": (),
         }
         if item.get("disabled"):
             entry["disabled"] = True
@@ -324,6 +362,7 @@ def snapshot(
         "dom": [str(line) for line in raw.get("dom") or []],
         "text": [str(line) for line in raw.get("text") or []],
         "actionable": actionable,
+        "frames": [int(slot) for slot in raw.get("frames") or []],
     }
 
 
@@ -446,6 +485,28 @@ def diff_actionable(
     truncated = len(picked) > limit
     picked = picked[:limit]
     return [after[j] for j in picked], picked, truncated
+
+
+def merge_frame(state: dict, sub: dict, path: tuple[int, ...]) -> None:
+    """Fold a frame's snapshot into the host document's, in reading order.
+
+    Text and dom lines append as they are. A frame's content is content: it is
+    what a person sees on the page, and tagging it as foreign would put a
+    synthetic string into the one track whose entries are supposed to be
+    exactly what is on screen.
+
+    Actionable entries are the exception, because they are aligned on their key
+    rather than read. The frame goes into the key so that the same widget in
+    two frames -- a page with two card fields, two sign-in buttons -- stays two
+    controls instead of collapsing into one.
+    """
+    state["dom"].extend(sub.get("dom") or [])
+    state["text"].extend(sub.get("text") or [])
+    tag = ".".join(str(index) for index in path)
+    for entry in sub.get("actionable") or []:
+        entry["frame"] = path
+        entry["key"] = tag + "\u001f" + entry["key"]
+        state["actionable"].append(entry)
 
 
 def actionable_elements(driver, indices: list[int]) -> list:

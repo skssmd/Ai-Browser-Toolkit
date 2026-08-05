@@ -41,13 +41,32 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
-@pytest.fixture(scope="session")
-def base_url():
-    """Serve tests/fixtures over HTTP so pages behave like real pages."""
+def _serve():
     handler = functools.partial(_QuietHandler, directory=str(FIXTURES))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    return server
+
+
+@pytest.fixture(scope="session")
+def base_url():
+    """Serve tests/fixtures over HTTP so pages behave like real pages."""
+    server = _serve()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture(scope="session")
+def other_origin():
+    """The same files on a second port.
+
+    A different port is a different origin, so a frame served from here is one
+    the parent document is genuinely forbidden to read -- the only way to test
+    the frames that matter without reaching for the live internet.
+    """
+    server = _serve()
     yield f"http://127.0.0.1:{server.server_port}"
     server.shutdown()
     server.server_close()
