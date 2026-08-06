@@ -43,6 +43,38 @@ def test_input_can_append(form):
     assert result["value"] == "abcd"
 
 
+@pytest.fixture
+def controlled(clean_session, base_url):
+    clean_session.goto(f"{base_url}/controlled.html")
+    return clean_session
+
+
+def test_input_replaces_text_in_a_controlled_input(controlled):
+    # clear() fires `change` and no `input`, so a component that tracks the
+    # field from `input` events never learns it was emptied -- it re-renders the
+    # old text back before the first keystroke lands, and the typing appends to
+    # text that was supposed to be gone. Traced live on LinkedIn's industry
+    # field, where every retry silently concatenated onto the last one.
+    result = run(controlled, op="input", css="#controlled", value="typed")
+    assert result["value"] == "typed"
+    assert run(controlled, op="get_text", css="#state") == "typed"
+
+
+def test_input_replaces_text_when_only_real_keystrokes_count(clean_session, base_url):
+    # Some components ignore anything with isTrusted false, which defeats the
+    # scripted clear too. What is left is the concatenation -- old text plus new
+    # -- and typing it again through keystrokes is the only way out.
+    clean_session.goto(f"{base_url}/controlled_trusted.html")
+    result = run(clean_session, op="input", css="#controlled", value="typed")
+    assert result["value"] == "typed"
+    assert run(clean_session, op="get_text", css="#state") == "typed"
+
+
+def test_input_can_still_append_to_a_controlled_input(controlled):
+    result = run(controlled, op="input", css="#controlled", value="more", clear=False)
+    assert result["value"] == "presetmore"
+
+
 def test_input_replaces_text_in_a_contenteditable(form):
     # clear() does not apply to contenteditable, so without a fallback the second
     # write appends and the field silently accumulates.

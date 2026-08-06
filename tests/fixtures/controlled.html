@@ -1,0 +1,41 @@
+<title>Controlled input</title>
+<body>
+  <!-- A framework-controlled input, modelled on what LinkedIn's profile form
+       actually does.
+
+       The component owns the text. It learns about edits from `input` events
+       only -- the event a keystroke fires -- and it re-renders its own state
+       into the DOM whenever it is told the field settled.
+
+       Selenium's clear() empties the value and fires `change` alone: no
+       `input`, and not trusted. So the component never hears about the clear,
+       re-renders, and the old text is back before the first keystroke lands.
+       Typing then appends to text that was supposed to be gone. Traced live on
+       LinkedIn's industry field, where every retry silently concatenated onto
+       the last one. -->
+  <input id="controlled" type="text">
+  <p id="state"></p>
+  <script>
+    (function () {
+      var node = document.getElementById('controlled');
+      var out = document.getElementById('state');
+      var state = 'preset';
+
+      function render() {
+        node.value = state;
+        out.textContent = state;
+      }
+
+      // A real edit. This is the only thing that moves state.
+      node.addEventListener('input', function () {
+        state = node.value;
+        out.textContent = state;
+      });
+
+      // Anything else that settles the field just re-paints what state says.
+      node.addEventListener('change', render);
+
+      render();
+    }());
+  </script>
+</body>

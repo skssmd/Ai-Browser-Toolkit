@@ -1,0 +1,35 @@
+<title>Controlled input that only believes real events</title>
+<body>
+  <!-- The same controlled field as controlled.html, with one extra rule: it
+       ignores events it did not get from a person.
+
+       That defeats the scripted clear as well -- the value goes empty, the
+       component never records it, and the old text is back on focus. Nothing
+       short of real keystrokes will empty this one, which is why `input`
+       checks what it actually wrote and retries through them. -->
+  <input id="controlled" type="text">
+  <p id="state"></p>
+  <script>
+    (function () {
+      var node = document.getElementById('controlled');
+      var out = document.getElementById('state');
+      var state = 'preset';
+
+      function render() {
+        node.value = state;
+        out.textContent = state;
+      }
+
+      node.addEventListener('input', function (e) {
+        if (!e.isTrusted) { return; }   // scripted writes do not count
+        state = node.value;
+        out.textContent = state;
+      });
+
+      node.addEventListener('change', render);
+      node.addEventListener('focus', render);
+
+      render();
+    }());
+  </script>
+</body>

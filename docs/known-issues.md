@@ -245,6 +245,54 @@ hidden upload, and a ref was the one way of reaching it that did not work.
 `input` now routes **every** file input through the staged writer regardless of
 how it was targeted.
 
+### 14. `input` silently appended when clear did not take — fixed 2026-08-06
+
+Found by reproducing the one thing an hour-long LinkedIn session could not
+finish (`logs/20260806-040306`, reviewed in
+`session-review-20260806-linkedin.md`).
+
+```
+field before:  "Technology, Information and Internet"
+input {clear: true, value: "Finance"}
+field after:   "Technology, Information and InternetFinance"    ← ok: true
+```
+
+An event log on the live field shows the mechanism:
+
+```
+change   trusted=false  val=''                                     ← clear(): change only, no input
+keydown  trusted=true   val='Technology, Information and Internet' ← already restored
+```
+
+Selenium's `clear()` empties the value, fires `change` **alone**, and blurs the
+field. A framework-controlled component learns nothing from `change` — `input`
+is the event it tracks — so it reverts to its last committed text the moment
+`send_keys` takes focus, and the typing appends to what was supposed to be
+gone. `_field_value` then reported the concatenation as the value written.
+
+Checking straight after `clear()` does not catch it: the field really is empty
+until something touches it, and a JS-only clear stays empty for at least 400ms.
+The restore is triggered by the refocus, not by a timer.
+
+Two layers now, because the two kinds of field fail differently:
+
+- `_clear_field` follows `clear()` with `_CLEAR_VALUE_JS` — the prototype's own
+  value setter plus `input`/`change`, mirroring `_SET_VALUE_JS`. A component
+  that listens on `input` records the empty state, so there is nothing left to
+  restore. This is what fixes LinkedIn.
+- `input` then checks what it actually wrote. A result of exactly
+  `previous + value` is the signature of a clear that came undone, and it earns
+  one retry through `_clear_by_keystrokes` — real select-all-and-delete, which
+  even a component that ignores untrusted events believes.
+
+Regression tests use two fixtures that reproduce each half:
+`controlled.html` (tracks `input`, re-renders on `change`) and
+`controlled_trusted.html` (additionally ignores `isTrusted: false`, defeating
+the scripted clear and forcing the keystroke retry).
+
+The wider lesson, and the reason this one was expensive: the op returned
+`ok: true` with the corrupted value in `value`. Nothing downstream could tell.
+
 ## Open
 
 *(none currently)*

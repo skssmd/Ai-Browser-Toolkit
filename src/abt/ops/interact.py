@@ -306,18 +306,60 @@ def _open_in_new_tab(session: BrowserSession, cmd) -> dict:
     return {"clicked": describe(cmd), "tab_id": tab_id, "forced": False, **location}
 
 
+# Emptying a field the way a framework will believe. Mirrors _SET_VALUE_JS: the
+# prototype's own setter, because an assignment React already knows about is one
+# it ignores, then the events it listens on.
+_CLEAR_VALUE_JS = """
+const el = arguments[0];
+const proto = el instanceof HTMLTextAreaElement
+  ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+if (!desc || !desc.set) { return false; }
+desc.set.call(el, '');
+el.dispatchEvent(new Event('input', {bubbles: true}));
+el.dispatchEvent(new Event('change', {bubbles: true}));
+return true;
+"""
+
+
 def _clear_field(session: BrowserSession, element) -> None:
     """Empty a field, whatever kind of field it is.
 
     Selenium's clear() only applies to form controls. Rich editors -- Google
     Sheets' cell editor, most WYSIWYGs -- are contenteditable divs, where clear()
     raises and would otherwise leave stale text for send_keys to append to.
+
+    It can also come undone. clear() empties the value, fires `change` alone --
+    no `input` -- and blurs the field, so a component that tracks its own text
+    reverts to what it last committed. The field reads empty for as long as
+    nothing touches it, then the old text is back the moment send_keys takes
+    focus, and the typing appends to what was supposed to be gone. Checking here
+    cannot catch that; `input` checks afterwards instead.
     """
     try:
         element.clear()
-        return
     except (InvalidElementStateException, ElementNotInteractableException):
+        _clear_by_keystrokes(session, element)
+        return
+
+    # Then say the same thing in the language a component understands. clear()
+    # is invisible to one; this write goes through the prototype's setter, which
+    # is what makes a framework notice the value changed, and the `input` event
+    # is the one it is actually listening for. Either alone leaves a field this
+    # op cannot empty; together they cover both kinds.
+    try:
+        session.driver.execute_script(_CLEAR_VALUE_JS, element)
+    except WebDriverException:
         pass
+
+
+def _clear_by_keystrokes(session: BrowserSession, element) -> None:
+    """Empty a field the way a person would: select all, delete.
+
+    Slower than clear() and it moves focus, but every step is a real event the
+    page cannot tell from a user -- which is the point when a component only
+    believes `input`.
+    """
     ActionChains(session.driver).click(element).key_down(Keys.CONTROL).send_keys(
         "a"
     ).key_up(Keys.CONTROL).send_keys(Keys.DELETE).perform()
@@ -425,10 +467,23 @@ def input(session: BrowserSession, cmd) -> dict:
     if field_type in _SEGMENTED_TYPES:
         return _set_segmented(session, cmd, element, field_type)
 
+    previous = _field_value(element) or "" if cmd.clear else ""
     try:
         if cmd.clear:
             _clear_field(session, element)
         element.send_keys(cmd.value)
+
+        # A framework-controlled field can put its old text back between the
+        # clear and the first keystroke, leaving exactly old+new behind. That
+        # concatenation is the signature, and it is worth one retry through
+        # keystrokes, which such a field does listen to. Left alone it is
+        # invisible: the op reports the corrupted value as the one it wrote, and
+        # the next thing to read the field -- a typeahead, a form submit -- acts
+        # on nonsense. Traced on LinkedIn's profile form, where it silently
+        # poisoned every retry.
+        if previous and _field_value(element) == previous + cmd.value:
+            _clear_by_keystrokes(session, element)
+            element.send_keys(cmd.value)
     except ElementNotInteractableException as exc:
         raise OpError(
             "not_interactable",
