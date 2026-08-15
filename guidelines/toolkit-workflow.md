@@ -334,6 +334,33 @@ A closed set of `error.type` values to branch on: `invalid_op`,
 
 Failed ops never quietly continue: batches stop unless `continue_on_error`.
 
+### A tab that closes itself takes the session with it
+
+OAuth popups, payment frames and "you may close this window" tabs close
+themselves when they finish. **If such a tab was the active one, the session
+dies** — every later call returns `browser_dead` with `no such window: target
+window already closed`, and neither `tab_switch` nor `tab_list` can recover it,
+even though the other windows are still on screen.
+
+The workaround is to not be standing there: `tab_switch` back to the tab you
+came from *before* clicking the control that completes the flow, when the flow
+allows it. Once it has happened, the only way back is
+`{"op": "shutdown"}` (which still works with a dead browser) followed by
+`start-server.sh` / `start-server.bat`.
+
+Before restarting, make sure no Chrome is still holding the toolkit profile — if
+one is, the fresh Chrome hands off to it and the new session dies immediately
+with `invalid session id`. Filter on the profile path, never blanket-kill
+`chrome.exe`; the human's own browser is in that process list too.
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
+  Where-Object { $_.CommandLine -like "*aibrowsertoolkit\profile*" }
+```
+
+Worth fixing in the server: falling back to any surviving window handle on
+`NoSuchWindowException` would make this recoverable without a restart.
+
 ## Site traps to remember
 
 - **Canvas-rendered editors** (Google Docs, Figma, Excalidraw) put the text on

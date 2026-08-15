@@ -14,14 +14,6 @@ profile, stays up waiting for commands, and only stops when you send `shutdown`.
 > back refs you act on directly, that a click already reports what changed so
 > you need not re-read the page, and that ops can be sent in batches.
 
-> ⚠️ **Licence — attribution is required.** This project is
-> [Apache 2.0](LICENSE). If you use this code, in whole or in part, in your own
-> project, you **must credit it**: name the repository in your README, or cite
-> it, and link back to
-> <https://github.com/skssmd/Ai-Browser-Toolkit>. Keep the `LICENSE` file and
-> the copyright notice with any copy or derivative, and state what you changed.
-> Attribution is not a courtesy here — it is the condition the licence grants
-> you these rights on.
 
 ```
 abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome/Edge (persistent profile)
