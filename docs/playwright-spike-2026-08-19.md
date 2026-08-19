@@ -1,7 +1,8 @@
 # Playwright migration — phase 1 spike
 
 Date: 2026-08-19
-Status: **All three questions PASS.** Phase 2 (the driver seam) is unblocked.
+Status: **Phases 1-3 complete.** Both engines pass all 485 tests
+(Selenium 416s, Playwright 408s). Phase 4 is the remaining work.
 
 ## Why a spike came first
 
@@ -125,3 +126,80 @@ profile, so it must be fixed before that feature ships.
 `scratchpad/spike.py` (A, B, C on local fixtures) and `scratchpad/scale2.py`
 (B at real-page scale). Neither touches the repo; both need `playwright`
 installed in the venv, which is **not** yet added to `pyproject.toml`.
+
+
+---
+
+# Outcome (same day)
+
+## Phase 2 — the seam (`fa945dd`)
+
+`src/abt/engine.py`. Nothing outside it and `browser.py` imports Selenium, and
+`tests/test_engine.py` enforces that from the import graph rather than by
+review. 451 tests before and after, identical set.
+
+## Phase 3 — the swap (`4d91486`)
+
+`src/abt/pwdriver.py`, selected with `--engine playwright`. **485/485 on both
+engines.**
+
+**Speed is a wash** — 408s against 416s, 1.7% apart. Worth stating plainly
+because the migration is easy to sell on performance and that would be wrong.
+The snapshot already costs one round trip no matter how deep the tree, so the
+usual Selenium-to-Playwright win was mostly banked before this started. The
+case is capability and deletable surface, not throughput.
+
+## The thirteen differences, and why they are the real finding
+
+Every one passed on Selenium and broke on Playwright, and **almost none raised
+at the point of the mistake**:
+
+| Difference | How it surfaced |
+|---|---|
+| `json_value()` returns `"ref: <Node>"` for nodes instead of raising | refs became strings, failing two calls later |
+| `css=` pierces open shadow roots; `querySelectorAll` does not | every shadow match found twice |
+| Two handles to one node are not `==` and hash differently | `resolve_many` de-duplication silently a no-op |
+| `innerText` excludes shadow content | `get_text` dropped what components render |
+| `select_option` returns `[]` rather than raising | a bad option would report success |
+| `type()` inserts at the caret | `"more"` onto `"preset"` gave `"morepreset"` |
+| A held Shift does not shift the character | `shift+a` produced `a` |
+| Interception / not-visible arrive inside a `TimeoutError` | `force: true` silently stopped working |
+| That check was also case-sensitive across two spellings | same, again |
+| `Page.addScriptToEvaluateOnNewDocument` dies with its CDP session | console and network captured nothing; 13 tests |
+| `bounding_box()` is viewport-relative, `rect` is document-relative | `_click_at` subtracted the scroll twice |
+| Selenium key names collide (`LEFT_SHIFT`/`SHIFT`) | Playwright rejected `"LeftShift"` |
+| `ActionChains`/`Select` type-check for Selenium objects | `move_to requires a WebElement` |
+
+Selenium fails loudly; Playwright fails quietly and downstream. This port was
+only safe because 485 assertions already existed. **A codebase with thin tests
+would have shipped a browser tool that silently mis-clicks and silently drops
+text** -- and `force: true` degrading while every ordinary click still passed is
+exactly the shape of bug that survives manual testing.
+
+## What phase 4 can now do
+
+- flip `_SELECTOR` to piercing `css=` and delete `shadow.py` (127) and
+  `tests/test_shadow.py` (211). **Changes observable behaviour** -- `shadow:
+  true` and the `shadowHosts` count stop meaning anything -- so it is a product
+  decision, not a refactor.
+- drop `browser._captured` per-tab console arming: `add_init_script` is
+  context-wide, so known-issues #2 cannot recur on this engine
+- replace `_SETTLE_QUIET` / `_SETTLE_NETWORK_GRACE` with real load-state signals
+- give `read_network` real status codes and bodies instead of Resource Timing's
+  `opaque: true`
+- remove `leave_frames` and the top-document reset in `dispatch`
+
+## The caveat for profile sessions
+
+Playwright removes the *reason* that design serialises same-profile commands:
+`Page` and `Frame` are addressed, so one agent's `tab_switch` cannot move where
+another's click lands. But **this implementation does not deliver parallelism
+either** -- sync Playwright is thread-affine, so every call is marshalled onto
+one owner thread. One serialisation point replaced another.
+
+Real same-profile concurrency needs `playwright.async_api`, or one owner thread
+per page (unproven). Cross-profile parallelism works on either engine.
+
+So the spec should stop citing driver state as a permanent reason for the
+limitation. On Playwright it is an artefact of the *sync API* -- a different
+constraint, and a fixable one.
