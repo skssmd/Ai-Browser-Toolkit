@@ -210,6 +210,76 @@ def serve(
     typer.echo("stopped")
 
 
+def _healthy(base: str) -> bool:
+    try:
+        return httpx.get(f"{base}/health", timeout=3).json().get("ok") is True
+    except Exception:
+        return False
+
+
+@app.command()
+def up(
+    port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
+    browser: str = typer.Option(
+        None, "--browser", help="Default browser for later browser_start calls."
+    ),
+    profile: Optional[Path] = typer.Option(None, "--profile"),
+    headless: bool = typer.Option(False, "--headless"),
+    wait: float = typer.Option(
+        20.0, "--wait", help="Seconds to wait for the server to answer /health."
+    ),
+) -> None:
+    """Start the server if it is not already up, and return immediately.
+
+    Never blocks: the server is spawned so that it belongs to no job object of
+    this process, which is what `abt serve` in a background job could not
+    manage. Safe to run at any time -- it no-ops when a server already answers.
+    """
+    import time
+
+    from .proc import spawn_detached
+
+    base = f"http://{HOST}:{port}"
+    if _healthy(base):
+        typer.echo(f"[abt] already up on {HOST}:{port}")
+        raise typer.Exit(0)
+
+    repo = Path(__file__).resolve().parent.parent.parent
+    suffix = "" if port == DEFAULT_PORT else f"-{port}"
+    # --browser is always passed, never left to be prompted for. `serve` only
+    # prompts when stdin is a tty, and a WMI-spawned process has a console, so
+    # omitting it parks the server on a prompt nobody can answer.
+    argv = [
+        sys.executable, "-m", "abt.cli", "serve",
+        "--port", str(port),
+        "--browser", browser or "chrome",
+    ]
+    if profile:
+        argv += ["--profile", str(profile)]
+    if headless:
+        argv += ["--headless"]
+
+    mechanism = spawn_detached(
+        argv, repo, repo / f"server{suffix}.log", repo / f"server{suffix}.err"
+    )
+    typer.echo(f"[abt] launched via {mechanism}; waiting for {base}/health")
+
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if _healthy(base):
+            typer.echo(f"[abt] up on {HOST}:{port}")
+            raise typer.Exit(0)
+        time.sleep(0.5)
+
+    typer.secho(
+        f"[abt] no answer from {base}/health within {wait}s; "
+        f"check {repo / f'server{suffix}.err'}",
+        fg="red",
+        err=True,
+    )
+    raise typer.Exit(1)
+
+
 @app.command("exec")
 def exec_(
     command: str = typer.Argument(..., help="A command as a JSON object."),
