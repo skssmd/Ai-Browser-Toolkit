@@ -140,3 +140,103 @@ def test_start_after_stop_returns_to_the_serve_defaults(session, monkeypatch):
     session.start()
 
     assert captured["config"].headless is session.defaults.headless
+
+
+# --- profile release -------------------------------------------------------
+
+
+def test_a_clean_profile_reads_as_unlocked(tmp_path):
+    from abt.browser import _profile_locked
+
+    assert _profile_locked(LaunchConfig(profile=tmp_path)) is False
+
+
+def test_a_singleton_lock_reads_as_locked(tmp_path):
+    from abt.browser import _profile_locked
+
+    (tmp_path / "SingletonLock").write_text("host-1234")
+    assert _profile_locked(LaunchConfig(profile=tmp_path)) is True
+
+
+def test_waiting_returns_true_on_a_free_profile(session, tmp_path):
+    assert (
+        session._wait_for_profile_release(
+            LaunchConfig(profile=tmp_path), timeout=0.5
+        )
+        is True
+    )
+
+
+def test_waiting_returns_true_as_soon_as_the_lock_goes_away(session, tmp_path):
+    """It must poll, not check once -- the lock clears a moment after quit()."""
+    import threading
+
+    lock = tmp_path / "SingletonLock"
+    lock.write_text("host-1234")
+    threading.Timer(0.4, lambda: lock.unlink(missing_ok=True)).start()
+
+    assert (
+        session._wait_for_profile_release(
+            LaunchConfig(profile=tmp_path), timeout=5.0
+        )
+        is True
+    )
+    assert lock.exists() is False
+
+
+def test_waiting_gives_up_and_says_so(session, tmp_path):
+    (tmp_path / "SingletonLock").write_text("host-1234")
+    assert (
+        session._wait_for_profile_release(
+            LaunchConfig(profile=tmp_path), timeout=0.3
+        )
+        is False
+    )
+
+
+def test_stop_reports_an_unreleased_profile(session, tmp_path):
+    (tmp_path / "SingletonLock").write_text("host-1234")
+
+    class FakeDriver:
+        def quit(self):
+            return None
+
+    session._driver = FakeDriver()
+    session.launch = session.defaults
+    session._profile_release_timeout = 0.3
+
+    result = session.stop()
+
+    assert result["stopped"] is True
+    assert result["profile_released"] is False
+
+
+def test_verify_session_raises_and_cleans_up_on_a_dead_handoff(session):
+    from selenium.common.exceptions import WebDriverException
+
+    class Handoff:
+        @property
+        def window_handles(self):
+            raise WebDriverException("no such window")
+
+        def quit(self):
+            return None
+
+    session._driver = Handoff()
+    session.launch = session.defaults
+
+    with pytest.raises(OpError) as exc:
+        session._verify_session()
+
+    assert exc.value.type == "browser_dead"
+    assert "profile" in exc.value.message.lower()
+    assert session.is_running is False  # cleaned up, not left half-alive
+
+
+def test_verify_session_passes_a_healthy_driver(session):
+    class Healthy:
+        window_handles = ["h0"]
+        current_url = "about:blank"
+
+    session._driver = Healthy()
+    assert session._verify_session() is None

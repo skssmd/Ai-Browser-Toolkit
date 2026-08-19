@@ -28,6 +28,33 @@ from .refs import RefCache
 _SETTLE_QUIET = 0.35
 _SETTLE_INTERVAL = 0.05
 
+# Chrome single-instances per --user-data-dir. A second launch against a locked
+# profile does not open its own browser: it signals the incumbent and exits,
+# leaving chromedriver holding a session that dies on first use. driver.quit()
+# returns before the Chrome process has exited and released these, so a restart
+# that launches immediately lands in that window essentially every time.
+PROFILE_LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
+PROFILE_RELEASE_TIMEOUT = 8.0
+PROFILE_RELEASE_INTERVAL = 0.2
+
+
+def _profile_locked(config) -> bool:
+    """Whether a browser still appears to hold this profile.
+
+    A heuristic, and treated as one. On POSIX the lock is a symlink encoding
+    host and pid which can dangle, so is_symlink matters as much as exists.
+    Nothing refuses to act on the answer -- see `_verify_session` for the check
+    that actually decides.
+    """
+    for name in PROFILE_LOCK_FILES:
+        path = config.profile / name
+        try:
+            if path.exists() or path.is_symlink():
+                return True
+        except OSError:
+            continue
+    return False
+
 # After the last response lands the app still has to render it, so idle is not
 # the same as done. This also has to absorb the *gap* in a chain: fetch a URL,
 # parse it, fetch that -- between the two the in-flight count is genuinely zero
@@ -79,6 +106,7 @@ class BrowserSession:
         )
         # What is running now, or ran most recently. None until the first start.
         self.launch: LaunchConfig | None = None
+        self._profile_release_timeout = PROFILE_RELEASE_TIMEOUT
         self.action_timeout = action_timeout
         self.settle_timeout = settle_timeout
         self.settle_network_grace = settle_network_grace
@@ -225,13 +253,46 @@ class BrowserSession:
         self.last_target = None
         self._in_frame = False
 
-    def _verify_session(self) -> None:
-        """Filled in by the profile-release task."""
-        return None
+    def _wait_for_profile_release(
+        self, config: LaunchConfig, timeout: float | None = None
+    ) -> bool:
+        """Wait, briefly, for the old browser to let go of the profile.
 
-    def _wait_for_profile_release(self, config: LaunchConfig) -> bool:
-        """Filled in by the profile-release task."""
-        return True
+        Prevention, not a guarantee. A hard-killed Chrome leaves its lock
+        behind, so this can spend the whole timeout waiting for a file nobody
+        owns -- which is why the answer is only ever *reported*, never enforced.
+        """
+        budget = self._profile_release_timeout if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while True:
+            if not _profile_locked(config):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(PROFILE_RELEASE_INTERVAL)
+
+    def _verify_session(self) -> None:
+        """Prove the driver we just got is actually driving a browser.
+
+        This is the half that decides. A launch that handed off to an incumbent
+        returns a perfectly ordinary-looking driver whose first real command
+        fails, so asking it a question is the only way to tell the two apart --
+        and unlike checking for a lock file, it cannot false-positive on a
+        stale lock left by a crash.
+        """
+        try:
+            self._driver.window_handles
+            self._driver.current_url
+        except WebDriverException as exc:
+            self._driver = None
+            self._reset_state()
+            raise OpError(
+                "browser_dead",
+                "the browser exited immediately after starting "
+                f"({exc.msg or exc}). Another browser is most likely still "
+                f"holding the profile at {self.config.profile} -- close it, "
+                "then start again.",
+            ) from exc
 
     # A page's console output is gone by the time anyone thinks to ask for it,
     # so the buffer has to exist before the page does. This runs at document
