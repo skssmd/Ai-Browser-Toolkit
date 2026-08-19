@@ -240,3 +240,37 @@ def test_verify_session_passes_a_healthy_driver(session):
 
     session._driver = Healthy()
     assert session._verify_session() is None
+
+
+# --- error messages --------------------------------------------------------
+
+
+def test_the_no_browser_message_names_the_remedy(session):
+    with pytest.raises(OpError) as exc:
+        session.driver
+    assert exc.value.type == "browser_dead"
+    assert "browser_start" in exc.value.message
+
+
+def test_health_check_on_a_stopped_session_names_the_remedy(session):
+    with pytest.raises(OpError) as exc:
+        session.health_check()
+    assert "browser_start" in exc.value.message
+
+
+def test_an_unreachable_browser_points_at_restart_not_start(session):
+    from selenium.common.exceptions import WebDriverException
+
+    class Corpse:
+        @property
+        def window_handles(self):
+            raise WebDriverException("no such window: target window already closed")
+
+    session._driver = Corpse()
+
+    with pytest.raises(OpError) as exc:
+        session.health_check()
+
+    assert exc.value.type == "browser_dead"
+    assert "browser_restart" in exc.value.message
+    assert "target window already closed" in exc.value.message

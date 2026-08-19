@@ -33,6 +33,13 @@ _SETTLE_INTERVAL = 0.05
 # leaving chromedriver holding a session that dies on first use. driver.quit()
 # returns before the Chrome process has exited and released these, so a restart
 # that launches immediately lands in that window essentially every time.
+# Recovery is explicit-only, so this string is the entire recovery interface.
+# "browser is not running" was a dead end: true, and no help at all.
+NO_BROWSER_MESSAGE = (
+    'no browser is running; start one with {"op": "browser_start"} '
+    "or POST /browser/start"
+)
+
 PROFILE_LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 PROFILE_RELEASE_TIMEOUT = 8.0
 PROFILE_RELEASE_INTERVAL = 0.2
@@ -412,18 +419,21 @@ class BrowserSession:
     @property
     def driver(self) -> webdriver.Chrome | webdriver.Edge:
         if self._driver is None:
-            raise OpError("browser_dead", "browser is not running")
+            raise OpError("browser_dead", NO_BROWSER_MESSAGE)
         return self._driver
 
     def health_check(self) -> None:
         """Raise browser_dead rather than hanging on a driver that has gone away."""
         if self._driver is None:
-            raise OpError("browser_dead", "browser is not running")
+            raise OpError("browser_dead", NO_BROWSER_MESSAGE)
         try:
             self._driver.window_handles
         except WebDriverException as exc:
             raise OpError(
-                "browser_dead", f"browser is no longer reachable: {exc.msg or exc}"
+                "browser_dead",
+                f"browser is no longer reachable: {exc.msg or exc}; "
+                'relaunch it with {"op": "browser_restart"} '
+                "or POST /browser/restart",
             ) from exc
 
     # --- tabs -----------------------------------------------------------------
