@@ -221,6 +221,28 @@ TOOLS: list[dict] = [
         ),
         "inputSchema": _schema({"command": {"type": "object"}}, ["command"]),
     },
+    {
+        "name": "browser_session",
+        "description": (
+            "Start, stop or restart the browser, or ask whether one is running. "
+            "Every page command fails with browser_dead until a browser is "
+            "started; nothing starts one for you. Use restart after a crash or "
+            "after a tab closed the session. start uses the server's defaults, "
+            "restart keeps whatever the last browser used."
+        ),
+        "inputSchema": _schema(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "stop", "restart", "status"],
+                },
+                "browser": {"type": "string", "enum": ["chrome", "edge"]},
+                "profile": {"type": "string"},
+                "headless": {"type": "boolean"},
+            },
+            ["action"],
+        ),
+    },
 ]
 
 
@@ -231,6 +253,13 @@ def _one_of(args: dict, *names: str) -> dict:
 def to_op(tool: str, args: dict) -> Any:
     """Translate a tool call into the op (or batch) the HTTP API expects."""
     target = _one_of(args, "ref", "css", "xpath", "text", "index")
+
+    if tool == "browser_session":
+        payload = {"op": f"browser_{args['action']}"}
+        for field in ("browser", "profile", "headless"):
+            if args.get(field) is not None:
+                payload[field] = args[field]
+        return payload
 
     if tool == "browser_navigate":
         if args.get("action"):

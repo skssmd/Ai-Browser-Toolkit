@@ -239,3 +239,33 @@ def test_screenshot_is_typed_and_takes_no_path():
 def test_the_escape_hatch_warns_that_it_does_not_validate():
     desc = tool("browser_command")["description"]
     assert "WITHOUT" in desc and "GET /ops" in desc
+
+
+def test_browser_session_tool_is_offered():
+    from abt.mcp import TOOLS
+
+    names = [tool["name"] for tool in TOOLS]
+    assert "browser_session" in names
+
+
+def test_browser_session_maps_each_action_to_its_op():
+    from abt.mcp import to_op
+
+    assert to_op("browser_session", {"action": "status"})["op"] == "browser_status"
+    assert to_op("browser_session", {"action": "stop"})["op"] == "browser_stop"
+    assert to_op("browser_session", {"action": "restart"})["op"] == "browser_restart"
+
+
+def test_browser_session_passes_launch_overrides_through():
+    from abt.mcp import to_op
+
+    payload = to_op(
+        "browser_session", {"action": "start", "browser": "edge", "headless": True}
+    )
+    assert payload == {"op": "browser_start", "browser": "edge", "headless": True}
+
+
+def test_browser_session_omits_absent_overrides():
+    from abt.mcp import to_op
+
+    assert to_op("browser_session", {"action": "start"}) == {"op": "browser_start"}
