@@ -295,4 +295,29 @@ The wider lesson, and the reason this one was expensive: the op returned
 
 ## Open
 
-*(none currently)*
+### 15. The shared test browser sometimes dies partway through a full run
+
+Running the whole suite occasionally kills the session-scoped Chrome that
+`conftest.py` starts. Every fixture after that point errors with
+`InvalidSessionIdException: invalid session id`, so one crash reports as
+hundreds of failures and buries whatever real change you were testing.
+
+Observed 2026-08-19: two consecutive full runs died inside `test_diff.py`, then
+a third passed 413/413 with the same code. The same files run in isolation
+passed every time (61 tests, 78s, with and without the change under test), which
+is what proves it is not the code under test.
+
+The tell is the shape of the report, not any single message: a *contiguous tail*
+of errors that all say `invalid session id`, starting mid-file. A genuine
+regression fails a related handful of tests; this fails everything after a
+point, including tests that have nothing to do with each other.
+
+When it happens, re-run the affected files alone before believing the result.
+Do not bisect against it — two runs of the same code disagree, so a bisect
+converges on noise.
+
+Not yet diagnosed. The suspicion is resource pressure: ~400 tests share one
+browser, and `test_diff` builds deliberately large DOMs. If it becomes routine,
+the fix is probably a function-scoped browser for the heavy modules rather than
+one for the whole session — at a real cost in runtime, which is why it has not
+been done pre-emptively.
