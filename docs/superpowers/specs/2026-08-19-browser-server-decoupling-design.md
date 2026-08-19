@@ -166,27 +166,35 @@ before the Chrome process has exited and released the lock. A `restart` that
 launches immediately therefore hits this window essentially every time — it is
 the common path, not an edge case.
 
-`stop()` waits for the release rather than assuming it:
+Handled in two halves — prevention on the way out, detection on the way in.
+
+**Prevention, in `stop()`:**
 
 1. Quit the driver.
-2. Poll the profile's `SingletonLock` (POSIX) / `lockfile` (Windows) until it
-   is gone, or the profile directory is writable as a fresh instance would need
-   it, up to a bounded timeout of a few seconds.
+2. Poll the profile's singleton lock files until they are gone, bounded to a
+   few seconds.
 3. If the timeout expires, `stop()` still succeeds and clears state — it did
-   what it was asked — but records `profile_released: false` in its result and
+   what it was asked — but reports `profile_released: false` in its result and
    in the session log.
 
-`start()` refuses to launch when the previous stop reported
-`profile_released: false` and the lock is still present, failing with
-`browser_dead` and a message naming the stale process. Failing to start is
-recoverable in a way that silently attaching to a dying browser is not: the
-latter produces a session that appears healthy and then errors on every command,
-which is the exact failure mode the workflow guide had to write a paragraph
-about.
+**Detection, in `start()`:** after the driver comes up, probe it once
+(`window_handles` plus `current_url`). A browser that handed off to an incumbent
+leaves chromedriver holding a session that dies on first use, so the probe is
+what actually distinguishes the two outcomes. On failure, quit the driver, reset
+state, and raise `browser_dead` naming the profile hand-off as the likely cause
+and the stale process as the thing to close.
 
-Profiles differ across platforms and Chrome versions, so the lock check is best
-effort and its absence is never treated as proof of anything — the bounded wait,
-not the file, is what makes this reliable.
+**`start()` deliberately does *not* refuse on the lock file's presence.** A
+hard-killed Chrome leaves its lock behind as a *stale* file, and Chrome's own
+recovery is to inspect the hostname and pid encoded in it rather than to trust
+its existence. Gating startup on the file would make the post-crash case — the
+one where you most need to start a browser — permanently unstartable, which is
+exactly backwards. Probing after launch cannot false-positive that way: it tests
+the session that actually exists.
+
+The lock poll in `stop()` is therefore an optimisation, not a guarantee, and a
+stale lock there costs a bounded wait and an honest `profile_released: false`.
+Nothing downstream refuses to act on that flag.
 
 ### `restart(**overrides) -> dict`
 
@@ -274,11 +282,24 @@ headless}`; an absent or empty body means "use the defaults".
 Lifecycle state, answerable with no browser present:
 
 ```json
-{"running": false, "config": {"browser": "chrome", "profile": "…", "headless": false}}
+{
+  "running": false,
+  "config":   {"browser": "chrome", "profile": "…", "headless": true},
+  "defaults": {"browser": "chrome", "profile": "…", "headless": false}
+}
 ```
 
-When running, `config` reports the *effective* config the browser was launched
-with, not the serve-time defaults.
+Two keys, because one cannot answer both questions. `config` is the
+**effective** config — what is running now, or what ran most recently, which is
+also what a bare `browser_restart` will use. `defaults` is what `abt serve` was
+given, which is what a bare `browser_start` will use.
+
+That difference between `start` and `restart` after a stop is deliberate and
+worth stating plainly: **`browser_start` means "fresh, from the server's
+defaults"; `browser_restart` means "that same browser again"**. A session
+started headless and then stopped comes back headless under `restart` and
+windowed under `start`. Reporting both keys is what makes that predictable
+rather than a surprise.
 
 ### `GET /status` — gains `running`
 
