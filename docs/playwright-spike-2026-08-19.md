@@ -124,8 +124,8 @@ profile, so it must be fixed before that feature ships.
 ## Reproducing
 
 `scratchpad/spike.py` (A, B, C on local fixtures) and `scratchpad/scale2.py`
-(B at real-page scale). Neither touches the repo; both need `playwright`
-installed in the venv, which is **not** yet added to `pyproject.toml`.
+(B at real-page scale). Neither touches the repo. Both need `playwright`, which
+is now an optional extra: `pip install -e ".[playwright]"`.
 
 
 ---
