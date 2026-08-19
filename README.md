@@ -38,7 +38,7 @@ python -m venv .venv
 Check it worked:
 
 ```bash
-.venv/Scripts/python -m pytest -q     # 300 tests, needs Chrome
+.venv/Scripts/python -m pytest -q     # 485 tests, needs Chrome
 ```
 
 The `abt` command lands in the venv. Either activate it
@@ -808,7 +808,12 @@ call, and `browser_command` passes through any raw op the named tools miss.
 ```
 
 The suite drives a real headless Chrome against static fixture pages served from a
-local port — no network, deterministic.
+local port — no network, deterministic. Around seven minutes for the full run.
+
+`tests/test_engine.py` needs no browser and runs in under a second. It guards the
+driver seam: that nothing outside `engine.py` and `browser.py` imports Selenium
+directly, and that the key table stays derived from the driver rather than typed
+out by hand. Both are properties no single diff makes visible.
 
 ## Licence
 

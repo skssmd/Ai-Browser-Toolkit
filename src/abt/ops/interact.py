@@ -4,41 +4,24 @@ from __future__ import annotations
 
 import time
 
-from selenium.common.exceptions import (
-    ElementClickInterceptedException,
-    ElementNotInteractableException,
-    InvalidElementStateException,
-    TimeoutException,
-    UnexpectedTagNameException,
-    WebDriverException,
-)
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import Select as SeleniumSelect
-from selenium.webdriver.support.ui import WebDriverWait
-
 from ..browser import BrowserSession
+from ..engine import (
+    CONTROL,
+    DELETE,
+    ActionChains,
+    ClickIntercepted,
+    EngineError,
+    InvalidElementState,
+    NotInteractable,
+    Select,
+    Timeout,
+    UnexpectedTagName,
+    WebDriverWait,
+)
+from ..engine import KEYS as KEYS
+from ..engine import MODIFIERS as _MODIFIERS
 from ..errors import OpError
 from ..targeting import describe, locator, resolve_one
-
-KEYS = {
-    name.lower(): getattr(Keys, name)
-    for name in dir(Keys)
-    if name.isupper() and not name.startswith("_")
-}
-
-# Modifier names accepted inside a key chord like "ctrl+v" or "shift+enter".
-_MODIFIERS = {
-    "alt": Keys.ALT,
-    "cmd": Keys.META,
-    "command": Keys.META,
-    "control": Keys.CONTROL,
-    "ctrl": Keys.CONTROL,
-    "meta": Keys.META,
-    "option": Keys.ALT,
-    "shift": Keys.SHIFT,
-    "windows": Keys.META,
-}
 
 
 def _resolve_press_keys(raw: str) -> list[str]:
@@ -169,7 +152,7 @@ def _require_hit(session: BrowserSession, element, cmd) -> None:
     while True:
         try:
             verdict = session.driver.execute_script(_HIT_TEST_JS, element)
-        except WebDriverException:
+        except EngineError:
             return
         if not isinstance(verdict, dict) or verdict.get("ok"):
             return
@@ -215,7 +198,7 @@ def click(session: BrowserSession, cmd) -> dict:
 
     try:
         element.click()
-    except (ElementClickInterceptedException, ElementNotInteractableException) as exc:
+    except (ClickIntercepted, NotInteractable) as exc:
         if not cmd.force:
             raise OpError(
                 "not_interactable",
@@ -223,7 +206,7 @@ def click(session: BrowserSession, cmd) -> dict:
             ) from exc
         try:
             session.driver.execute_script("arguments[0].click();", element)
-        except WebDriverException as inner:
+        except EngineError as inner:
             raise OpError(
                 "not_interactable",
                 f"forced click on {describe(cmd)} failed: {inner.msg or inner}",
@@ -268,7 +251,7 @@ def _click_at(session: BrowserSession, cmd) -> dict:
         pointer.move_to_location(x, y)
         pointer.click()
         chain.perform()
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError(
             "not_interactable",
             f"could not click ({x}, {y}): {exc.msg or exc}",
@@ -338,7 +321,7 @@ def _clear_field(session: BrowserSession, element) -> None:
     """
     try:
         element.clear()
-    except (InvalidElementStateException, ElementNotInteractableException):
+    except (InvalidElementState, NotInteractable):
         _clear_by_keystrokes(session, element)
         return
 
@@ -349,7 +332,7 @@ def _clear_field(session: BrowserSession, element) -> None:
     # op cannot empty; together they cover both kinds.
     try:
         session.driver.execute_script(_CLEAR_VALUE_JS, element)
-    except WebDriverException:
+    except EngineError:
         pass
 
 
@@ -360,9 +343,9 @@ def _clear_by_keystrokes(session: BrowserSession, element) -> None:
     page cannot tell from a user -- which is the point when a component only
     believes `input`.
     """
-    ActionChains(session.driver).click(element).key_down(Keys.CONTROL).send_keys(
+    ActionChains(session.driver).click(element).key_down(CONTROL).send_keys(
         "a"
-    ).key_up(Keys.CONTROL).send_keys(Keys.DELETE).perform()
+    ).key_up(CONTROL).send_keys(DELETE).perform()
 
 
 # Fields the browser renders as locale-formatted segment boxes rather than as
@@ -409,11 +392,11 @@ def _write_hidden_file(session: BrowserSession, cmd, element) -> dict:
     """Write a path to a file input that is hidden by design."""
     try:
         previous = session.driver.execute_script(UNHIDE_FILE_INPUT_JS, element)
-    except WebDriverException:
+    except EngineError:
         previous = ""
     try:
         element.send_keys(cmd.value)
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError(
             "not_interactable",
             f"could not stage {cmd.value!r} on {describe(cmd)}: {exc.msg or exc}",
@@ -421,7 +404,7 @@ def _write_hidden_file(session: BrowserSession, cmd, element) -> dict:
     finally:
         try:
             session.driver.execute_script(_RESTORE_STYLE_JS, element, previous)
-        except WebDriverException:
+        except EngineError:
             pass
     return {"target": describe(cmd), "value": _field_value(element), "staged": True}
 
@@ -439,7 +422,7 @@ def _hidden_file_input(session: BrowserSession, cmd, original: OpError):
         element = resolve_one(session, cmd, state="present")
         if (element.get_attribute("type") or "").lower() == "file":
             return element
-    except (OpError, WebDriverException):
+    except (OpError, EngineError):
         pass
     raise original
 
@@ -453,7 +436,7 @@ def input(session: BrowserSession, cmd) -> dict:
     field_type = ""
     try:
         field_type = (element.get_attribute("type") or "").lower()
-    except WebDriverException:
+    except EngineError:
         pass
 
     # Every file input goes through the staged writer, however it was targeted.
@@ -484,7 +467,7 @@ def input(session: BrowserSession, cmd) -> dict:
         if previous and _field_value(element) == previous + cmd.value:
             _clear_by_keystrokes(session, element)
             element.send_keys(cmd.value)
-    except ElementNotInteractableException as exc:
+    except NotInteractable as exc:
         raise OpError(
             "not_interactable",
             f"could not type into {describe(cmd)}: {exc.msg or exc}",
@@ -502,7 +485,7 @@ def _set_segmented(session: BrowserSession, cmd, element, field_type: str) -> di
     """
     try:
         landed = session.driver.execute_script(_SET_VALUE_JS, element, cmd.value)
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError(
             "not_interactable",
             f"could not set {describe(cmd)}: {exc.msg or exc}",
@@ -538,8 +521,8 @@ def _field_value(element) -> str | None:
 def select(session: BrowserSession, cmd) -> dict:
     element = resolve_one(session, cmd, state="visible")
     try:
-        dropdown = SeleniumSelect(element)
-    except UnexpectedTagNameException as exc:
+        dropdown = Select(element)
+    except UnexpectedTagName as exc:
         raise OpError(
             "not_a_select",
             f"{describe(cmd)} is a <{element.tag_name}>, not a <select>; "
@@ -591,7 +574,7 @@ def wait_for(session: BrowserSession, cmd) -> dict:
             WebDriverWait(session.driver, cmd.timeout).until(
                 lambda d: not d.find_elements(by, selector)
             )
-        except TimeoutException as exc:
+        except Timeout as exc:
             raise OpError(
                 "timeout",
                 f"{describe(cmd)} was still present after {cmd.timeout}s",

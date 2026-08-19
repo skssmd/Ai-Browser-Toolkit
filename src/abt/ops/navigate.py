@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from selenium.common.exceptions import WebDriverException
-
 from ..browser import BrowserSession
+from ..engine import EngineError
 from ..errors import OpError
 
 
@@ -32,7 +31,7 @@ def current_url(session: BrowserSession, cmd) -> dict:
 def _history(session: BrowserSession, action: str) -> dict:
     try:
         getattr(session.driver, action)()
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError("navigation_failed", f"{action} failed: {exc.msg or exc}") from exc
     session.refs.invalidate(session.active_tab)
     code = session.error_page_code()

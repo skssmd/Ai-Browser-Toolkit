@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-from selenium.common.exceptions import (
-    JavascriptException,
-    NoAlertPresentException,
-    WebDriverException,
-)
-
-from ..diff import diff_html, diff_text, page_key, page_text
 from ..browser import BrowserSession
+from ..diff import diff_html, diff_text, page_key, page_text
+from ..engine import EngineError, NoAlert, ScriptError
 from ..errors import OpError
 
 
 def run_js(session: BrowserSession, cmd) -> dict:
     try:
         value = session.driver.execute_script(cmd.script, *cmd.args)
-    except JavascriptException as exc:
+    except ScriptError as exc:
         raise OpError("js_error", f"script threw: {exc.msg or exc}") from exc
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError("js_error", f"script failed: {exc.msg or exc}") from exc
     return {"value": value}
 
@@ -27,13 +22,13 @@ def alert(session: BrowserSession, cmd) -> dict:
     """Inspect or answer a native browser dialog (alert/confirm/prompt)."""
     try:
         dialog = session.driver.switch_to.alert
-    except NoAlertPresentException:
+    except NoAlert:
         return {"present": False}
 
     message = None
     try:
         message = dialog.text
-    except WebDriverException:
+    except EngineError:
         pass
 
     if cmd.action == "text":

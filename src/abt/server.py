@@ -14,12 +14,12 @@ from typing import Any, Callable
 
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from selenium.common.exceptions import WebDriverException
 from starlette.concurrency import run_in_threadpool
 
 from . import messenger as messenger_api
 from . import shots as shots_util
 from .browser import BrowserSession
+from .engine import EngineError
 from .errors import OpError
 from .ops import dispatch
 from .ops.control import browser_state, session_status
@@ -301,7 +301,7 @@ def create_app(
             return ok(await run_in_threadpool(session_status, session))
         except OpError as exc:
             return fail(exc)
-        except WebDriverException as exc:
+        except EngineError as exc:
             # A dead browser must still answer /status -- that is how a caller
             # finds out it is dead. Without this the route 500s with a raw
             # traceback, which is the least useful thing it could do.

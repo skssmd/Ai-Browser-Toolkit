@@ -8,19 +8,14 @@ never a silent hit on a different element.
 
 from __future__ import annotations
 
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    StaleElementReferenceException,
-)
-from selenium.webdriver.remote.webelement import WebElement
-
+from .engine import Element, NoSuchElement, StaleElement
 from .errors import OpError
 
 
 class RefCache:
     """Names to elements, plus the frame each element was found in.
 
-    A WebElement only answers while the driver is switched into the document it
+    An Element only answers while the driver is switched into the document it
     came from, so a ref for something inside a frame is half a handle on its
     own. The frame path is stored with it and `BrowserSession.resolve_ref` goes
     there first -- otherwise a ref from a sign-in widget would report stale from
@@ -28,14 +23,14 @@ class RefCache:
     """
 
     def __init__(self) -> None:
-        self._tabs: dict[str, dict[str, WebElement]] = {}
+        self._tabs: dict[str, dict[str, Element]] = {}
         self._frames: dict[str, dict[str, tuple[int, ...]]] = {}
         self._counters: dict[str, int] = {}
 
     def allocate(
         self,
         tab_id: str,
-        elements: list[WebElement],
+        elements: list[Element],
         frame: tuple[int, ...] = (),
     ) -> list[str]:
         table = self._tabs.setdefault(tab_id, {})
@@ -56,7 +51,7 @@ class RefCache:
         unknown ref fails as a stale ref rather than as a missing frame."""
         return self._frames.get(tab_id, {}).get(ref, ())
 
-    def get(self, tab_id: str, ref: str) -> WebElement:
+    def get(self, tab_id: str, ref: str) -> Element:
         element = self._tabs.get(tab_id, {}).get(ref)
         if element is None:
             raise OpError(
@@ -65,7 +60,7 @@ class RefCache:
             )
         try:
             element.is_enabled()
-        except (StaleElementReferenceException, NoSuchElementException) as exc:
+        except (StaleElement, NoSuchElement) as exc:
             self._tabs[tab_id].pop(ref, None)
             self._frames.get(tab_id, {}).pop(ref, None)
             raise OpError(

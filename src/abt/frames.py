@@ -32,8 +32,7 @@ cost instead.
 
 from __future__ import annotations
 
-from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.common.by import By
+from .engine import By, EngineError
 
 # Frames, in the one ordering everything here uses: where the elements sit in
 # the document. `find_elements` and `querySelectorAll` agree on it, which is
@@ -78,7 +77,7 @@ def child_slots(driver, min_px: int = MIN_FRAME_PX) -> list[int]:
     """Frames worth walking inside whichever document the driver is in now."""
     try:
         found = driver.execute_script(_SCAN_JS, min_px)
-    except WebDriverException:
+    except EngineError:
         return []
     return [int(slot) for slot in found or []]
 
@@ -92,7 +91,7 @@ def leave(driver) -> None:
     """
     try:
         driver.switch_to.default_content()
-    except WebDriverException:
+    except EngineError:
         pass
 
 
@@ -124,12 +123,12 @@ def enter(driver, path: tuple[int, ...]) -> bool:
     leave(driver)
     for index in path:
         try:
-            siblings = driver.find_elements(By.CSS_SELECTOR, _FRAME_SELECTOR)
+            siblings = driver.find_elements(By.CSS, _FRAME_SELECTOR)
             if index >= len(siblings):
                 leave(driver)
                 return False
             driver.switch_to.frame(siblings[index])
-        except WebDriverException:
+        except EngineError:
             leave(driver)
             return False
     return True

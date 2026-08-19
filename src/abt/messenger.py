@@ -28,12 +28,9 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 
 from .browser import BrowserSession
+from .engine import BACKSPACE, CONTROL, ENTER, ActionChains, By, EngineError
 from .ops.interact import UNHIDE_FILE_INPUT_JS
 from .errors import OpError
 
@@ -245,7 +242,7 @@ def _visible(elements) -> list:
         try:
             if element.is_displayed():
                 out.append(element)
-        except WebDriverException:
+        except EngineError:
             continue
     return out
 
@@ -260,7 +257,7 @@ def _composer(session: BrowserSession, timeout: float):
     deadline = time.monotonic() + timeout
     while True:
         for css in COMPOSER_CSS:
-            found = _visible(session.driver.find_elements(By.CSS_SELECTOR, css))
+            found = _visible(session.driver.find_elements(By.CSS, css))
             if found:
                 return found[0]
         if time.monotonic() >= deadline:
@@ -279,9 +276,9 @@ def _clear(session: BrowserSession, composer) -> None:
     ignores execCommand and clear() raises on a contenteditable; real
     keystrokes are the only thing that works.
     """
-    ActionChains(session.driver).click(composer).key_down(Keys.CONTROL).send_keys(
+    ActionChains(session.driver).click(composer).key_down(CONTROL).send_keys(
         "a"
-    ).key_up(Keys.CONTROL).send_keys(Keys.BACKSPACE).perform()
+    ).key_up(CONTROL).send_keys(BACKSPACE).perform()
     if session.driver.execute_script(_TEXT_JS, composer):
         raise OpError(
             "not_interactable",
@@ -297,7 +294,7 @@ def _attach(session: BrowserSession, files: list[dict], request: SendMessage) ->
     is the only way in -- and send_keys on it is what fires React's change
     handler, which no amount of JS DataTransfer will do.
     """
-    inputs = session.driver.find_elements(By.CSS_SELECTOR, "input[type=file]")
+    inputs = session.driver.find_elements(By.CSS, "input[type=file]")
     if not inputs:
         raise OpError(
             "element_not_found", "this page has no file input to attach through"
@@ -306,7 +303,7 @@ def _attach(session: BrowserSession, files: list[dict], request: SendMessage) ->
     session.driver.execute_script(_UNHIDE_JS, field)
     try:
         field.send_keys("\n".join(f["path"] for f in files))
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError(
             "not_interactable", f"could not stage attachments: {exc.msg or exc}"
         ) from exc
@@ -352,14 +349,14 @@ def _accept_mention(session: BrowserSession, name: str, timeout: float = 8.0) ->
     wanted = name.strip().lower()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        options = _visible(session.driver.find_elements(By.CSS_SELECTOR, OPTION_CSS))
+        options = _visible(session.driver.find_elements(By.CSS, OPTION_CSS))
         for option in options:
             try:
                 label = (option.text or "").strip()
                 if wanted in label.lower():
                     option.click()
                     return label
-            except WebDriverException:
+            except EngineError:
                 continue
         time.sleep(0.2)
     raise OpError(
@@ -370,7 +367,7 @@ def _accept_mention(session: BrowserSession, name: str, timeout: float = 8.0) ->
 
 
 def _article(session: BrowserSession, reply_to: int | str):
-    articles = session.driver.find_elements(By.CSS_SELECTOR, ARTICLE_CSS)
+    articles = session.driver.find_elements(By.CSS, ARTICLE_CSS)
     if not articles:
         raise OpError("element_not_found", "this thread shows no messages to reply to")
     if isinstance(reply_to, int):
@@ -410,7 +407,7 @@ def _open_reply(session: BrowserSession, reply_to: int | str, timeout: float) ->
         for scope in (article, _parent(session, article)):
             if scope is None:
                 continue
-            buttons = _visible(scope.find_elements(By.CSS_SELECTOR, REPLY_CSS))
+            buttons = _visible(scope.find_elements(By.CSS, REPLY_CSS))
             if buttons:
                 buttons[0].click()
                 return quoted
@@ -425,12 +422,12 @@ def _open_reply(session: BrowserSession, reply_to: int | str, timeout: float) ->
 def _parent(session: BrowserSession, element):
     try:
         return session.driver.execute_script("return arguments[0].parentElement;", element)
-    except WebDriverException:
+    except EngineError:
         return None
 
 
 def _count_articles(session: BrowserSession) -> int:
-    return len(session.driver.find_elements(By.CSS_SELECTOR, ARTICLE_CSS))
+    return len(session.driver.find_elements(By.CSS, ARTICLE_CSS))
 
 
 def _in_thread(session: BrowserSession, needle: str) -> bool:
@@ -478,7 +475,7 @@ def send(session: BrowserSession, request: SendMessage) -> dict:
 
     before = _count_articles(session)
     composer.click()
-    composer.send_keys(Keys.ENTER)
+    composer.send_keys(ENTER)
     # Look for the longest plain stretch of the message, not the message: what
     # lands in the thread is "@Yaleed Haque", not the "@Yaleed" that was typed.
     needle = max(
