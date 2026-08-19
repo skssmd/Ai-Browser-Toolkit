@@ -142,9 +142,18 @@ def status(session: BrowserSession, cmd) -> dict:
 
 
 def session_status(session: BrowserSession) -> dict:
+    """Where the session is, or that there is no session.
+
+    `running` is always present. Everything else is only meaningful with a
+    browser up, and a caller that reads `url` without checking `running` should
+    find it missing rather than find a lie.
+    """
+    if not session.is_running:
+        return browser_state(session)
     tabs = session.tabs()
     active = session.active_tab
     return {
+        "running": True,
         "url": session.driver.current_url,
         "title": session.driver.title,
         "active_tab": active,

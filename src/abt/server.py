@@ -22,7 +22,7 @@ from . import shots as shots_util
 from .browser import BrowserSession
 from .errors import OpError
 from .ops import dispatch
-from .ops.control import session_status
+from .ops.control import browser_state, session_status
 from .recorder import (
     SessionRecorder,
     list_sessions,
@@ -312,6 +312,53 @@ def create_app(
     @app.get("/ops")
     async def ops():
         return ok(OP_NAMES)
+
+    # --- browser lifecycle ----------------------------------------------------
+
+    @app.get("/health")
+    async def health():
+        """Is the *server* up. Never touches the driver or the command lock.
+
+        This is what launchers and readiness polls want. /status cannot serve
+        that purpose once the browser is optional: a healthy server with no
+        browser would look like a failure to whatever started it.
+        """
+        return {"ok": True, "running": session.is_running}
+
+    @app.get("/browser")
+    async def browser():
+        return ok(browser_state(session))
+
+    async def _lifecycle(request: Request, op: str) -> dict:
+        """Run a lifecycle op through the normal path: one lock, one log entry.
+
+        Serialized against in-flight commands on purpose -- a start that raced
+        a running command would launch Chrome underneath it.
+        """
+        payload: dict[str, Any] = {"op": op}
+        if op in ("browser_start", "browser_restart"):
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                for field in ("browser", "profile", "headless"):
+                    if body.get(field) is not None:
+                        payload[field] = body[field]
+        results = await run_in_threadpool(execute, [payload], False)
+        return results[0]
+
+    @app.post("/browser/start")
+    async def browser_start_route(request: Request):
+        return await _lifecycle(request, "browser_start")
+
+    @app.post("/browser/stop")
+    async def browser_stop_route(request: Request):
+        return await _lifecycle(request, "browser_stop")
+
+    @app.post("/browser/restart")
+    async def browser_restart_route(request: Request):
+        return await _lifecycle(request, "browser_restart")
 
     # --- session logs ---------------------------------------------------------
 

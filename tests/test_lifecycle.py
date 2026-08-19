@@ -350,3 +350,52 @@ def test_the_lifecycle_ops_are_not_treated_as_dom_touching():
         assert name not in DIFFABLE_OPS
         assert name not in NAVIGATION_OPS
         assert name not in DOM_TOUCHING_OPS
+
+
+# --- HTTP ------------------------------------------------------------------
+
+
+def test_health_answers_without_a_browser(unstarted_client):
+    body = unstarted_client.get("/health").json()
+    assert body["ok"] is True
+    assert body["running"] is False
+
+
+def test_status_answers_without_a_browser(unstarted_client):
+    body = unstarted_client.get("/status").json()
+    assert body["ok"] is True
+    assert body["result"]["running"] is False
+    assert "url" not in body["result"]
+
+
+def test_browser_route_reports_the_defaults(unstarted_client):
+    body = unstarted_client.get("/browser").json()
+    assert body["ok"] is True
+    assert body["result"]["running"] is False
+    assert body["result"]["defaults"]["headless"] is True
+
+
+def test_a_page_command_without_a_browser_says_how_to_recover(unstarted_client):
+    body = unstarted_client.post(
+        "/command", json={"op": "goto", "url": "https://example.com"}
+    ).json()
+    assert body["ok"] is False
+    assert body["error"]["type"] == "browser_dead"
+    assert "browser_start" in body["error"]["message"]
+
+
+def test_stopping_a_stopped_browser_over_http_is_harmless(unstarted_client):
+    body = unstarted_client.post("/browser/stop").json()
+    assert body["ok"] is True
+    assert body["result"]["stopped"] is False
+
+
+def test_start_route_reports_a_bad_browser_without_launching(unstarted_client):
+    body = unstarted_client.post("/browser/start", json={"browser": "firefox"}).json()
+    assert body["ok"] is False
+    assert body["error"]["type"] == "bad_browser"
+
+
+def test_ops_route_lists_the_lifecycle_ops(unstarted_client):
+    body = unstarted_client.get("/ops").json()
+    assert "browser_start" in body["result"]

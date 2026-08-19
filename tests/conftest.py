@@ -97,3 +97,21 @@ def client(clean_session):
 
     with TestClient(create_app(clean_session)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def unstarted_session(tmp_path):
+    """A session that never launched a browser.
+
+    The existing `session` fixture starts Chrome eagerly and is session-scoped;
+    this one is the counterpart for everything that should work without one.
+    """
+    return BrowserSession(profile=tmp_path, headless=True, action_timeout=3.0)
+
+
+@pytest.fixture
+def unstarted_client(unstarted_session):
+    from fastapi.testclient import TestClient
+
+    with TestClient(create_app(unstarted_session)) as test_client:
+        yield test_client
