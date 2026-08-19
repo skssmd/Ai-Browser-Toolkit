@@ -274,3 +274,79 @@ def test_an_unreachable_browser_points_at_restart_not_start(session):
     assert exc.value.type == "browser_dead"
     assert "browser_restart" in exc.value.message
     assert "target window already closed" in exc.value.message
+
+
+# --- ops -------------------------------------------------------------------
+
+
+def test_the_new_ops_are_registered():
+    from abt.schema import OP_NAMES
+
+    for name in ("browser_start", "browser_stop", "browser_restart", "browser_status"):
+        assert name in OP_NAMES
+
+
+def test_the_new_ops_skip_the_health_check():
+    from abt.ops import NO_HEALTH_CHECK
+
+    assert NO_HEALTH_CHECK == {
+        "shutdown",
+        "status",
+        "browser_start",
+        "browser_stop",
+        "browser_restart",
+        "browser_status",
+    }
+
+
+def test_browser_start_accepts_overrides():
+    from abt.schema import parse_command
+
+    cmd = parse_command({"op": "browser_start", "browser": "edge", "headless": True})
+    assert cmd.browser == "edge"
+    assert cmd.headless is True
+    assert cmd.profile is None
+
+
+def test_browser_start_takes_no_arguments_happily():
+    from abt.schema import parse_command
+
+    cmd = parse_command({"op": "browser_start"})
+    assert (cmd.browser, cmd.profile, cmd.headless) == (None, None, None)
+
+
+def test_browser_stop_rejects_stray_fields():
+    from abt.schema import parse_command
+
+    with pytest.raises(OpError) as exc:
+        parse_command({"op": "browser_stop", "headless": True})
+    assert exc.value.type == "invalid_op"
+
+
+def test_browser_state_reports_both_configs(session):
+    from abt.ops.control import browser_state
+
+    session.launch = session.defaults.merge(headless=False)
+    state = browser_state(session)
+
+    assert state["running"] is False
+    assert state["config"]["headless"] is False
+    assert state["defaults"]["headless"] is True
+    assert isinstance(state["config"]["profile"], str)
+
+
+def test_browser_status_op_dispatches_without_a_browser(session):
+    from abt.ops import dispatch
+    from abt.schema import parse_command
+
+    state = dispatch(session, parse_command({"op": "browser_status"}))
+    assert state["running"] is False
+
+
+def test_the_lifecycle_ops_are_not_treated_as_dom_touching():
+    from abt.ops import DIFFABLE_OPS, DOM_TOUCHING_OPS, NAVIGATION_OPS
+
+    for name in ("browser_start", "browser_stop", "browser_restart", "browser_status"):
+        assert name not in DIFFABLE_OPS
+        assert name not in NAVIGATION_OPS
+        assert name not in DOM_TOUCHING_OPS

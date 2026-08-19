@@ -200,7 +200,7 @@ def test_an_unsupported_browser_fails_cleanly(tmp_path):
 def test_status_and_shutdown_skip_the_health_check():
     from abt.ops import NO_HEALTH_CHECK
 
-    assert NO_HEALTH_CHECK == {"shutdown", "status"}
+    assert {"shutdown", "status"} <= NO_HEALTH_CHECK
 
 
 def test_status_answers_even_when_the_browser_is_gone(clean_session):

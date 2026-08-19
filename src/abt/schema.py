@@ -365,6 +365,32 @@ class Shutdown(Base):
     op: Literal["shutdown"]
 
 
+class BrowserStart(Base):
+    """Launch a browser. Omitted fields fall back to the server's defaults."""
+
+    op: Literal["browser_start"]
+    browser: str | None = None
+    profile: str | None = None
+    headless: bool | None = None
+
+
+class BrowserStop(Base):
+    op: Literal["browser_stop"]
+
+
+class BrowserRestart(Base):
+    """Stop and start again. Omitted fields keep what is running now."""
+
+    op: Literal["browser_restart"]
+    browser: str | None = None
+    profile: str | None = None
+    headless: bool | None = None
+
+
+class BrowserStatus(Base):
+    op: Literal["browser_status"]
+
+
 Command = Annotated[
     Union[
         Goto, Back, Forward, Reload, CurrentUrl,
@@ -373,6 +399,7 @@ Command = Annotated[
         TabNew, TabList, TabSwitch, TabClose,
         RunJs, Diff, Status, Shutdown, Alert,
         ReadConsole, ReadNetwork,
+        BrowserStart, BrowserStop, BrowserRestart, BrowserStatus,
     ],
     Field(discriminator="op"),
 ]

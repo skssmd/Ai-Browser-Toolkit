@@ -99,6 +99,44 @@ def diff(session: BrowserSession, cmd) -> dict:
     return payload
 
 
+# --- browser lifecycle ------------------------------------------------------
+
+
+def browser_state(session: BrowserSession) -> dict:
+    """Lifecycle state, answerable with no browser present.
+
+    Two configs, because one key cannot answer both questions. `config` is what
+    is running now (or ran most recently), which is what a bare browser_restart
+    will use. `defaults` is what `abt serve` was given, which is what a bare
+    browser_start will use.
+    """
+    return {
+        "running": session.is_running,
+        "config": session.config.to_dict(),
+        "defaults": session.defaults.to_dict(),
+    }
+
+
+def browser_start(session: BrowserSession, cmd) -> dict:
+    return session.start(
+        browser=cmd.browser, profile=cmd.profile, headless=cmd.headless
+    )
+
+
+def browser_stop(session: BrowserSession, cmd) -> dict:
+    return session.stop()
+
+
+def browser_restart(session: BrowserSession, cmd) -> dict:
+    return session.restart(
+        browser=cmd.browser, profile=cmd.profile, headless=cmd.headless
+    )
+
+
+def browser_status(session: BrowserSession, cmd) -> dict:
+    return browser_state(session)
+
+
 def status(session: BrowserSession, cmd) -> dict:
     return session_status(session)
 

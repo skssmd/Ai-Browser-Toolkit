@@ -40,6 +40,10 @@ REGISTRY: dict[str, Handler] = {
     "diff": control.diff,
     "status": control.status,
     "shutdown": control.shutdown,
+    "browser_start": control.browser_start,
+    "browser_stop": control.browser_stop,
+    "browser_restart": control.browser_restart,
+    "browser_status": control.browser_status,
 }
 
 # Ops that change the page in place and therefore get a before/after diff
@@ -57,9 +61,18 @@ NAVIGATION_OPS = frozenset({"goto", "back", "forward", "reload"})
 DOM_TOUCHING_OPS = DIFFABLE_OPS | NAVIGATION_OPS | {"tab_new", "tab_close"}
 
 # The health check exists to fail fast instead of hanging on a dead driver. But
-# these two are exactly what you reach for *when* it has died -- gating them
-# behind it means a server whose browser crashed can never be shut down.
-NO_HEALTH_CHECK = frozenset({"shutdown", "status"})
+# these are exactly what you reach for *when* it has died -- gating them behind
+# it means a server whose browser crashed can never recover or be shut down.
+NO_HEALTH_CHECK = frozenset(
+    {
+        "shutdown",
+        "status",
+        "browser_start",
+        "browser_stop",
+        "browser_restart",
+        "browser_status",
+    }
+)
 
 
 def dispatch(session: BrowserSession, cmd) -> Any:
