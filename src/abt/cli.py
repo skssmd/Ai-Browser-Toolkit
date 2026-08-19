@@ -84,6 +84,13 @@ def serve(
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
+    start_browser: bool = typer.Option(
+        False,
+        "--start-browser/--no-start-browser",
+        help="Launch the browser at startup instead of waiting for a "
+        "browser_start command. Off by default: the server is useful "
+        "immediately, and Chrome on a persistent profile can take two minutes.",
+    ),
     action_timeout: float = typer.Option(
         5.0, "--action-timeout", help="Seconds to wait for an element before failing."
     ),
@@ -161,8 +168,14 @@ def serve(
         max_frames=max_frames,
         max_frame_depth=max_frame_depth,
     )
-    typer.echo(f"starting {browser} (profile: {session.profile})")
-    session.start()
+    if start_browser:
+        typer.echo(f"starting {browser} (profile: {session.profile})")
+        session.start()
+    else:
+        typer.echo(
+            f"no browser running (default: {browser}, profile: {session.profile})"
+        )
+        typer.echo('start one with {"op": "browser_start"} or POST /browser/start')
 
     recorder = None if no_log else SessionRecorder(log_dir, max_shot_mb=shots_max_mb)
     if recorder is not None:

@@ -399,3 +399,16 @@ def test_start_route_reports_a_bad_browser_without_launching(unstarted_client):
 def test_ops_route_lists_the_lifecycle_ops(unstarted_client):
     body = unstarted_client.get("/ops").json()
     assert "browser_start" in body["result"]
+
+
+# --- CLI -------------------------------------------------------------------
+
+
+def test_serve_has_an_opt_in_browser_launch_flag():
+    """The old eager behaviour must stay reachable, and stay off by default."""
+    import inspect
+
+    from abt.cli import serve
+
+    parameter = inspect.signature(serve).parameters["start_browser"]
+    assert parameter.default.default is False
