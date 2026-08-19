@@ -66,6 +66,12 @@ Related, same cause: `dispatch` ran `health_check()` before *every* op, so
 check failed first, and the process had to be killed by hand. `shutdown` and
 `status` are now exempt (`NO_HEALTH_CHECK`).
 
+Superseded in part on 2026-08-19: a dead browser no longer costs you the
+server. `browser_restart` (also exempt from the health check) replaces it in
+place, so "killed by hand" is no longer the remedy for anything here. The fix
+above still stands — `/status` must answer on a dead browser, which is how a
+caller learns it is dead.
+
 ### 5. `OpError("bad_browser", …)` raised `ValueError` — fixed 2026-08-03
 
 `browser.py` raised it for an unsupported `--browser`, but `bad_browser` was not

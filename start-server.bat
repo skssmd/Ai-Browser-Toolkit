@@ -5,7 +5,7 @@ rem
 rem  `abt serve` never returns; running it inside an agent's tool call wedges
 rem  that call forever. This script launches it as a DETACHED process with its
 rem  output redirected to a file (so no inherited pipe is held open), then polls
-rem  /status until the server answers and exits. It is always safe to run: if a
+rem  /health until the server answers and exits. It is always safe to run: if a
 rem  server is already up it changes nothing and exits 0.
 rem
 rem  Usage:
@@ -35,7 +35,7 @@ set "MODE=start"
 set "NOWAIT="
 rem How long to wait for readiness: Chrome on the persistent profile can take
 rem ~2 minutes on a cold start, so poll rather than sleep a fixed amount.
-set "WAIT_SECONDS=180"
+set "WAIT_SECONDS=30"
 
 rem --- parse args -----------------------------------------------------------
 :parse
@@ -51,7 +51,7 @@ shift
 goto parse
 :parsed
 
-set "STATUS_URL=http://127.0.0.1:%PORT%/status"
+set "STATUS_URL=http://127.0.0.1:%PORT%/health"
 
 rem A server on a non-default port gets its own log files, so starting one never
 rem truncates the logs of the server already running on 8765.
@@ -149,7 +149,7 @@ echo [abt] --- last lines of %ERRLOG% ---
 powershell -NoProfile -Command "if (Test-Path '%ERRLOG%') { Get-Content -LiteralPath '%ERRLOG%' -Tail 20 }" 2>nul
 exit /b 1
 
-rem --- helper: errorlevel 0 when /status answers ----------------------------
+rem --- helper: errorlevel 0 when /health answers ----------------------------
 :probe
 curl.exe -s -m 5 -o nul "%STATUS_URL%" >nul 2>&1
 exit /b %errorlevel%

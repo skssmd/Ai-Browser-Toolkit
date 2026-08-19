@@ -130,6 +130,28 @@ rare outside browser internals.
 Branch on `error.type`, never on the message. `invalid_op` means you guessed a
 parameter — check `GET /ops`.
 
+`browser_dead` is **recoverable and not fatal**. It means no browser is running
+right now — never started, stopped, or crashed. Nothing starts one for you:
+send `{"op": "browser_start"}` if none was ever up, or
+`{"op": "browser_restart"}` if one died. Both work when everything else
+returns `browser_dead`, because they skip the health check. You keep the
+server, the session log and your logins; you lose every tab and ref.
+
+## The browser is not the server
+
+`abt up` starts a server and returns in seconds — use it instead of `abt serve`,
+which never returns. The server comes up with **no browser**, so:
+
+* `GET /health` — is the *server* up. This is the readiness probe; it never
+  touches the driver.
+* `GET /browser` — is a *browser* up, and on what config.
+* `GET /status` — always carries `running`. When false, there is no `url`.
+* `POST /browser/start|stop|restart` — optional `{browser, profile, headless}`.
+
+`start` uses the server's defaults; `restart` keeps whatever the last browser
+used. So a session started headless comes back headless under `restart` and
+windowed under `start`.
+
 ## If you speak MCP
 
 `abt mcp` serves these operations as typed tools over stdio, which removes the

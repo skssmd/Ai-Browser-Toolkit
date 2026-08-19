@@ -344,12 +344,25 @@ even though the other windows are still on screen.
 
 The workaround is to not be standing there: `tab_switch` back to the tab you
 came from *before* clicking the control that completes the flow, when the flow
-allows it. Once it has happened, the only way back is
-`{"op": "shutdown"}` (which still works with a dead browser) followed by
-`start-server.sh` / `start-server.bat`.
+allows it.
 
-Before restarting, make sure no Chrome is still holding the toolkit profile — if
-one is, the fresh Chrome hands off to it and the new session dies immediately
+Once it has happened, send `{"op": "browser_restart"}` (or
+`POST /browser/restart`). Like `status` and `shutdown` it skips the health
+check, so it works precisely when everything else returns `browser_dead`. The
+server stays up, the session log continues, and you get a fresh browser on the
+same profile — so you are still logged in, but **every tab and every ref is
+gone** and you must navigate back to where you were.
+
+You no longer have to check by hand that nothing else is holding the profile.
+`stop` waits for the old browser to release it, and `start` probes the new
+session and fails loudly rather than handing you one that dies on first use.
+The rest of this note explains the failure that used to cause:
+
+<details><summary>Why this used to be fatal</summary>
+
+Before restarting, you had to make sure no Chrome was still holding the toolkit
+profile — if one was, the fresh Chrome handed off to it and the new session died
+immediately
 with `invalid session id`. Filter on the profile path, never blanket-kill
 `chrome.exe`; the human's own browser is in that process list too.
 
@@ -360,6 +373,11 @@ Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
 
 Worth fixing in the server: falling back to any surviving window handle on
 `NoSuchWindowException` would make this recoverable without a restart.
+
+</details>
+
+Still worth fixing properly: falling back to a surviving window handle on
+`NoSuchWindowException` would keep the tabs, which `browser_restart` cannot.
 
 ## Site traps to remember
 

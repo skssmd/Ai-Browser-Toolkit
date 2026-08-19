@@ -31,9 +31,9 @@ BROWSER=chrome
 MODE=start
 NOWAIT=
 ARGS=()
-# Chrome on the persistent profile can take ~2 minutes on a cold start, so poll
-# rather than sleeping a fixed amount.
-WAIT_SECONDS=180
+# No browser is launched at startup any more, so the server answers in about a
+# second. The old 180s budget existed only to cover Chrome on a cold profile.
+WAIT_SECONDS=30
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-STATUS_URL="http://127.0.0.1:$PORT/status"
+STATUS_URL="http://127.0.0.1:$PORT/health"
 
 # A server on a non-default port gets its own log files, so starting one never
 # truncates the logs of the server already running on 8765.

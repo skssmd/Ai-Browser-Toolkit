@@ -49,10 +49,41 @@ below.
 ## Run
 
 > **Start the server as a separate process.** `abt serve` is the command loop —
-> it opens Chrome, listens, and **never returns on its own**. Run it in the
-> foreground and it holds that terminal until you shut it down, so an agent or
-> script that launches it inline will hang there forever. Background it, or give
-> it its own terminal.
+> it listens and **never returns on its own**. Run it in the foreground and it
+> holds that terminal until you shut it down, so an agent or script that
+> launches it inline will hang there forever. Background it, or give it its own
+> terminal.
+
+**`abt up` is the shortest safe way**, and the one to reach for from an agent:
+
+```bash
+abt up            # start a server if none is running, then return
+```
+
+It returns in seconds and never blocks. On Windows it asks WMI (falling back to
+Task Scheduler) to do the spawning, so the server's parent is a Windows service
+rather than your shell — which means it sits **outside your caller's job
+object**. That distinction is the whole point: a harness that waits on its job
+will hang on a plain background launch no matter how you redirect stdio, and
+`CREATE_BREAKAWAY_FROM_JOB` fails silently when the job forbids breakaway. On
+POSIX it double-forks with `setsid`.
+
+**The server starts with no browser.** It listens in about a second instead of
+waiting up to two minutes for Chrome on the persistent profile. Ask for a
+browser when you want one:
+
+```bash
+curl -X POST http://127.0.0.1:8765/browser/start
+curl http://127.0.0.1:8765/browser     # running? on what config?
+curl http://127.0.0.1:8765/health      # is the *server* up (never touches the driver)
+```
+
+Pass `--start-browser` to `abt serve` for the old eager behaviour.
+
+**When the browser dies, the server survives it.** Every page command returns
+`browser_dead` naming the remedy, and `browser_restart` gives you a fresh
+browser on the same profile without losing the server or the session log. You
+stay logged in; tabs and refs do not survive.
 
 **The safe way — use the start script.** It does the whole dance for you and is
 the only thing an agent or CI job should call:
@@ -64,9 +95,9 @@ start-server.bat               # Windows cmd
 
 It no-ops if a server is already running, creates `.venv` and installs
 dependencies only when they are missing, launches the server detached with its
-output redirected to `server.log` / `server.err`, then polls `/status` and exits
-0 once the server answers (waiting up to 180s, since a cold Chrome on the
-persistent profile is slow). Exit 1 means it never came up — it prints the tail
+output redirected to `server.log` / `server.err`, then polls `/health` and exits
+0 once the server answers (about a second now that no browser is launched at
+startup). Exit 1 means it never came up — it prints the tail
 of `server.err`; exit 2 means dependencies failed.
 
 ```bash
@@ -549,6 +580,7 @@ on when the server default is off.
 | Interact | `click` `input` `select` `hover` `scroll` `wait_for` `press` |
 | Tabs | `tab_new` `tab_list` `tab_switch` `tab_close` |
 | Control | `run_js` `diff` `status` `shutdown` |
+| Browser lifecycle | `browser_start` `browser_stop` `browser_restart` `browser_status` |
 
 `select` drives native `<select>` elements via `by_text`, `value`, or `option_index`.
 Custom dropdown navs that only open on mouseover are `hover` then `click`.
