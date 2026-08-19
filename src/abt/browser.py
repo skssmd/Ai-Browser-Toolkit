@@ -104,6 +104,7 @@ class BrowserSession:
         frames_enabled: bool = True,
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
+        engine: str = "selenium",
     ) -> None:
         # Validation lives in LaunchConfig, so an unsupported browser is
         # rejected identically whether it arrived from `abt serve` or from
@@ -122,6 +123,13 @@ class BrowserSession:
         self.max_frame_depth = max_frame_depth
         self.diff_enabled = diff_enabled
         self.diff_max_tokens = diff_max_tokens
+        # Which driver backs this session. Deliberately not on LaunchConfig:
+        # that object is serialised into /browser and /status, and the engine is
+        # an implementation detail no caller should be branching on. See
+        # docs/playwright-spike-2026-08-19.md.
+        if engine not in ("selenium", "playwright"):
+            raise ValueError(f"unknown engine {engine!r}")
+        self._engine = engine
         self.refs = RefCache()
         self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
         self._driver: webdriver.Chrome | webdriver.Edge | None = None
@@ -199,6 +207,10 @@ class BrowserSession:
         }
 
     def _launch_driver(self, config: LaunchConfig):
+        if self._engine == "playwright":
+            from .pwdriver import PlaywrightDriver
+
+            return PlaywrightDriver(config, action_timeout=self.action_timeout)
         options = self._make_options(config)
         if config.browser == "edge":
             return webdriver.Edge(options=options)

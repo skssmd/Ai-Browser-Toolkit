@@ -72,10 +72,33 @@ def other_origin():
     server.server_close()
 
 
+def pytest_addoption(parser):
+    """`--engine playwright` runs the whole suite against the other driver.
+
+    The point of the migration is that these tests cannot tell which engine is
+    underneath. Making that a flag rather than a fork means the claim is checked
+    by running the same 485 assertions, not by reading a diff.
+    """
+    parser.addoption(
+        "--engine",
+        action="store",
+        default="selenium",
+        choices=("selenium", "playwright"),
+        help="which driver the browser-backed fixtures use",
+    )
+
+
 @pytest.fixture(scope="session")
-def session():
+def engine(request):
+    return request.config.getoption("--engine")
+
+
+@pytest.fixture(scope="session")
+def session(engine):
     profile = Path(tempfile.mkdtemp(prefix="abt-test-profile-"))
-    browser = BrowserSession(profile=profile, headless=True, action_timeout=3.0)
+    browser = BrowserSession(
+        profile=profile, headless=True, action_timeout=3.0, engine=engine
+    )
     browser.start()
     yield browser
     browser.quit()
@@ -100,13 +123,15 @@ def client(clean_session):
 
 
 @pytest.fixture
-def unstarted_session(tmp_path):
+def unstarted_session(tmp_path, engine):
     """A session that never launched a browser.
 
     The existing `session` fixture starts Chrome eagerly and is session-scoped;
     this one is the counterpart for everything that should work without one.
     """
-    return BrowserSession(profile=tmp_path, headless=True, action_timeout=3.0)
+    return BrowserSession(
+        profile=tmp_path, headless=True, action_timeout=3.0, engine=engine
+    )
 
 
 @pytest.fixture

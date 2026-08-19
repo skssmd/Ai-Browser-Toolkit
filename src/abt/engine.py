@@ -46,11 +46,13 @@ from selenium.common.exceptions import (
     UnexpectedTagNameException,
     WebDriverException,
 )
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.action_chains import (
+    ActionChains as _SeleniumActionChains,
+)
 from selenium.webdriver.common.keys import Keys as _SeleniumKeys
 from selenium.webdriver.remote.webelement import WebElement as _SeleniumElement
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.ui import Select as _SeleniumSelect
 from selenium.webdriver.support.ui import WebDriverWait
 
 # --------------------------------------------------------------------------- #
@@ -159,6 +161,28 @@ BACKSPACE = _SeleniumKeys.BACKSPACE
 CONTROL = _SeleniumKeys.CONTROL
 DELETE = _SeleniumKeys.DELETE
 ENTER = _SeleniumKeys.ENTER
+
+
+def ActionChains(driver):
+    """Selenium's ActionChains, or the Playwright equivalent for a Playwright
+    driver. A function rather than a class so `ActionChains(session.driver)`
+    reads and behaves identically on both engines and no call site has to know
+    which one it is on."""
+    if driver.__class__.__name__ == "PlaywrightDriver":
+        from .pwdriver import PlaywrightActionChains
+
+        return PlaywrightActionChains(driver)
+    return _SeleniumActionChains(driver)
+
+
+def Select(element):
+    """As above, dispatched on the element rather than the driver, because that
+    is what Selenium's Select takes."""
+    if element.__class__.__name__ == "PlaywrightElement":
+        from .pwdriver import PlaywrightSelect
+
+        return PlaywrightSelect(element)
+    return _SeleniumSelect(element)
 
 
 # --------------------------------------------------------------------------- #
