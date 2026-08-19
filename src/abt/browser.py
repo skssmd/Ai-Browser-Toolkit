@@ -13,9 +13,8 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from . import diff as diff_util
 from . import frames as frame_util
 from .errors import OpError
+from .launch import LaunchConfig
 from .refs import RefCache
-
-_SUPPORTED_BROWSERS = ("chrome", "edge")
 
 # How long the DOM must hold still before a freshly loaded page counts as
 # settled, and how often to look.
@@ -72,15 +71,14 @@ class BrowserSession:
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
     ) -> None:
-        browser = browser.lower()
-        if browser not in _SUPPORTED_BROWSERS:
-            raise OpError(
-                "bad_browser",
-                f"unsupported browser {browser!r}; choose from {', '.join(_SUPPORTED_BROWSERS)}",
-            )
-        self.browser = browser
-        self.profile = Path(profile).expanduser().resolve()
-        self.headless = headless
+        # Validation lives in LaunchConfig, so an unsupported browser is
+        # rejected identically whether it arrived from `abt serve` or from
+        # POST /browser/start.
+        self.defaults = LaunchConfig(
+            browser=browser, profile=profile, headless=headless
+        )
+        # What is running now, or ran most recently. None until the first start.
+        self.launch: LaunchConfig | None = None
         self.action_timeout = action_timeout
         self.settle_timeout = settle_timeout
         self.settle_network_grace = settle_network_grace
@@ -103,20 +101,137 @@ class BrowserSession:
         # document. See `leave_frames` for why this is tracked rather than asked.
         self._in_frame = False
 
+    # --- launch configuration -------------------------------------------------
+
+    @property
+    def config(self) -> LaunchConfig:
+        """The effective config: what is running, or what ran most recently."""
+        return self.launch or self.defaults
+
+    @property
+    def browser(self) -> str:
+        return self.config.browser
+
+    @property
+    def profile(self) -> Path:
+        return self.config.profile
+
+    @property
+    def headless(self) -> bool:
+        return self.config.headless
+
+    @property
+    def is_running(self) -> bool:
+        return self._driver is not None
+
     # --- lifecycle ------------------------------------------------------------
 
-    def start(self) -> None:
-        self.profile.mkdir(parents=True, exist_ok=True)
-        options = self._make_options()
-        if self.browser == "edge":
-            self._driver = webdriver.Edge(options=options)
-        else:
-            self._driver = webdriver.Chrome(options=options)
+    def start(
+        self,
+        browser: str | None = None,
+        profile: Path | str | None = None,
+        headless: bool | None = None,
+    ) -> dict:
+        """Launch a browser. Overrides layer over the serve-time defaults.
+
+        Deliberately not idempotent. Silently no-op'ing a start that named a
+        different profile would hand back a session on the wrong identity with
+        no way to tell -- and the profile is the logins. A caller that wants
+        "running, whatever it takes" wants `restart`.
+        """
+        if self.is_running:
+            raise OpError(
+                "invalid_op",
+                "a browser is already running; use browser_restart to replace "
+                "it, or browser_stop first",
+            )
+        config = self.defaults.merge(
+            browser=browser, profile=profile, headless=headless
+        )
+        config.profile.mkdir(parents=True, exist_ok=True)
+        self._driver = self._launch_driver(config)
+        self.launch = config
         # Implicit waits interact badly with explicit waits and make every failed
         # lookup cost the full timeout. All waiting here is explicit.
         self._driver.implicitly_wait(0)
+        self._verify_session()
         self._install_console_capture()
         self._sync_tabs()
+        return {
+            "running": True,
+            "config": config.to_dict(),
+            "active_tab": self.active_tab,
+        }
+
+    def _launch_driver(self, config: LaunchConfig):
+        options = self._make_options(config)
+        if config.browser == "edge":
+            return webdriver.Edge(options=options)
+        return webdriver.Chrome(options=options)
+
+    def stop(self) -> dict:
+        """Quit the browser and forget everything tied to it.
+
+        Safe when nothing is running. See `_wait_for_profile_release` for why
+        this does more than call quit().
+        """
+        was_running = self.is_running
+        if self._driver is not None:
+            try:
+                self._driver.quit()
+            except WebDriverException:
+                pass
+            self._driver = None
+        released = self._wait_for_profile_release(self.config) if was_running else True
+        self._reset_state()
+        return {"stopped": was_running, "profile_released": released}
+
+    def restart(
+        self,
+        browser: str | None = None,
+        profile: Path | str | None = None,
+        headless: bool | None = None,
+    ) -> dict:
+        """Stop and start again.
+
+        Overrides layer over the *effective* config, not the serve-time
+        defaults: a session you started headless comes back headless, and one
+        on a throwaway profile stays on it. `start` is the one that means
+        "fresh". Works as `start` when nothing is running.
+        """
+        target = self.config.merge(
+            browser=browser, profile=profile, headless=headless
+        )
+        self.stop()
+        return self.start(
+            browser=target.browser,
+            profile=target.profile,
+            headless=target.headless,
+        )
+
+    def _reset_state(self) -> None:
+        """Drop everything that only means something against a live driver.
+
+        Config and the recorder are untouched: the session log spans the
+        server's life, and a browser crash plus its recovery is among the more
+        interesting things that log can hold.
+        """
+        self._handles.clear()
+        self._order.clear()
+        self._counter = 0
+        self._captured.clear()
+        self._baselines.clear()
+        self.refs = RefCache()
+        self.last_target = None
+        self._in_frame = False
+
+    def _verify_session(self) -> None:
+        """Filled in by the profile-release task."""
+        return None
+
+    def _wait_for_profile_release(self, config: LaunchConfig) -> bool:
+        """Filled in by the profile-release task."""
+        return True
 
     # A page's console output is gone by the time anyone thinks to ask for it,
     # so the buffer has to exist before the page does. This runs at document
@@ -214,28 +329,24 @@ class BrowserSession:
         except Exception:
             pass
 
-    def _make_options(self):
-        if self.browser == "edge":
+    def _make_options(self, config: LaunchConfig):
+        if config.browser == "edge":
             options = EdgeOptions()
         else:
             options = ChromeOptions()
-        options.add_argument(f"--user-data-dir={self.profile}")
+        options.add_argument(f"--user-data-dir={config.profile}")
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        if self.headless:
+        if config.headless:
             options.add_argument("--headless=new")
             options.add_argument("--window-size=1440,900")
         return options
 
     def quit(self) -> None:
-        if self._driver is not None:
-            try:
-                self._driver.quit()
-            except WebDriverException:
-                pass
-            self._driver = None
+        """Alias for `stop`, kept because conftest and server teardown call it."""
+        self.stop()
 
     @property
     def driver(self) -> webdriver.Chrome | webdriver.Edge:
