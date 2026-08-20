@@ -18,6 +18,10 @@ import typer
 app = typer.Typer(add_completion=False, help="Selenium browser API for AI agents.")
 messenger = typer.Typer(add_completion=False, help="Send and read on messenger.com.")
 app.add_typer(messenger, name="messenger")
+autostart_app = typer.Typer(
+    add_completion=False, help="Start the server at login. Opt in, never automatic."
+)
+app.add_typer(autostart_app, name="autostart")
 
 DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
@@ -606,6 +610,105 @@ def _load(raw: str) -> Any:
     except json.JSONDecodeError as exc:
         typer.secho(f"invalid JSON: {exc}", fg="red", err=True)
         raise typer.Exit(2)
+
+
+
+
+# --- autostart ----------------------------------------------------------------
+
+
+@autostart_app.command("install")
+def autostart_install(
+    browser: str = typer.Option(
+        "chrome", "--browser", help="Browser to drive: chrome or edge."
+    ),
+    port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
+    profile: Path = typer.Option(
+        Path("./profile"), "--profile", help="Persistent browser user-data-dir."
+    ),
+    log_dir: Path = typer.Option(
+        Path("./logs"), "--log-dir", help="Where session logs are written."
+    ),
+    engine: str = typer.Option(
+        "selenium", "--engine", help="Driver backing the browser."
+    ),
+    headless: bool = typer.Option(False, "--headless", help="Run without a window."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print what would be installed and change nothing. Worth doing "
+        "first: the entry runs at every logon, so the command it holds is "
+        "worth reading before it is written.",
+    ),
+) -> None:
+    """Run the server at every login.
+
+    `--browser` is required rather than prompted, and every path is resolved to
+    an absolute one, because a logon entry has neither a terminal to answer a
+    prompt nor a working directory to resolve against.
+    """
+    from . import autostart as auto
+
+    try:
+        spec = auto.plan(
+            port=port,
+            browser=_choose_browser(browser),
+            profile=profile,
+            log_dir=log_dir,
+            engine=engine,
+            headless=headless,
+        )
+    except auto.AutostartError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"{spec.kind}: {spec.name}")
+    if spec.path:
+        typer.echo(f"  file    {spec.path}")
+    typer.echo("  runs    " + " ".join(spec.argv))
+    for note in spec.notes:
+        typer.echo(f"  note    {note}")
+
+    if dry_run:
+        typer.echo("\ndry run: nothing was written.")
+        return
+    try:
+        auto.install(spec)
+    except auto.AutostartError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo("\ninstalled. It will start at your next login.")
+
+
+@autostart_app.command("uninstall")
+def autostart_uninstall() -> None:
+    """Remove the login entry. Not an error when there is none."""
+    from . import autostart as auto
+
+    try:
+        result = auto.uninstall()
+    except auto.AutostartError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo("removed." if result["removed"] else "nothing to remove.")
+
+
+@autostart_app.command("status")
+def autostart_status() -> None:
+    """Whether a login entry exists. Starts nothing."""
+    from . import autostart as auto
+
+    try:
+        info = auto.status()
+    except auto.AutostartError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo(f"{info['kind']}: {info['name']}")
+    typer.echo(f"  installed  {info['installed']}")
+    if "active" in info:
+        typer.echo(f"  active     {info['active']}")
+    if info.get("path"):
+        typer.echo(f"  file       {info['path']}")
 
 
 if __name__ == "__main__":
