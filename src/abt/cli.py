@@ -179,6 +179,20 @@ def serve(
     profile = profile or paths.default_profile()
     log_dir = log_dir or paths.default_log_dir()
 
+    # Said once per install, to stderr so it can never contaminate a caller
+    # parsing stdout. pip, Homebrew, the AUR and the deb all install without
+    # asking anything; this is the only place they get to mention autostart.
+    marker = paths.first_run_marker()
+    if marker is not None and not marker.exists():
+        typer.echo(
+            "Tip: to start this server automatically at every logon, run\n"
+            "    abt autostart install --browser chrome\n"
+            "It is opt-in and user-level; `abt autostart uninstall` removes it.",
+            err=True,
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("", encoding="utf-8")
+
     browser = _choose_browser(browser)
     session = BrowserSession(
         profile=profile,

@@ -59,6 +59,7 @@ from .engine import (
     StaleElement,
     Timeout,
 )
+from .errors import OpError
 
 # `execute_script` takes a statement body using `arguments[0..n]` with a
 # top-level `return`; `evaluate` takes a function. Calling a real function via
@@ -171,6 +172,30 @@ _SELECTOR = {
     "xpath": "xpath=%s",
     "tag name": "css:light=%s",
 }
+
+
+def translate_launch_failure(exc: BaseException, browser: str) -> OpError | None:
+    """A missing browser, said in this toolkit's own vocabulary.
+
+    Playwright reports "Chromium distribution 'chrome' is not found at ...",
+    which is true and useless: it does not mention that Edge is supported, and
+    it does not say what to install. A developer in a checkout can work that
+    out. Someone who installed this from winget cannot.
+
+    Returns None for anything else, so an unrelated launch failure keeps its
+    own traceback rather than being relabelled as a missing browser.
+    """
+    text = str(exc).lower()
+    if "is not found" not in text and "executable doesn't exist" not in text:
+        return None
+    other = "edge" if browser == "chrome" else "chrome"
+    return OpError(
+        "browser_dead",
+        f"{browser} is not installed, or not where Playwright looks for it. "
+        f"This toolkit drives an existing Google Chrome or Microsoft Edge and "
+        f"bundles neither. Install one, run `abt doctor` to check, or pass "
+        f"--browser {other}.",
+    )
 
 
 def _translate(by: str, selector: str) -> str:
@@ -573,13 +598,19 @@ class PlaywrightDriver:
         self._pw = sync_playwright().start()
         launcher = self._pw.chromium
         args = ["--no-first-run", "--no-default-browser-check"]
-        self._context = launcher.launch_persistent_context(
-            user_data_dir=str(config.profile),
-            channel="msedge" if config.browser == "edge" else "chrome",
-            headless=config.headless,
-            viewport=None,
-            args=args,
-        )
+        try:
+            self._context = launcher.launch_persistent_context(
+                user_data_dir=str(config.profile),
+                channel="msedge" if config.browser == "edge" else "chrome",
+                headless=config.headless,
+                viewport=None,
+                args=args,
+            )
+        except Exception as exc:
+            translated = translate_launch_failure(exc, config.browser)
+            if translated is None:
+                raise
+            raise translated from exc
         if self._console_source:
             # Must exist before the document does, and survive navigation --
             # the same reason the Selenium path uses CDP

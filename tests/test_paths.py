@@ -118,3 +118,15 @@ def test_malformed_pyproject_is_not_our_checkout(tmp_path):
 
 def test_current_kind_is_one_of_the_three():
     assert paths.current_kind() in KINDS
+
+
+def test_the_first_run_marker_lives_beside_the_logs(home, elsewhere):
+    marker = paths.first_run_marker(kind="linux", home=home, env={}, cwd=elsewhere)
+    logs = paths.default_log_dir(kind="linux", home=home, env={}, cwd=elsewhere)
+    assert marker.parent == logs.parent
+
+
+def test_a_checkout_has_no_first_run_hint(home, checkout):
+    """A developer in the repo already knows; the hint is for someone who
+    installed this from a package manager."""
+    assert paths.first_run_marker(kind="linux", home=home, env={}, cwd=checkout) is None

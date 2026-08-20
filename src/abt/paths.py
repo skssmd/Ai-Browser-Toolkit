@@ -112,3 +112,20 @@ def default_log_dir(
     root = _state_root(kind, home, env)
     # macOS already names the directory Logs; the others need the suffix.
     return root if kind == "macos" else root / "logs"
+
+
+def first_run_marker(
+    kind: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path | None:
+    """Where to record that the one-time hint has been shown.
+
+    None inside a checkout: a developer in the repo has the README, and a hint
+    printed on every `abt serve` during development would be noise.
+    """
+    if in_source_checkout(cwd):
+        return None
+    kind, home, env = _resolved(kind, home, env)
+    return _state_root(kind, home, env) / ".first-run-shown"

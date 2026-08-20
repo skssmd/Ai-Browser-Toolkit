@@ -93,3 +93,28 @@ def test_launch_config_defaults_to_the_per_user_profile(monkeypatch, tmp_path):
 
 def test_an_explicit_profile_still_wins(tmp_path):
     assert LaunchConfig(profile=tmp_path / "mine").profile == (tmp_path / "mine").resolve()
+
+
+def test_a_missing_browser_is_a_browser_dead_error_naming_both():
+    """Playwright raises its own error when a channel is not installed. It
+    does not mention Edge, and it does not say what to do."""
+    from abt import pwdriver
+
+    translated = pwdriver.translate_launch_failure(
+        RuntimeError(
+            "Chromium distribution 'chrome' is not found at "
+            "/opt/google/chrome/chrome"
+        ),
+        "chrome",
+    )
+    assert translated.type == "browser_dead"
+    assert "chrome" in translated.message.lower()
+    assert "edge" in translated.message.lower()
+
+
+def test_an_unrelated_launch_failure_is_left_alone():
+    from abt import pwdriver
+
+    assert pwdriver.translate_launch_failure(
+        RuntimeError("the disk is on fire"), "chrome"
+    ) is None
