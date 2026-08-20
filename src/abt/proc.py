@@ -102,15 +102,14 @@ def _spawn_schtasks(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> b
             pass
 
 
-def _spawn_windows_detached(
-    argv: list[str], cwd: Path, stdout: Path, stderr: Path
+def _popen_windows(
+    argv: list[str], cwd: Path, stdout: Path, stderr: Path, breakaway: bool
 ) -> bool:
-    """Last resort. Escapes the console but not necessarily the job object."""
-    flags = (
-        getattr(subprocess, "DETACHED_PROCESS", 0)
-        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0
     )
+    if breakaway:
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
     try:
         with open(stdout, "ab") as out, open(stderr, "ab") as err:
             subprocess.Popen(
@@ -125,6 +124,37 @@ def _spawn_windows_detached(
         return True
     except OSError:
         return False
+
+
+def _spawn_windows_detached(
+    argv: list[str], cwd: Path, stdout: Path, stderr: Path
+) -> bool:
+    """Escapes the console, and the job object when the job permits it."""
+    return _popen_windows(argv, cwd, stdout, stderr, breakaway=True)
+
+
+def _spawn_windows_in_job(
+    argv: list[str], cwd: Path, stdout: Path, stderr: Path
+) -> bool:
+    """Last resort: detached, but still inside this process's job object.
+
+    CREATE_BREAKAWAY_FROM_JOB does not degrade gracefully. When the job
+    forbids breakaway, CreateProcess fails outright with access-denied rather
+    than starting the process without escaping -- so passing it alongside
+    DETACHED_PROCESS loses *both*, and the spawn that would have worked never
+    happens.
+
+    Observed on a GitHub Actions Windows runner, which puts every step inside
+    a job object: all three mechanisms reported failure and `abt up` had no
+    way to start a server at all. Restrictive job objects are not unique to
+    CI -- corporate policy and some agent harnesses do the same.
+
+    The process started this way still dies with the job, so a harness waiting
+    on it will still block. That is worse than the other mechanisms and better
+    than nothing, which is why it is last and why it reports its own name
+    rather than pretending to be `detached`.
+    """
+    return _popen_windows(argv, cwd, stdout, stderr, breakaway=False)
 
 
 def _spawn_posix(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> bool:
@@ -144,6 +174,22 @@ def _spawn_posix(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> bool
         return False
 
 
+def _windows_attempts():
+    """Best first. The order is the point, so it is stated once and tested.
+
+    `detached-in-job` is deliberately last: it starts the process but leaves
+    it inside this job object, so a harness waiting on the job still blocks.
+    Preferring it over WMI would quietly reintroduce the exact problem this
+    module exists to solve.
+    """
+    return (
+        ("wmi", _spawn_wmi),
+        ("schtasks", _spawn_schtasks),
+        ("detached", _spawn_windows_detached),
+        ("detached-in-job", _spawn_windows_in_job),
+    )
+
+
 def spawn_detached(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> str:
     """Start argv so it outlives this process. Returns the mechanism that worked."""
     if not argv:
@@ -154,14 +200,7 @@ def spawn_detached(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> st
     stdout.parent.mkdir(parents=True, exist_ok=True)
     stderr.parent.mkdir(parents=True, exist_ok=True)
 
-    if IS_WINDOWS:
-        attempts = (
-            ("wmi", _spawn_wmi),
-            ("schtasks", _spawn_schtasks),
-            ("detached", _spawn_windows_detached),
-        )
-    else:
-        attempts = (("setsid", _spawn_posix),)
+    attempts = _windows_attempts() if IS_WINDOWS else (("setsid", _spawn_posix),)
 
     for name, attempt in attempts:
         if attempt(argv, cwd, stdout, stderr):

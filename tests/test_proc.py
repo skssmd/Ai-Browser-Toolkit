@@ -37,9 +37,41 @@ def test_spawn_detached_reports_the_mechanism(tmp_path):
     mechanism = proc.spawn_detached(
         [sys.executable, "-c", "print('hello')"], tmp_path, out, err
     )
-    assert mechanism in {"wmi", "schtasks", "detached", "setsid"}
+    assert mechanism in {"wmi", "schtasks", "detached", "detached-in-job", "setsid"}
 
 
 def test_spawn_detached_rejects_an_empty_command(tmp_path):
     with pytest.raises(ValueError):
         proc.spawn_detached([], tmp_path, tmp_path / "o", tmp_path / "e")
+
+
+@pytest.mark.skipif(not proc.IS_WINDOWS, reason="job objects are a Windows concept")
+def test_a_restrictive_job_object_still_leaves_a_way_to_spawn(tmp_path):
+    """CREATE_BREAKAWAY_FROM_JOB does not degrade: when the job forbids
+    breakaway, CreateProcess fails with access-denied instead of starting the
+    process unescaped. Passing it alongside DETACHED_PROCESS therefore loses
+    both, and the spawn that would have worked never happens.
+
+    Observed on a GitHub Actions Windows runner, where every step runs inside
+    a job object and all three mechanisms reported failure.
+    """
+    out = tmp_path / "out.log"
+    err = tmp_path / "err.log"
+    assert proc._popen_windows(
+        [sys.executable, "-c", "print('hello')"], tmp_path, out, err, breakaway=False
+    )
+
+
+def test_the_in_job_fallback_is_last_and_named_apart():
+    """It is worse than the others -- the process dies with the job, so a
+    harness waiting on that job still blocks. Preferring it over WMI would
+    quietly reintroduce the problem this module exists to solve, so the order
+    is asserted rather than trusted.
+
+    Not skipped off Windows: the ordering is a plain data structure, and it is
+    worth catching a reordering on any machine that runs the suite.
+    """
+    names = [name for name, _ in proc._windows_attempts()]
+    assert names[-1] == "detached-in-job"
+    assert names.index("detached") < names.index("detached-in-job")
+    assert names[0] == "wmi"
