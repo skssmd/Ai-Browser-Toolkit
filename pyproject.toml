@@ -18,6 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# The Playwright engine is opt-in (--engine playwright). Selenium remains
+# the default, so a plain install stays free of the Node driver bundle.
+playwright = ["playwright>=1.50"]
 
 [project.scripts]
 abt = "abt.cli:app"

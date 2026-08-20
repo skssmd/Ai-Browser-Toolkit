@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import re
 
-from selenium.common.exceptions import WebDriverException
-
 from ..browser import BrowserSession
+from ..engine import EngineError
 from ..errors import OpError
 
 _CONSOLE_JS = "return window.__abtConsole || null;"
@@ -52,7 +51,7 @@ def read_console(session: BrowserSession, cmd) -> dict:
     """Console output for the active tab, oldest first."""
     try:
         entries = session.driver.execute_script(_CONSOLE_JS)
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError("js_error", f"could not read the console: {exc.msg or exc}") from exc
 
     if entries is None:
@@ -94,7 +93,7 @@ def read_network(session: BrowserSession, cmd) -> dict:
     """
     try:
         entries = session.driver.execute_script(_NETWORK_JS) or []
-    except WebDriverException as exc:
+    except EngineError as exc:
         raise OpError("js_error", f"could not read the network log: {exc.msg or exc}") from exc
 
     matcher = _compile(cmd.pattern)

@@ -38,7 +38,7 @@ python -m venv .venv
 Check it worked:
 
 ```bash
-.venv/Scripts/python -m pytest -q     # 300 tests, needs Chrome
+.venv/Scripts/python -m pytest -q     # 485 tests, needs Chrome
 ```
 
 The `abt` command lands in the venv. Either activate it
@@ -432,6 +432,28 @@ in the same response, so the two always line up. A control with **no** accessibl
 name is dropped entirely rather than handed back as a nameless ref — an entry
 you cannot tie to something you have read is noise.
 
+**Repeated names arrive qualified.** A `name` identifies a control only while
+it is unique — a table whose every row carries an `Edit` button gives you N refs
+and nothing to choose between them. When a name appears more than once in one
+diff, each entry gains `near`: the nearest text that is not the control's own.
+
+```json
+"actionable": {"added": [
+  {"ref": "el_9",  "role": "button", "name": "Edit", "near": "Medication"},
+  {"ref": "el_10", "role": "button", "name": "Edit", "near": "Passport"},
+  {"ref": "el_11", "role": "button", "name": "Save Changes"}
+]}
+```
+
+The walk climbs ancestors until something else has something to say, which on a
+row is its first cell and on a card is its heading — it knows nothing about rows
+or cards. `Save Changes` gets nothing because nothing else is called that.
+
+This is **conditional by construction**: no repeated name means no extra work
+and a response identical to before. It exists because the alternative is
+`run_js` DOM-walking to match a button to its row, which is what once clicked
+the wrong row's Edit and reported success.
+
 **It does not run after a navigation.** On a new document every control is new,
 so the diff would degenerate into an inventory of the whole page — which the
 text track already returned in full, and which would burn a ref on every control
@@ -808,7 +830,22 @@ call, and `browser_command` passes through any raw op the named tools miss.
 ```
 
 The suite drives a real headless Chrome against static fixture pages served from a
-local port — no network, deterministic.
+local port — no network, deterministic. Around seven minutes for the full run.
+
+```bash
+.venv/Scripts/python -m pytest --engine playwright   # the same 485 against Playwright
+```
+
+**Two engines, one suite.** Selenium is the default; `--engine playwright` runs
+every assertion against the Playwright backend instead. Both pass all 485 —
+Selenium in 416s, Playwright in 408s. The flag exists because "a caller cannot
+tell which engine is underneath" is a claim worth checking by running the tests
+rather than by reading the diff. Install it with `pip install -e ".[playwright]"`.
+
+`tests/test_engine.py` needs no browser and runs in under a second. It guards the
+driver seam: that nothing outside `engine.py` and `browser.py` imports Selenium
+directly, and that the key table stays derived from the driver rather than typed
+out by hand. Both are properties no single diff makes visible.
 
 ## Licence
 

@@ -1,20 +1,19 @@
-"""Turn a command's targeting fields into live WebElements."""
+"""Turn a command's targeting fields into live Elements."""
 
 from __future__ import annotations
 
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    StaleElementReferenceException,
-    TimeoutException,
-    WebDriverException,
-)
-from selenium.webdriver.common.by import By
-from selenium.webdriver.remote.webelement import WebElement
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-
 from . import shadow
 from .browser import BrowserSession
+from .engine import (
+    EC,
+    By,
+    Element,
+    EngineError,
+    NoSuchElement,
+    StaleElement,
+    Timeout,
+    WebDriverWait,
+)
 from .errors import OpError
 
 
@@ -31,7 +30,7 @@ def xpath_literal(value: str) -> str:
 
 def locator(cmd) -> tuple[str, str]:
     if cmd.css is not None:
-        return (By.CSS_SELECTOR, cmd.css)
+        return (By.CSS, cmd.css)
     if cmd.xpath is not None:
         return (By.XPATH, cmd.xpath)
     if cmd.text is not None:
@@ -59,13 +58,13 @@ _CONDITIONS = {
 _NEEDS_VIEWPORT = frozenset({"visible", "clickable"})
 
 
-def scroll_into_view(session: BrowserSession, element: WebElement) -> None:
+def scroll_into_view(session: BrowserSession, element: Element) -> None:
     """Centre an element in the viewport. Never fails a command."""
     try:
         session.driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element
         )
-    except WebDriverException:
+    except EngineError:
         pass
 
 
@@ -88,7 +87,7 @@ def _aim_at_frame(session: BrowserSession, by: str, selector: str) -> None:
     try:
         if session.driver.find_elements(by, selector):
             return
-    except WebDriverException:
+    except EngineError:
         return
     for path in session.frame_paths():
         if not session.enter_frame(path):
@@ -96,7 +95,7 @@ def _aim_at_frame(session: BrowserSession, by: str, selector: str) -> None:
         try:
             if session.driver.find_elements(by, selector):
                 return
-        except WebDriverException:
+        except EngineError:
             continue
     session.leave_frames()
 
@@ -106,7 +105,7 @@ def resolve_one(
     cmd,
     state: str = "present",
     timeout: float | None = None,
-) -> WebElement:
+) -> Element:
     """Resolve a single element, waiting up to `timeout` for it to reach `state`.
 
     Also remembers the element as the command's target, so a recorded frame can
@@ -123,7 +122,7 @@ def _resolve_one(
     cmd,
     state: str = "present",
     timeout: float | None = None,
-) -> WebElement:
+) -> Element:
     if getattr(cmd, "ref", None) is not None:
         element = session.resolve_ref(cmd.ref)
         if state in _NEEDS_VIEWPORT:
@@ -151,7 +150,7 @@ def _resolve_one(
             return WebDriverWait(session.driver, wait_for).until(
                 _CONDITIONS[state]((by, selector))
             )
-        except TimeoutException as exc:
+        except Timeout as exc:
             raise _miss(session, by, selector, cmd, state, wait_for) from exc
 
     # An index past the first needs the whole match list, so wait for presence
@@ -160,7 +159,7 @@ def _resolve_one(
         WebDriverWait(session.driver, wait_for).until(
             lambda d: len(d.find_elements(by, selector)) > index
         )
-    except TimeoutException as exc:
+    except Timeout as exc:
         raise OpError(
             "element_not_found",
             f"fewer than {index + 1} elements matched {describe(cmd)} "
@@ -173,7 +172,7 @@ def _miss(session, by, selector, cmd, state, waited) -> OpError:
     """Distinguish 'nothing matched' from 'matched but not interactable'."""
     try:
         found = session.driver.find_elements(by, selector)
-    except (NoSuchElementException, StaleElementReferenceException):
+    except (NoSuchElement, StaleElement):
         found = []
     if found and state in ("visible", "clickable"):
         return OpError(
@@ -191,7 +190,7 @@ def resolve_many(
     cmd,
     limit: int,
     visible_only: bool,
-) -> tuple[list[tuple[WebElement, tuple[int, ...], bool]], bool]:
+) -> tuple[list[tuple[Element, tuple[int, ...], bool]], bool]:
     """Every match on the page, each with where it was found.
 
     Returns `(element, frame, in_shadow)`. The host document first, then each
@@ -210,14 +209,14 @@ def resolve_many(
     pierce = bool(getattr(cmd, "shadow", False))
     by, selector = locator(cmd)
     homes = [()] + session.frame_paths()
-    found: list[tuple[WebElement, tuple[int, ...], bool]] = []
+    found: list[tuple[Element, tuple[int, ...], bool]] = []
     try:
         for home in homes:
             if not session.enter_frame(home):
                 continue
             try:
                 elements = session.driver.find_elements(by, selector)
-            except WebDriverException:
+            except EngineError:
                 elements = []
             if visible_only:
                 elements = [e for e in elements if _is_displayed(e)]
@@ -246,8 +245,8 @@ def resolve_many(
     return found[:limit], truncated
 
 
-def _is_displayed(element: WebElement) -> bool:
+def _is_displayed(element: Element) -> bool:
     try:
         return element.is_displayed()
-    except StaleElementReferenceException:
+    except StaleElement:
         return False

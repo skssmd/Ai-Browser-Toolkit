@@ -327,3 +327,32 @@ browser, and `test_diff` builds deliberately large DOMs. If it becomes routine,
 the fix is probably a function-scoped browser for the heavy modules rather than
 one for the whole session — at a real cost in runtime, which is why it has not
 been done pre-emptively.
+
+### `_profile_locked` never fires on Windows — found 2026-08-19
+
+`PROFILE_LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")`
+are POSIX artifacts. Chrome does not create any of them on Windows, which uses a
+named mutex and a hidden window class instead. So `_profile_locked()` returns
+`False` on Windows unconditionally — not "no browser is holding it", but "this
+check cannot tell you".
+
+Demonstrated while preparing the Playwright spike: eight `chrome.exe` processes
+were live on `profile/` (`--user-data-dir=...\aibrowsertoolkit\profile`,
+Chrome 151.0.7922.138) with the server down, and the profile root held
+`DevToolsActivePort` and `First Run` but no `Singleton*` file. A `robocopy` of
+the profile then failed on `Default/Network/Cookies` because the live browser
+held it — which is the same lock the check reported absent.
+
+Harmless today: nothing refuses to act on the answer, and `_verify_session` is
+what actually decides whether a session is usable.
+
+**Not harmless under the profile-sessions design.** That spec refuses the
+`profile/` -> `profiles/default/` move "if `profile/` looks locked ... moving a
+directory out from under a running Chrome corrupts it", and names this check as
+the guard. On Windows the guard never fires, so the migration would move a live,
+logged-in 1.2GB profile and corrupt it. Fix the check before implementing that
+migration.
+
+A signal that does work on Windows: query `Win32_Process` for a `chrome.exe`
+whose command line carries `--user-data-dir=<profile>`. `DevToolsActivePort`
+exists while a browser runs but survives a crash, so it over-reports.

@@ -146,13 +146,44 @@ def actionable_report(
     except Exception:
         return None
 
+    # A `name` identifies a control only while it is unique. Twelve buttons all
+    # called "Edit" hand back twelve refs and nothing to choose between them,
+    # which is the one place this track stops being an answer -- and the
+    # DOM-walking that replaces it is what once opened the wrong row's dialog
+    # while reporting success.
+    #
+    # So only the collisions are qualified, and only they cost anything: no
+    # repeated name means no extra round trip, which is every ordinary page.
+    seen: dict[str, int] = {}
+    for entry in entries:
+        seen[entry["name"]] = seen.get(entry["name"], 0) + 1
+    ambiguous = [
+        position
+        for position, entry in enumerate(entries)
+        if seen[entry["name"]] > 1
+    ]
+
+    context: dict[int, str] = {}
+    if ambiguous:
+        values = session.actionable_context(
+            after["actionable"], [indices[position] for position in ambiguous]
+        )
+        for position, value in zip(ambiguous, values):
+            if value:
+                context[position] = value
+
     added = []
-    for entry, ref in zip(entries, refs):
+    for position, (entry, ref) in enumerate(zip(entries, refs)):
         item = {"ref": ref, "role": entry["role"], "name": entry["name"]}
         if entry.get("disabled"):
             item["disabled"] = True
         if entry.get("multiple"):
             item["multiple"] = True
+        # Never the name it qualifies: a `near` that repeats the label
+        # distinguishes nothing and is pure payload.
+        near = context.get(position)
+        if near and near != entry["name"]:
+            item["near"] = near
         added.append(item)
     if not added:
         return None

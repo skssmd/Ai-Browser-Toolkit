@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from itertools import groupby
 
-from selenium.common.exceptions import WebDriverException
-
 from .. import shadow
 from ..browser import BrowserSession
+from ..engine import EngineError
 from ..targeting import resolve_many, resolve_one
 
 # One round trip for the whole match list. `cloneNode(false)` drops children and
@@ -32,7 +31,7 @@ def get_html(session: BrowserSession, cmd) -> str:
 def _body_text(session: BrowserSession) -> str:
     try:
         return session.driver.find_element("tag name", "body").text
-    except WebDriverException:
+    except EngineError:
         return ""
 
 

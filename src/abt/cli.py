@@ -146,6 +146,14 @@ def serve(
         "--shots-max-mb",
         help="Stop capturing once one session's frames reach this size.",
     ),
+    engine: str = typer.Option(
+        "selenium",
+        "--engine",
+        help="Which driver backs the browser: selenium (default) or playwright. "
+        "Both answer every op identically -- the whole suite passes on each -- "
+        "so this changes what is underneath, never what a caller sees. "
+        "Playwright needs its optional extra installed; see the README.",
+    ),
 ) -> None:
     """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
@@ -167,9 +175,10 @@ def serve(
         frames_enabled=not no_frames,
         max_frames=max_frames,
         max_frame_depth=max_frame_depth,
+        engine=engine,
     )
     if start_browser:
-        typer.echo(f"starting {browser} (profile: {session.profile})")
+        typer.echo(f"starting {browser} via {engine} (profile: {session.profile})")
         session.start()
     else:
         typer.echo(

@@ -33,7 +33,7 @@ exist".
 
 from __future__ import annotations
 
-from selenium.common.exceptions import WebDriverException
+from .engine import EngineError
 
 # Hosts descended into per search. A design system can mount hundreds; the cap
 # stops one search from turning into a full-page component audit.
@@ -111,7 +111,7 @@ def host_count(driver) -> int:
     """
     try:
         found = driver.execute_script(_COUNT_JS)
-    except WebDriverException:
+    except EngineError:
         return 0
     return int(found or 0)
 
@@ -122,6 +122,6 @@ def search(driver, selector: str, mode: str, limit: int) -> list:
         found = driver.execute_script(
             _SEARCH_JS, selector, mode, limit, MAX_SHADOW_HOSTS, MAX_SHADOW_DEPTH
         )
-    except WebDriverException:
+    except EngineError:
         return []
     return [el for el in found or [] if el is not None]
