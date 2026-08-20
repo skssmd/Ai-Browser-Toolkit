@@ -66,11 +66,36 @@ def test_publishing_needs_both_a_tag_and_a_real_run():
 def test_the_installer_is_built_even_on_a_dry_run():
     """The point of a rehearsal is to find out the installer does not compile
     before a tag exists, not after."""
-    assert "if" not in load("release.yml")["jobs"]["installer"]
+    bundle = load("release.yml")["jobs"]["bundle"]
+    assert "if" not in bundle
+    steps = [s.get("name", "") for s in bundle["steps"]]
+    assert "Compile the installer" in steps
+
+
+def test_the_installer_does_not_wait_for_the_whole_matrix():
+    """GitHub Actions cannot depend on a single matrix cell, so a separate
+    installer job with `needs: bundle` waits for all five -- leaving Windows
+    blocked behind the macOS builds despite using only the Windows tree.
+
+    Building it inside the cell is the only way to get it early, so this
+    asserts the installer steps live in `bundle` and that no standalone
+    installer job has crept back.
+    """
+    jobs = load("release.yml")["jobs"]
+    assert "installer" not in jobs
+    windows_only = [
+        s
+        for s in jobs["bundle"]["steps"]
+        if "windows-x86_64" in str(s.get("if", ""))
+    ]
+    assert len(windows_only) == 2, [s.get("name") for s in windows_only]
 
 
 def test_the_release_waits_for_every_artifact_it_publishes():
     """Shipping a partial release is worse than failing: each downstream
-    publisher pins a URL, and a missing asset gives it a 404 to point at."""
+    publisher pins a URL, and a missing asset gives it a 404 to point at.
+
+    `bundle` covers the installer too now that it is built in the matrix.
+    """
     release = load("release.yml")["jobs"]["release"]
-    assert set(release["needs"]) == {"wheel", "bundle", "installer"}
+    assert set(release["needs"]) == {"wheel", "bundle"}

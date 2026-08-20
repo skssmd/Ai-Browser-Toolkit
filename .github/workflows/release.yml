@@ -133,28 +133,16 @@ jobs:
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.tar.gz
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.zip
 
-  installer:
-    needs: [wheel, bundle]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: bundle-windows-x86_64
-          path: dl
-
-      - name: Unpack the bundle
-        shell: bash
-        run: |
-          set -eu
-          mkdir -p payload
-          unzip -q dl/*.zip -d payload
-          # The zip contains one top-level directory named for the target;
-          # Inno wants the tree itself, not its parent.
-          mv payload/aibrowsertoolkit-* payload/tree
-          ls payload/tree
-
-      - name: Compile
+      # Built here rather than in a job of its own. GitHub Actions cannot
+      # depend on a single matrix cell, so `needs: bundle` waits for all five
+      # -- which left the Windows installer blocked behind the macOS builds
+      # despite consuming only the Windows tree. Inside the cell it is ready
+      # the moment Windows is.
+      #
+      # No unzip step either: bundle.py leaves the unpacked tree beside the
+      # archive, so Inno points straight at it.
+      - name: Compile the installer
+        if: matrix.target == 'windows-x86_64'
         shell: bash
         run: |
           # Forward slashes throughout: Win32 accepts them, and cmd-style
@@ -163,16 +151,19 @@ jobs:
           if [ ! -x "$iscc" ]; then iscc=$(command -v iscc || true); fi
           if [ -z "$iscc" ]; then echo "Inno Setup not found on this runner"; exit 1; fi
           root=$(pwd -W)
-          "$iscc" "/DAppVersion=${{ needs.wheel.outputs.version }}" "/DPayloadDir=$root/payload/tree" "/O$root/out" packaging/windows/abt.iss
+          tree="$root/dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-windows-x86_64"
+          "$iscc" "/DAppVersion=${{ needs.wheel.outputs.version }}" "/DPayloadDir=$tree" "/O$root/out" packaging/windows/abt.iss
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload the installer
+        if: matrix.target == 'windows-x86_64'
+        uses: actions/upload-artifact@v4
         with:
           name: installer
           if-no-files-found: error
           path: out/*.exe
 
   release:
-    needs: [wheel, bundle, installer]
+    needs: [wheel, bundle]
     # Both halves matter. The ref check keeps a branch dispatch from
     # publishing; the dry_run check keeps a *tag* dispatch from publishing
     # when the person running it asked for a rehearsal. Without the second,
