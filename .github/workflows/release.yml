@@ -170,3 +170,22 @@ jobs:
           files: out/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+
+  pypi:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    # Trusted Publishing: no API token is stored anywhere. The environment
+    # name and workflow filename below must match the pending publisher
+    # registered on PyPI exactly, or this fails with "not a trusted
+    # publisher" -- and that can only be found by releasing, which is what
+    # the dry_run input exists to avoid doing twice.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
