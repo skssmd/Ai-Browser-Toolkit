@@ -130,3 +130,43 @@ jobs:
           path: |
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.tar.gz
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.zip
+
+  release:
+    needs: [wheel, bundle]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Collect every artifact into one directory
+        run: |
+          set -eu
+          mkdir -p out
+          find staging -type f \( -name '*.tar.gz' -o -name '*.zip' \
+            -o -name '*.whl' -o -name '*.exe' \) -exec cp -n {} out/ \;
+          ls -l out
+          # Five bundles + wheel + sdist. A missing one means an upstream job
+          # was skipped, and shipping a partial release is worse than failing
+          # here -- the publishers downstream would each pin a URL that never
+          # gets an asset.
+          count=$(ls out | wc -l)
+          if [ "$count" -lt 7 ]; then
+            echo "expected at least 7 artifacts, found $count"
+            exit 1
+          fi
+
+      - name: Checksums
+        # Generated before the attestation so checksums.txt is itself attested.
+        run: cd out && sha256sum * > checksums.txt && cat checksums.txt
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "out/*"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
