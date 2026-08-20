@@ -4,12 +4,38 @@ Things deliberately deferred, with enough context to pick them up cold.
 
 ## Packaged application + installer
 
-**Status:** parked 2026-08-19, before any code was written.
+**Status:** partly done. The always-on logon entry -- the piece this was
+mostly wanted for -- shipped 2026-08-20 as `abt autostart`, which writes a
+Task Scheduler task, a launchd agent or a systemd user unit and is opt in.
+What remains is *distribution*: an installer and the package-manager channels.
+
+The prerequisite named below is met: the server starts without a browser.
 
 Wanted: ship the toolkit as an installable Windows application rather than a
 `.venv` plus two shell scripts.
 
-Shapes considered, none chosen yet:
+**Direction chosen 2026-08-20:** a single installer carrying an embedded
+Python, not a one-file binary. PyInstaller's sharp edge here is Playwright's
+Node driver, which it locates at runtime; an installer with a real
+`site-packages` has no such problem, so *both* engines survive packaging
+rather than the binary being Selenium-only. It also suits winget, which wants
+an installer rather than a bare executable.
+
+Distribution can reuse the pipeline already proven in the Graft repo -- the
+Homebrew tap, `AUR_SSH_KEY` and the winget fork all exist. The one step that
+does not transfer is the build: GoReleaser's `builds:` is Go-only, and the
+`prebuilt` builder that would consume PyInstaller output is Pro. Replace that
+step with a PyInstaller matrix plus the dedicated publisher actions
+(`KSXGitHub/github-actions-deploy-aur`, `vedantmgoyal9/winget-releaser`) and
+the rest of the shape carries over.
+
+Worth knowing before wiring signing: the Graft workflow imports a GPG key and
+installs cosign and syft, but its `.goreleaser.yaml` has no `signs:`,
+`signature:` or `sboms:` block -- so none of them sign anything today, and
+`checksums.txt` is the only integrity artifact. PyPI has not accepted GPG
+signatures since 2023; that is Trusted Publishing (OIDC) now.
+
+Shapes considered for the installer itself:
 
 * **Packaged CLI + installer, no GUI.** PyInstaller-bundle `abt` into a
   standalone `.exe` (no Python on the target machine), wrapped in an Inno Setup

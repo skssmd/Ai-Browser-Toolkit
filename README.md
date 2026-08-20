@@ -153,6 +153,46 @@ The profile directory persists cookies and logins across restarts, and is isolat
 from your everyday Chrome. Log in by hand once in the visible window and the session
 sticks around — including across a restart to pick up new code.
 
+## Start at login
+
+The toolkit is most useful already up: an agent that has to start a server
+first pays for the start, and one that starts it wrongly wedges itself.
+
+```bash
+abt autostart install --browser chrome --dry-run   # read it first
+abt autostart install --browser chrome
+abt autostart status
+abt autostart uninstall
+```
+
+| Platform | What it writes |
+|---|---|
+| Windows | a Task Scheduler logon task |
+| macOS | `~/Library/LaunchAgents/com.aibrowsertoolkit.server.plist` |
+| Linux | `~/.config/systemd/user/abt-server.service` |
+
+User-level, never elevated, and **opt in** — nothing is installed unless you
+ask. It runs in the account that owns the browser profile, because a system
+service would run as somebody else and find none of your logins.
+
+**No browser is launched at login.** The entry runs `abt serve` without
+`--start-browser`, so logging in costs about a second and the browser arrives
+when you ask for it with `browser_start`. This is the whole reason the feature
+is sane: against the old eager behaviour it would have opened Chrome on the
+persistent profile at every logon.
+
+`--browser` is required rather than prompted, and every path is resolved to an
+absolute one at install time. A logon entry has neither a terminal to answer a
+prompt nor a working directory to resolve against — a relative `./profile`
+would land in `C:\Windows\System32` and quietly build a second, empty profile
+there.
+
+On Linux a user unit stops at logout. For a server that outlives the session:
+
+```bash
+loginctl enable-linger $USER
+```
+
 ## Send commands
 
 One command:
