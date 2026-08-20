@@ -23,7 +23,7 @@ import os
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import paths
 
@@ -95,9 +95,15 @@ def find_browsers(
         ]
         for name, tail in _WINDOWS:
             for root in roots:
-                candidate = Path(root) / tail
+                # PureWindowsPath, not Path. `Path` is the *host's* flavour, so
+                # on Linux this joined a backslash tail with a forward slash --
+                # "C:\Program Files (x86)/Microsoft\Edge\..." -- which matched
+                # nothing and made this branch pass on Windows and fail
+                # everywhere else. The module's whole premise is that all three
+                # platforms are checkable from whichever one the tests run on.
+                candidate = PureWindowsPath(root) / tail
                 if exists(candidate):
-                    found.append(Browser(name, candidate))
+                    found.append(Browser(name, Path(str(candidate))))
                     break
     elif kind == "macos":
         roots = [Path("/Applications"), home / "Applications"]

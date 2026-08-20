@@ -121,3 +121,27 @@ def test_report_is_json_serialisable(tmp_path):
     json.dumps(got)
     assert got["default_browser"] == "chrome"
     assert got["browsers"][0]["name"] == "chrome"
+
+
+def test_windows_candidates_are_built_with_windows_separators(tmp_path):
+    r"""Regression: `Path(root) / tail` uses the *host's* flavour, so on Linux
+    a backslash tail was joined with a forward slash --
+    "C:\Program Files (x86)/Microsoft\Edge\..." -- matching nothing.
+
+    This assertion is trivially true on Windows and only bites on Linux and
+    macOS. That is the point: the bug was invisible on the developer's machine
+    and failed five of six CI cells.
+    """
+    seen: list[str] = []
+
+    def record(candidate):
+        seen.append(str(candidate))
+        return False
+
+    doctor.find_browsers(
+        kind="windows", home=tmp_path, exists=record, which=fake_which(), env={}
+    )
+
+    assert seen, "no candidates were probed at all"
+    assert all("/" not in s for s in seen), seen
+    assert any(s.endswith(r"Microsoft\Edge\Application\msedge.exe") for s in seen), seen
