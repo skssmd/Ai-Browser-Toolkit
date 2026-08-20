@@ -116,7 +116,34 @@ try {
     }
   }
 } catch (e) {}
-return {ok: false, hit: top.tagName.toLowerCase()
+// What *kind* of thing is in the way, which is the part a caller can act on.
+// A class list is not it: a Radix overlay reports as
+// `div.data-[state=open]:animate-in.data-[state=closed]:animate-out`, which
+// names the animation and says nothing about a dialog being open.
+let kind = '', name = '';
+for (let node = top, up = 0; node && up < 6; node = node.parentElement, up++) {
+  if (!node.getAttribute) { break; }
+  const role = node.getAttribute('role');
+  if (role === 'dialog' || role === 'alertdialog'
+      || node.getAttribute('aria-modal') === 'true') {
+    kind = 'dialog';
+    const labelled = node.getAttribute('aria-label');
+    if (labelled) { name = labelled; }
+    else {
+      const heading = node.querySelector('h1,h2,h3,[role=heading]');
+      if (heading) { name = (heading.textContent || '').trim().slice(0, 60); }
+    }
+    break;
+  }
+}
+if (!kind) {
+  const cover = top.getBoundingClientRect();
+  if (cover.width >= window.innerWidth * 0.9
+      && cover.height >= window.innerHeight * 0.9) {
+    kind = 'a full-screen overlay';
+  }
+}
+return {ok: false, kind: kind, name: name, hit: top.tagName.toLowerCase()
   + (top.id ? '#' + top.id : '')
   + (top.className && typeof top.className === 'string'
       ? '.' + top.className.trim().split(/\\s+/).slice(0, 2).join('.') : '')};
@@ -133,6 +160,16 @@ return {ok: false, hit: top.tagName.toLowerCase()
 # report. A second covers any animation worth the name.
 _HIT_TEST_WINDOW = 1.0
 _HIT_TEST_INTERVAL = 0.05
+
+
+def _blocker(verdict: dict) -> str:
+    """What is in the way, named twice over: what kind of thing it is, and
+    which element it is. The kind is what a caller acts on; the element is what
+    they grep the page for, and dropping it would make an error less useful
+    than the one it replaced."""
+    hit = verdict.get("hit") or "something"
+    kind = verdict.get("kind")
+    return f"{kind} ({hit})" if kind else hit
 
 
 def _require_hit(session: BrowserSession, element, cmd) -> None:
@@ -165,9 +202,28 @@ def _require_hit(session: BrowserSession, element, cmd) -> None:
             "not_interactable",
             f"{describe(cmd)} has no size on screen, so a click cannot reach it",
         )
+    # Name the obstacle in terms the caller can act on. A dialog is both the
+    # common case and the actionable one: it almost always means the *previous*
+    # command opened it, and that command's diff already reported its controls.
+    #
+    # Seen in a real session: an agent clicked Approve, which opened a
+    # confirmation dialog, then clicked the same ref twice more. The refusal was
+    # correct both times -- but it said "covered by
+    # div.data-[state=open]:animate-in.data-[state=closed]:animate-out", which
+    # names a Tailwind animation and gives a reader nothing to do.
+    if verdict.get("kind") == "dialog":
+        titled = f" ({verdict.get('name')!r})" if verdict.get("name") else ""
+        raise OpError(
+            "not_interactable",
+            f"{describe(cmd)} is behind an open dialog{titled}, which would "
+            "receive the click instead. Act on the dialog or close it first -- "
+            "the command that opened it already reported its controls. Pass "
+            "force:true only if you mean to click through it.",
+        )
     raise OpError(
         "not_interactable",
-        f"{describe(cmd)} is still covered by {verdict.get('hit')} after "
+        f"{describe(cmd)} is still covered by "
+        f"{_blocker(verdict)} after "
         f"{_HIT_TEST_WINDOW}s, and it would receive the click instead. Pass "
         "force:true to dispatch it anyway, or new_tab:true if the target is a link",
     )

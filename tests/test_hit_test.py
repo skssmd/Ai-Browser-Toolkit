@@ -81,3 +81,32 @@ def test_a_cover_that_stays_still_fails(page):
         run(page, op="click", css="#under")
     assert caught.value.type == "not_interactable"
     assert "still covered by" in caught.value.message
+
+
+def test_a_click_behind_an_open_dialog_names_the_dialog(page):
+    """The refusal is correct; the message is what needed fixing.
+
+    Straight from a live session: an agent clicked Approve, which opened a
+    confirmation dialog, then clicked the same ref twice more. Both refusals
+    were right -- clicking through would have hit the overlay -- but the message
+    read "covered by div.data-[state=open]:animate-in.data-[state=closed]:
+    animate-out", which names a Tailwind animation and offers no next step.
+    """
+    run(page, op="click", css="#approve")
+    with pytest.raises(OpError) as caught:
+        run(page, op="click", css="#approve")
+
+    message = caught.value.message
+    assert caught.value.type == "not_interactable"
+    assert "dialog" in message
+    assert "Confirm approval" in message
+    # The remedy, not just the diagnosis.
+    assert "close it" in message
+
+
+def test_closing_the_dialog_lets_the_click_through(page):
+    """Patience must not become blindness, and neither must a better message:
+    the block is real until the dialog is gone."""
+    run(page, op="click", css="#approve")
+    run(page, op="click", css="#modal-cancel")
+    assert run(page, op="click", css="#approve")["clicked"]

@@ -356,3 +356,40 @@ migration.
 A signal that does work on Windows: query `Win32_Process` for a `chrome.exe`
 whose command line carries `--user-data-dir=<profile>`. `DevToolsActivePort`
 exists while a browser runs but survives a crash, so it over-reports.
+
+### A correct refusal that read as a toolkit bug — 2026-08-20
+
+Found by reading a 203-command session log, and worth recording mostly because
+the first diagnosis was wrong.
+
+An agent clicked `Approve` (`#110`, succeeded), which opened a confirmation
+dialog. It then clicked the *same ref* twice more (`#111`, `#112`), and both
+were refused:
+
+```
+not_interactable: ref='el_85' is still covered by
+div.data-[state=open]:animate-in.data-[state=closed]:animate-out after 1.0s
+```
+
+**The refusal was correct.** The button really was behind the dialog's overlay,
+and clicking through would have hit the overlay. `_HIT_TEST_WINDOW = 1.0` with
+50ms polling already waits out an animating cover -- `test_a_cover_that_flashes_
+is_waited_out` proves it -- so this was never the animation case it resembled.
+
+The failure was the message. `div.data-[state=open]:animate-in.data-[state=
+closed]:animate-out` is a Tailwind class list: it names an animation, says
+nothing about a dialog being open, and offers no next step. A reader could
+reasonably conclude the toolkit was flaky, which is exactly what happened here
+before the log was read properly.
+
+Fixed by naming the obstacle rather than its classes: the hit test now walks up
+from the blocking element for `role=dialog`, `role=alertdialog` or
+`aria-modal=true`, and the error reads "is behind an open dialog ('Confirm
+approval') ... act on the dialog or close it first -- the command that opened it
+already reported its controls". The specific element is still named alongside
+the kind, because dropping it would make the error less useful than the one it
+replaced.
+
+**The agent's own shortcoming stands separately**: it retried an identical
+command instead of reading the diff from `#110`, which had already reported the
+dialog and its controls. No error message prevents that.

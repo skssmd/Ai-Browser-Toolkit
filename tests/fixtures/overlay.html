@@ -19,3 +19,22 @@
        height: 100%; z-index: 2147483647; pointer-events: auto;"
        onclick="document.getElementById('out').textContent = 'hijacked'"></div>
 </body>
+
+<!-- The real shape from a live admin app: clicking an action opens a modal,
+     and the action button is then behind that modal's overlay. Refusing the
+     second click is correct; the class list on the overlay is a Tailwind
+     animation salad, so the error has to name the dialog instead. -->
+<button id="approve">Approve</button>
+<div id="modal" role="dialog" aria-modal="true"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4)">
+  <h2>Confirm approval</h2>
+  <button id="modal-cancel">Cancel</button>
+</div>
+<script>
+  document.getElementById('approve').addEventListener('click', function () {
+    document.getElementById('modal').style.display = 'block';
+  });
+  document.getElementById('modal-cancel').addEventListener('click', function () {
+    document.getElementById('modal').style.display = 'none';
+  });
+</script>
