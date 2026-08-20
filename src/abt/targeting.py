@@ -100,6 +100,96 @@ def _aim_at_frame(session: BrowserSession, by: str, selector: str) -> None:
     session.leave_frames()
 
 
+# How near each candidate is to the qualifying text, and what sits beside it.
+#
+# For every candidate: climb its ancestors until one contains `near`, and
+# report how *tight* that ancestor is -- the length of its text -- rather than
+# how many levels up it was.
+#
+# Depth alone is the obvious metric and it is wrong. A button sitting directly
+# in <body> has its match at depth 0, because body contains every string on the
+# page, so it beats the button actually inside the Billing card two levels up.
+# The suite caught it: `css: "button", near: "Billing"` selected the page's
+# "Show documents" button. The smallest container holding both the candidate
+# and the text is the one a person would point at -- on a table that is its
+# row, on a card its section. Nothing here knows what a row or a card is.
+#
+# `label` comes back regardless, so a miss can say what *was* there instead of
+# only that nothing matched.
+#
+# Written without a backslash. The JS in this project has been broken three
+# separate times by an escape being eaten between here and the browser, and the
+# browser reports it as a syntax error naming neither the file nor the cause.
+_NEAR_JS = """
+var els = arguments[0], want = String(arguments[1]).toLowerCase();
+var NL = String.fromCharCode(10), TAB = String.fromCharCode(9);
+function flat(s) {
+  return (s || '').split(NL).join(' ').split(TAB).join(' ').toLowerCase();
+}
+function label(el) {
+  var node = el.parentElement, depth = 0;
+  while (node && depth < 6) {
+    var own = flat(el.innerText || el.textContent);
+    var all = flat(node.innerText || node.textContent);
+    var rest = all.split(own).join(' ').trim();
+    if (rest) { return rest.slice(0, 60); }
+    node = node.parentElement; depth += 1;
+  }
+  return '';
+}
+return els.map(function (el) {
+  var node = el.parentElement, depth = 0;
+  while (node && depth < 8) {
+    var text = flat(node.innerText || node.textContent);
+    if (text.indexOf(want) !== -1) {
+      return {depth: depth, size: text.length, label: label(el)};
+    }
+    node = node.parentElement; depth += 1;
+  }
+  return {depth: -1, size: -1, label: label(el)};
+});
+"""
+
+
+def score_near(session, elements: list, near: str) -> list[dict]:
+    """`{depth, label}` per element. Never raises: a failure to score is a
+    failure to disambiguate, which the caller reports far better than a
+    traceback would."""
+    if not elements:
+        return []
+    try:
+        found = session.driver.execute_script(_NEAR_JS, elements, near)
+    except EngineError:
+        return [{"depth": -1, "size": -1, "label": ""} for _ in elements]
+    if not isinstance(found, list) or len(found) != len(elements):
+        return [{"depth": -1, "size": -1, "label": ""} for _ in elements]
+    return found
+
+
+def pick_near(session, elements: list, cmd):
+    """The match closest to `cmd.near`, or an error naming what was there.
+
+    Ties break on document order, which is what "the first Edit in the
+    Medication row" means when a row holds two of them.
+    """
+    scores = score_near(session, elements, cmd.near)
+    # Tightest container first, then closest, then document order.
+    ranked = [
+        (score.get("size", -1), score.get("depth", -1), position)
+        for position, score in enumerate(scores)
+        if score.get("depth", -1) >= 0
+    ]
+    if not ranked:
+        seen = [s.get("label") or "?" for s in scores][:6]
+        raise OpError(
+            "element_not_found",
+            f"{len(elements)} element(s) matched {describe(cmd)}, but none is "
+            f"near {cmd.near!r}. Found near: {', '.join(seen)}",
+        )
+    ranked.sort()
+    return elements[ranked[0][2]]
+
+
 def resolve_one(
     session: BrowserSession,
     cmd,
@@ -133,6 +223,23 @@ def _resolve_one(
     by, selector = locator(cmd)
     index = getattr(cmd, "index", 0)
     _aim_at_frame(session, by, selector)
+
+    # `near` needs the whole match set to choose from, so it takes the same
+    # path an index past the first does: wait for the set, then pick. This is
+    # the case that used to force an agent into `run_js` -- stamping an
+    # attribute on the right row and clicking that -- which is both slower and
+    # wrong more often than it looks.
+    if getattr(cmd, "near", None) is not None:
+        try:
+            WebDriverWait(session.driver, wait_for).until(
+                lambda d: d.find_elements(by, selector)
+            )
+        except Timeout as exc:
+            raise _miss(session, by, selector, cmd, state, wait_for) from exc
+        element = pick_near(session, session.driver.find_elements(by, selector), cmd)
+        if state in _NEEDS_VIEWPORT:
+            scroll_into_view(session, element)
+        return element
 
     if index == 0:
         try:

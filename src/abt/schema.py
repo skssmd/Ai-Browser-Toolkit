@@ -23,6 +23,11 @@ class Target(Base):
     xpath: str | None = None
     text: str | None = None
     index: int = 0
+    # Not a selector -- a qualifier on one. `text: "Edit"` names a dozen
+    # buttons on a table of documents; `near: "Medication"` says which. Kept
+    # out of TARGET_FIELDS deliberately, so it combines with a selector rather
+    # than competing with one.
+    near: str | None = None
 
     # Subclasses set this to False when "no target" means "the whole document".
     target_required: ClassVar[bool] = True
@@ -34,6 +39,11 @@ class Target(Base):
             raise ValueError(f"supply only one of {', '.join(TARGET_FIELDS)}, got {given}")
         if not given and self.target_required:
             raise ValueError(f"one of {', '.join(TARGET_FIELDS)} is required")
+        if self.near is not None and self.ref is not None:
+            raise ValueError(
+                "near qualifies a selector that matches several elements; a ref "
+                "already names exactly one"
+            )
         return self
 
     @property

@@ -321,6 +321,24 @@ over a long session.
 
 ## Targeting
 
+**`near` — one selector, many matches.** A documents table gives every row an
+`Edit` button, so `text: "Edit"` matches a dozen and `index` is a guess:
+
+```json
+{"op": "click", "text": "Edit", "near": "Medication"}
+```
+
+The match sharing the **smallest container** with that text wins — its row on a
+table, its section on a card. Size rather than depth, because a control sitting
+directly in `<body>` has every string on the page as a zero-depth ancestor and
+would otherwise beat the right answer.
+
+`near` qualifies a selector, so it combines with `css`, `xpath` or `text`, and
+is refused on a `ref` — a ref already names one element. When nothing is near
+it, the error lists what *is*.
+
+
+
 Ops that touch an element take exactly one of `ref`, `css`, `xpath`, or `text`
 (exact visible text). When a selector matches several elements, acting ops use the
 first unless you pass `index`.

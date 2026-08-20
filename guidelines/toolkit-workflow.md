@@ -42,6 +42,23 @@ you need, drive the page with the ops directly.
 
 ## Targeting and refs
 
+- **`near` qualifies a selector that matches too much.** A table whose every
+  row has an `Edit` button is the case: `text` alone matches all of them, and
+  an `index` is a guess that breaks the moment a row is added.
+
+  ```json
+  {"op": "click", "text": "Edit", "near": "Medication"}
+  ```
+
+  It picks the match sharing the *smallest* container with that text — the row
+  on a table, the section on a card. **Do not reach for `run_js` to stamp an
+  attribute on the right row and click that.** An agent doing exactly that
+  spent 14 of its 33 `run_js` calls on it, and when one stamp failed it left a
+  selector matching nothing and retried the same click ten times.
+
+  A `near` that matches nothing lists the qualifiers that do exist, so a miss
+  tells you what to ask for instead.
+
 - Ops that touch an element take exactly **one** of `css`, `xpath`, `text`
   (exact visible text), or `ref`. An `index` picks the Nth match.
 - `find` returns compact element **shells** (tag + attributes, no children) —
