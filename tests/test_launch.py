@@ -81,3 +81,15 @@ def test_to_dict_is_json_safe(tmp_path):
 
 def test_supported_browsers_is_what_the_session_offers():
     assert SUPPORTED_BROWSERS == ("chrome", "edge")
+
+
+def test_launch_config_defaults_to_the_per_user_profile(monkeypatch, tmp_path):
+    """A LaunchConfig built with no profile must not point at the cwd."""
+    monkeypatch.chdir(tmp_path)
+    from abt import paths
+
+    assert LaunchConfig().profile == paths.default_profile().expanduser().resolve()
+
+
+def test_an_explicit_profile_still_wins(tmp_path):
+    assert LaunchConfig(profile=tmp_path / "mine").profile == (tmp_path / "mine").resolve()

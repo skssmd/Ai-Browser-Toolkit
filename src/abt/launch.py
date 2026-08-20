@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import paths
 from .errors import OpError
 
 SUPPORTED_BROWSERS = ("chrome", "edge")
@@ -20,7 +21,7 @@ SUPPORTED_BROWSERS = ("chrome", "edge")
 @dataclass(frozen=True)
 class LaunchConfig:
     browser: str = "chrome"
-    profile: Path = Path("./profiles/default")
+    profile: Path | None = None  # None means "wherever this install keeps it"
     headless: bool = False
 
     def __post_init__(self) -> None:
@@ -31,10 +32,11 @@ class LaunchConfig:
                 f"unsupported browser {self.browser!r}; "
                 f"choose from {', '.join(SUPPORTED_BROWSERS)}",
             )
+        profile = self.profile if self.profile is not None else paths.default_profile()
         # A frozen dataclass still gets to normalise itself during __post_init__;
         # object.__setattr__ is the sanctioned way in.
         object.__setattr__(self, "browser", browser)
-        object.__setattr__(self, "profile", Path(self.profile).expanduser().resolve())
+        object.__setattr__(self, "profile", Path(profile).expanduser().resolve())
 
     def merge(
         self,

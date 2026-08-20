@@ -15,6 +15,8 @@ from urllib.parse import urlencode
 import httpx
 import typer
 
+from . import paths
+
 app = typer.Typer(add_completion=False, help="Selenium browser API for AI agents.")
 messenger = typer.Typer(add_completion=False, help="Send and read on messenger.com.")
 app.add_typer(messenger, name="messenger")
@@ -84,7 +86,10 @@ def serve(
         help="Browser to drive: chrome or edge. Prompts when omitted.",
     ),
     profile: Path = typer.Option(
-        Path("./profiles/default"), "--profile", help="Persistent browser user-data-dir."
+        None,
+        "--profile",
+        help="Persistent browser user-data-dir. Defaults to this install's "
+        "own per-user directory, or ./profiles/default inside a checkout.",
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
@@ -99,7 +104,10 @@ def serve(
         5.0, "--action-timeout", help="Seconds to wait for an element before failing."
     ),
     log_dir: Path = typer.Option(
-        Path("./logs"), "--log-dir", help="Where session logs are written."
+        None,
+        "--log-dir",
+        help="Where session logs are written. Defaults to this install's own "
+        "per-user directory, or ./logs inside a checkout.",
     ),
     no_log: bool = typer.Option(False, "--no-log", help="Disable session logging."),
     no_diff: bool = typer.Option(
@@ -165,6 +173,11 @@ def serve(
     from .browser import BrowserSession
     from .recorder import SessionRecorder
     from .server import create_app
+
+    # Typer evaluates option defaults once, at definition time, which would
+    # freeze whatever the working directory was at import. Resolve here.
+    profile = profile or paths.default_profile()
+    log_dir = log_dir or paths.default_log_dir()
 
     browser = _choose_browser(browser)
     session = BrowserSession(
@@ -624,10 +637,16 @@ def autostart_install(
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     profile: Path = typer.Option(
-        Path("./profiles/default"), "--profile", help="Persistent browser user-data-dir."
+        None,
+        "--profile",
+        help="Persistent browser user-data-dir. Defaults to this install's "
+        "own per-user directory, or ./profiles/default inside a checkout.",
     ),
     log_dir: Path = typer.Option(
-        Path("./logs"), "--log-dir", help="Where session logs are written."
+        None,
+        "--log-dir",
+        help="Where session logs are written. Defaults to this install's own "
+        "per-user directory, or ./logs inside a checkout.",
     ),
     engine: str = typer.Option(
         "playwright", "--engine", help="Driver backing the browser."
@@ -648,6 +667,9 @@ def autostart_install(
     prompt nor a working directory to resolve against.
     """
     from . import autostart as auto
+
+    profile = profile or paths.default_profile()
+    log_dir = log_dir or paths.default_log_dir()
 
     try:
         spec = auto.plan(
