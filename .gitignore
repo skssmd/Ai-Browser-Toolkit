@@ -17,3 +17,13 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+/guidelines/onehr
+
+# OneHr client material. The playbooks and session write-ups name a real
+# organisation, its routes and its staff records, so they stay on disk and out
+# of the repo. Name-matched rather than path-matched so a new write-up is
+# covered the moment it is created, not the next time someone remembers.
+# Case variants because git's ignore matching is case-sensitive by default.
+*onehr*
+*OneHr*
+*ONEHR*

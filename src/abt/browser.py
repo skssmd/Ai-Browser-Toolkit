@@ -790,6 +790,43 @@ class BrowserSession:
             return []
         return found
 
+    def actionable_context(self, entries: list[dict], indices: list[int]) -> list:
+        """Disambiguating text for the entries a diff picked, in that order.
+
+        Grouped by frame for the same reason `actionable_elements` is: the
+        parked array belongs to one document's window and does not exist in any
+        other. Best effort throughout -- a control that cannot be qualified is
+        reported without a qualifier, never as a failure, because this is a
+        decoration on a diff that has already succeeded.
+        """
+        if not indices:
+            return []
+        groups: dict[tuple[int, ...], list[tuple[int, int]]] = {}
+        for position, index in enumerate(indices):
+            if index >= len(entries):
+                return [None] * len(indices)
+            entry = entries[index]
+            home = tuple(entry.get("frame") or ())
+            groups.setdefault(home, []).append((entry.get("slot", index), position))
+
+        found: list = [None] * len(indices)
+        try:
+            for home, picks in groups.items():
+                if not self.enter_frame(home):
+                    continue
+                context = diff_util.actionable_context(
+                    self.driver, [slot for slot, _ in picks]
+                )
+                if len(context) != len(picks):
+                    continue
+                for (_slot, position), value in zip(picks, context):
+                    found[position] = value
+        except WebDriverException:
+            return [None] * len(indices)
+        finally:
+            self.leave_frames()
+        return found
+
     def baseline(self) -> dict | None:
         """The stored (url, dom, text, actionable) state for the active tab."""
         return self._baselines.get(self.active_tab)

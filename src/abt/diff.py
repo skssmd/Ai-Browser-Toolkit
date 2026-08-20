@@ -317,6 +317,74 @@ if (!stash) { return []; }
 return arguments[0].map((i) => stash[i] || null);
 """
 
+# The nearest text that tells two identically-named controls apart.
+#
+# Climbs from the control until an ancestor holds text that is not the
+# control's own, and returns the first such string -- which on a table row is
+# the first cell, and on a card is its heading. It knows nothing about tables
+# or cards; it just walks up until something else has something to say.
+#
+# Only ever asked for repeated names, so the walk runs on a handful of elements
+# and never on an ordinary page. See `ops.actionable_report`.
+_ACTIONABLE_CONTEXT_JS = r"""
+const stash = window.__abtActionable;
+if (!stash) { return []; }
+const CAP = 80;
+// Text inside these is source, not content. The snapshot walk skips them for
+// the same reason.
+const SKIP = {SCRIPT: 1, STYLE: 1, TEMPLATE: 1, NOSCRIPT: 1};
+const tidy = (s) => s.replace(/\s+/g, ' ').trim();
+
+function firstTextBeside(root, inner) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let node;
+  while ((node = walker.nextNode())) {
+    // The control's own label is what we are trying to qualify, so it can
+    // never be the qualifier.
+    if (inner.contains(node)) { continue; }
+    const parent = node.parentElement;
+    if (!parent || SKIP[parent.tagName]) { continue; }
+    const text = tidy(node.textContent);
+    if (text) { return text; }
+  }
+  return '';
+}
+
+return arguments[0].map(function (slot) {
+  const el = stash[slot];
+  if (!el) { return null; }
+  const own = tidy(el.innerText || el.textContent || '');
+  let node = el.parentElement;
+  let depth = 0;
+  // Six is past a table row and a card without reaching the page shell, where
+  // the first text is a nav item and identical for every control on screen.
+  while (node && depth < 6) {
+    const found = firstTextBeside(node, el);
+    if (found && found.toLowerCase() !== own.toLowerCase()) {
+      return found.length > CAP ? found.slice(0, CAP) : found;
+    }
+    node = node.parentElement;
+    depth += 1;
+  }
+  return null;
+});
+"""
+
+
+def actionable_context(driver, slots: list[int]) -> list:
+    """The disambiguating text for each parked element, or None where there is
+    none to be had. Never raises: a missing qualifier is a smaller loss than a
+    failed command."""
+    if not slots:
+        return []
+    try:
+        found = driver.execute_script(_ACTIONABLE_CONTEXT_JS, list(slots))
+    except Exception:
+        return [None] * len(slots)
+    if not isinstance(found, list) or len(found) != len(slots):
+        return [None] * len(slots)
+    return found
+
 def _blank() -> dict:
     return {"dom": [], "text": [], "actionable": [], "frames": [], "shadow_hosts": 0}
 

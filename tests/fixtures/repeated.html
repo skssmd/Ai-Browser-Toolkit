@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>repeated</title>
+<style>
+  #panel { display: none; }
+  #panel.open { display: block; }
+  td { padding: 2px 8px; }
+</style>
+
+<button id="show">Show documents</button>
+
+<!-- The shape that made this necessary: a table of rows whose action buttons
+     all carry the same accessible name. Role and name are identical across
+     rows, so an agent gets N refs and nothing to choose between them. -->
+<div id="panel">
+  <h3>Documents</h3>
+  <table>
+    <tr><td>Medication</td><td>pending</td><td><button>Edit</button></td></tr>
+    <tr><td>Passport</td><td>approved</td><td><button>Edit</button></td></tr>
+    <tr><td>Safeguarding policy</td><td>pending</td><td><button>Edit</button></td></tr>
+  </table>
+
+  <!-- A control whose name is unique on the page: it must NOT gain context,
+       because there is nothing to disambiguate and the extra string would be
+       noise on every ordinary page. -->
+  <button id="save">Save Changes</button>
+</div>
+
+<!-- Repeated names that are not in a row, to prove the climb does not depend
+     on table structure -- it walks ancestors until something else has text. -->
+<div id="cards" style="display:none">
+  <section><h4>Billing</h4><button>Open</button></section>
+  <section><h4>Shipping</h4><button>Open</button></section>
+</div>
+
+<script>
+  document.getElementById('show').addEventListener('click', () => {
+    document.getElementById('panel').classList.add('open');
+    document.getElementById('cards').style.display = 'block';
+  });
+</script>

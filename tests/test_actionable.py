@@ -144,3 +144,82 @@ def test_baseline_holds_no_live_elements(page):
     baseline = page.baseline()
     assert "elements" not in baseline
     assert all(isinstance(e, dict) for e in baseline["actionable"])
+
+
+# --- disambiguating repeated names ------------------------------------------
+#
+# `role` + `name` + `ref` identifies a control only while names are distinct.
+# A table of rows whose action buttons are all called "Edit" hands back N refs
+# and nothing to choose between them, which is the one place this track stops
+# being an answer. Driving a real admin app, 39 of 51 `run_js` calls existed
+# solely to work out which "Edit" belonged to which row -- and the DOM-walking
+# that replaced it once opened the wrong row's dialog while reporting success.
+
+
+@pytest.fixture
+def rows(session, base_url):
+    for tab in list(session.tabs()):
+        if not tab["active"]:
+            session.close_tab(tab["tab_id"])
+    session.goto(f"{base_url}/repeated.html")
+    session.set_baseline()
+    return session
+
+
+def by_name(added, name):
+    return [item for item in added if item["name"] == name]
+
+
+def test_repeated_names_carry_the_text_that_tells_them_apart(rows):
+    added = actionable(run(rows, op="click", css="#show"))
+    edits = by_name(added, "Edit")
+
+    assert len(edits) == 3
+    assert [item.get("near") for item in edits] == [
+        "Medication",
+        "Passport",
+        "Safeguarding policy",
+    ]
+
+
+def test_a_unique_name_gets_no_context(rows):
+    """Nothing to disambiguate, so nothing is added.
+
+    The cost of this feature is a round trip, and it is only worth paying when
+    the names genuinely collide. A page of distinctly-named controls must come
+    back exactly as it did before.
+    """
+    added = actionable(run(rows, op="click", css="#show"))
+    save = by_name(added, "Save Changes")
+
+    assert len(save) == 1
+    assert "near" not in save[0]
+
+
+def test_context_does_not_depend_on_table_structure(rows):
+    """The climb walks ancestors, it does not know what a row is."""
+    added = actionable(run(rows, op="click", css="#show"))
+    opens = by_name(added, "Open")
+
+    assert len(opens) == 2
+    assert [item.get("near") for item in opens] == ["Billing", "Shipping"]
+
+
+def test_context_never_repeats_the_name_it_qualifies(rows):
+    """A `near` equal to the name is noise -- it distinguishes nothing."""
+    added = actionable(run(rows, op="click", css="#show"))
+    for item in added:
+        if "near" in item:
+            assert item["near"] != item["name"]
+
+
+def test_every_context_entry_belongs_to_a_repeated_name(rows):
+    """The whole feature is conditional. Anything else is payload nobody asked
+    for, on every diffed command on every page."""
+    added = actionable(run(rows, op="click", css="#show"))
+    counts: dict[str, int] = {}
+    for item in added:
+        counts[item["name"]] = counts.get(item["name"], 0) + 1
+    for item in added:
+        if "near" in item:
+            assert counts[item["name"]] > 1, item
