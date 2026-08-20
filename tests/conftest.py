@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import os
 import tempfile
 import threading
 import time
@@ -86,6 +87,16 @@ def pytest_addoption(parser):
         choices=("selenium", "playwright"),
         help="which driver the browser-backed fixtures use",
     )
+    parser.addoption(
+        "--action-timeout",
+        action="store",
+        type=float,
+        default=float(os.environ.get("ABT_TEST_ACTION_TIMEOUT", "3.0")),
+        help="seconds the browser fixtures wait for an element. Three is "
+        "comfortable on a developer machine and marginal on a loaded CI "
+        "runner with a cold headless Chrome, so CI raises it via "
+        "ABT_TEST_ACTION_TIMEOUT rather than every job repeating a flag.",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -94,10 +105,15 @@ def engine(request):
 
 
 @pytest.fixture(scope="session")
-def session(engine):
+def action_timeout(request):
+    return request.config.getoption("--action-timeout")
+
+
+@pytest.fixture(scope="session")
+def session(engine, action_timeout):
     profile = Path(tempfile.mkdtemp(prefix="abt-test-profile-"))
     browser = BrowserSession(
-        profile=profile, headless=True, action_timeout=3.0, engine=engine
+        profile=profile, headless=True, action_timeout=action_timeout, engine=engine
     )
     browser.start()
     yield browser
@@ -123,14 +139,14 @@ def client(clean_session):
 
 
 @pytest.fixture
-def unstarted_session(tmp_path, engine):
+def unstarted_session(tmp_path, engine, action_timeout):
     """A session that never launched a browser.
 
     The existing `session` fixture starts Chrome eagerly and is session-scoped;
     this one is the counterpart for everything that should work without one.
     """
     return BrowserSession(
-        profile=tmp_path, headless=True, action_timeout=3.0, engine=engine
+        profile=tmp_path, headless=True, action_timeout=action_timeout, engine=engine
     )
 
 
