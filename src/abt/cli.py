@@ -30,6 +30,33 @@ DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
 
 
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    from importlib.metadata import version
+
+    typer.echo(version("aibrowsertoolkit"))
+    raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print the version and exit.",
+    ),
+) -> None:
+    """Browser API for AI agents, over HTTP.
+
+    `--version` is eager so it answers before any subcommand is resolved --
+    every packaging channel's smoke test is `abt --version`, and it has to
+    work on a machine with no server running and no browser installed.
+    """
+
+
 def _port_option() -> int:
     return typer.Option(DEFAULT_PORT, "--port", "-p", help="Server port.")
 
