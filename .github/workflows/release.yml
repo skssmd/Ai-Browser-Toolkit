@@ -144,6 +144,14 @@ jobs:
       - name: Compile the installer
         if: matrix.target == 'windows-x86_64'
         shell: bash
+        env:
+          # `shell: bash` on a Windows runner is Git Bash, which rewrites any
+          # argument beginning with `/` into a Windows path. That turns
+          # ISCC's own switches -- /DAppVersion, /DPayloadDir, /O -- into
+          # filenames, and it fails with the wonderfully misleading "You may
+          # not specify more than one script filename". Found by compiling
+          # locally in Git Bash, which reproduces the runner exactly.
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           # Forward slashes throughout: Win32 accepts them, and cmd-style
           # backslashes in YAML are a quoting trap for no benefit.
