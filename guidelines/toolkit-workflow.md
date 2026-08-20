@@ -126,6 +126,19 @@ the text to decide, use the ref to act. `role` tells you what a thing is when
 the label alone is ambiguous, and `disabled` warns you off a control that has
 appeared but is not ready.
 
+**When several controls share a name, each carries `near`** — the nearest text
+that is not its own label, so a row of identical `Edit` buttons tells you which
+row each one belongs to:
+
+```json
+{"ref": "el_9", "role": "button", "name": "Edit", "near": "Medication"}
+```
+
+Only when names actually repeat; a uniquely-named control gets nothing. **This
+is there so you do not reach for `run_js` to match a button to its row.** That
+DOM-walking is expensive and it is wrong more often than it looks — it has
+opened the wrong row's dialog and returned `ok: true`.
+
 Two things it deliberately does not do. It **skips navigations**, because on a
 new page every control is "new" and the list would just be the page again — use
 `find` after you land. And it **drops controls with no accessible name**, so you

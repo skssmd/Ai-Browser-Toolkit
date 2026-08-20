@@ -432,6 +432,28 @@ in the same response, so the two always line up. A control with **no** accessibl
 name is dropped entirely rather than handed back as a nameless ref — an entry
 you cannot tie to something you have read is noise.
 
+**Repeated names arrive qualified.** A `name` identifies a control only while
+it is unique — a table whose every row carries an `Edit` button gives you N refs
+and nothing to choose between them. When a name appears more than once in one
+diff, each entry gains `near`: the nearest text that is not the control's own.
+
+```json
+"actionable": {"added": [
+  {"ref": "el_9",  "role": "button", "name": "Edit", "near": "Medication"},
+  {"ref": "el_10", "role": "button", "name": "Edit", "near": "Passport"},
+  {"ref": "el_11", "role": "button", "name": "Save Changes"}
+]}
+```
+
+The walk climbs ancestors until something else has something to say, which on a
+row is its first cell and on a card is its heading — it knows nothing about rows
+or cards. `Save Changes` gets nothing because nothing else is called that.
+
+This is **conditional by construction**: no repeated name means no extra work
+and a response identical to before. It exists because the alternative is
+`run_js` DOM-walking to match a button to its row, which is what once clicked
+the wrong row's Edit and reported success.
+
 **It does not run after a navigation.** On a new document every control is new,
 so the diff would degenerate into an inventory of the whole page — which the
 text track already returned in full, and which would burn a ref on every control
