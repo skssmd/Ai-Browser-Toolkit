@@ -40,12 +40,14 @@ jobs:
         # The live tests need a real browser on a real profile; everything
         # else runs anywhere.
         env:
-          # The fixtures default to 3s, which is comfortable on a developer
-          # machine and marginal here: observed failures were
-          # "ElementHandle.click: Timeout 3000ms exceeded" that had already
-          # reached "performing click action" -- slow, not stuck. Raised
-          # rather than retried, because a retry would hide a real hang too.
-          ABT_TEST_ACTION_TIMEOUT: "15"
+          # This runner is several times slower than a developer machine, and
+          # it blew a different budget each run: first a click timeout
+          # ("ElementHandle.click: Timeout 3000ms exceeded", already at
+          # "performing click action" -- slow, not stuck), then a settle grace
+          # that called a page idle mid-fetch and snapshotted the spinner.
+          # One multiplier scales them together rather than chasing each.
+          # Not a retry: a retry would hide a genuine hang just as well.
+          ABT_TEST_SLOWDOWN: "5"
         run: >
           python -m pytest -q
           --deselect tests/test_lifecycle_live.py

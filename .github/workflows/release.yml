@@ -25,7 +25,9 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e ".[dev]"
       - env:
-          ABT_TEST_ACTION_TIMEOUT: "15"
+          # Same multiplier as ci.yml. A release must not fail on a budget
+          # that only a loaded runner blows.
+          ABT_TEST_SLOWDOWN: "5"
         run: >
           python -m pytest -q
           --deselect tests/test_lifecycle_live.py

@@ -88,14 +88,15 @@ def pytest_addoption(parser):
         help="which driver the browser-backed fixtures use",
     )
     parser.addoption(
-        "--action-timeout",
+        "--slowdown",
         action="store",
         type=float,
-        default=float(os.environ.get("ABT_TEST_ACTION_TIMEOUT", "3.0")),
-        help="seconds the browser fixtures wait for an element. Three is "
-        "comfortable on a developer machine and marginal on a loaded CI "
-        "runner with a cold headless Chrome, so CI raises it via "
-        "ABT_TEST_ACTION_TIMEOUT rather than every job repeating a flag.",
+        default=float(os.environ.get("ABT_TEST_SLOWDOWN", "1")),
+        help="multiply every browser-fixture time budget by this. The "
+        "defaults suit a developer machine; a loaded CI runner is several "
+        "times slower and blows a different one each run -- first a click "
+        "timeout, then a settle grace. One multiplier says the true thing "
+        "(this machine is slower) instead of hardcoding three numbers.",
     )
 
 
@@ -104,16 +105,43 @@ def engine(request):
     return request.config.getoption("--engine")
 
 
-@pytest.fixture(scope="session")
-def action_timeout(request):
-    return request.config.getoption("--action-timeout")
+# Budgets a developer machine is comfortable with, scaled by --slowdown. An
+# unscaled run reproduces exactly what these fixtures did before the knob
+# existed: 3.0 was the fixtures' own tighter choice, while 5.0 and 0.5 are
+# BrowserSession's defaults (browser.py:102 and _SETTLE_NETWORK_GRACE), which
+# the fixtures previously inherited by not passing them.
+BASE_ACTION_TIMEOUT = 3.0
+BASE_SETTLE_TIMEOUT = 5.0
+BASE_SETTLE_NETWORK_GRACE = 0.5
 
 
 @pytest.fixture(scope="session")
-def session(engine, action_timeout):
+def slowdown(request):
+    return request.config.getoption("--slowdown")
+
+
+@pytest.fixture(scope="session")
+def budgets(slowdown):
+    """Every browser-fixture time budget, scaled together.
+
+    Scaled together on purpose: settle_network_grace is the subtle one. The
+    slowfetch fixture chains two requests, so the in-flight count drops to
+    zero between them; if the grace is shorter than that gap the page is
+    called idle mid-load and the snapshot catches the spinner. Raising only
+    the timeout would not have fixed that.
+    """
+    return {
+        "action_timeout": BASE_ACTION_TIMEOUT * slowdown,
+        "settle_timeout": BASE_SETTLE_TIMEOUT * slowdown,
+        "settle_network_grace": BASE_SETTLE_NETWORK_GRACE * slowdown,
+    }
+
+
+@pytest.fixture(scope="session")
+def session(engine, budgets):
     profile = Path(tempfile.mkdtemp(prefix="abt-test-profile-"))
     browser = BrowserSession(
-        profile=profile, headless=True, action_timeout=action_timeout, engine=engine
+        profile=profile, headless=True, engine=engine, **budgets
     )
     browser.start()
     yield browser
@@ -139,14 +167,14 @@ def client(clean_session):
 
 
 @pytest.fixture
-def unstarted_session(tmp_path, engine, action_timeout):
+def unstarted_session(tmp_path, engine, budgets):
     """A session that never launched a browser.
 
     The existing `session` fixture starts Chrome eagerly and is session-scoped;
     this one is the counterpart for everything that should work without one.
     """
     return BrowserSession(
-        profile=tmp_path, headless=True, action_timeout=action_timeout, engine=engine
+        profile=tmp_path, headless=True, engine=engine, **budgets
     )
 
 
