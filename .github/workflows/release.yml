@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and smoke-test everything, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev]"
+      - env:
+          ABT_TEST_ACTION_TIMEOUT: "15"
+        run: >
+          python -m pytest -q
+          --deselect tests/test_lifecycle_live.py
+          --deselect tests/test_shots_live.py
+
+  wheel:
+    needs: test
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Read the version from pyproject
+        id: v
+        run: |
+          version=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "pyproject says $version"
+
+      - name: Guard the tag against the version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "${{ steps.v.outputs.version }}" ]; then
+            echo "tag $GITHUB_REF_NAME does not match pyproject version ${{ steps.v.outputs.version }}"
+            echo "bump pyproject.toml first, commit, then tag -- never the reverse."
+            exit 1
+          fi
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install build
+          python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  bundle:
+    needs: wheel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            os: ubuntu-24.04
+          - target: linux-aarch64
+            os: ubuntu-24.04-arm
+          - target: macos-arm64
+            os: macos-14
+          - target: macos-x86_64
+            os: macos-13
+          - target: windows-x86_64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-python runs bundle.py; setup-uv supplies the `uv` binary the
+      # builder shells out to. Deliberately kept apart: setup-uv given a
+      # python-version creates and activates its own .venv, and then two
+      # interpreters disagree about what is installed.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Build the bundle
+        shell: bash
+        run: |
+          wheel=$(ls dist/*.whl)
+          python packaging/bundle.py \
+            --version "${{ needs.wheel.outputs.version }}" \
+            --target "${{ matrix.target }}" \
+            --wheel "$wheel" \
+            --dest dist/
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          bash packaging/smoke.sh \
+            "dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}"
+
+      # Named exactly, not globbed. `python -m build` puts an sdist .tar.gz in
+      # dist/ too, and this job downloads it -- so `dist/*.tar.gz` would sweep
+      # the sdist into all four Unix bundle artifacts, and the release job
+      # would then publish it five times over.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.tar.gz
+            dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.zip
