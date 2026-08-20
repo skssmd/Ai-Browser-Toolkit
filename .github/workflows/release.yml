@@ -133,8 +133,46 @@ jobs:
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.tar.gz
             dist/aibrowsertoolkit-${{ needs.wheel.outputs.version }}-${{ matrix.target }}.zip
 
-  release:
+  installer:
     needs: [wheel, bundle]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-windows-x86_64
+          path: dl
+
+      - name: Unpack the bundle
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p payload
+          unzip -q dl/*.zip -d payload
+          # The zip contains one top-level directory named for the target;
+          # Inno wants the tree itself, not its parent.
+          mv payload/aibrowsertoolkit-* payload/tree
+          ls payload/tree
+
+      - name: Compile
+        shell: bash
+        run: |
+          # Forward slashes throughout: Win32 accepts them, and cmd-style
+          # backslashes in YAML are a quoting trap for no benefit.
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -x "$iscc" ]; then iscc=$(command -v iscc || true); fi
+          if [ -z "$iscc" ]; then echo "Inno Setup not found on this runner"; exit 1; fi
+          root=$(pwd -W)
+          "$iscc" "/DAppVersion=${{ needs.wheel.outputs.version }}" "/DPayloadDir=$root/payload/tree" "/O$root/out" packaging/windows/abt.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          if-no-files-found: error
+          path: out/*.exe
+
+  release:
+    needs: [wheel, bundle, installer]
     # Both halves matter. The ref check keeps a branch dispatch from
     # publishing; the dry_run check keeps a *tag* dispatch from publishing
     # when the person running it asked for a rehearsal. Without the second,
@@ -153,13 +191,13 @@ jobs:
           find staging -type f \( -name '*.tar.gz' -o -name '*.zip' \
             -o -name '*.whl' -o -name '*.exe' \) -exec cp -n {} out/ \;
           ls -l out
-          # Five bundles + wheel + sdist. A missing one means an upstream job
+          # Five bundles + wheel + sdist + installer. A missing one means a job
           # was skipped, and shipping a partial release is worse than failing
           # here -- the publishers downstream would each pin a URL that never
           # gets an asset.
           count=$(ls out | wc -l)
-          if [ "$count" -lt 7 ]; then
-            echo "expected at least 7 artifacts, found $count"
+          if [ "$count" -lt 8 ]; then
+            echo "expected at least 8 artifacts, found $count"
             exit 1
           fi
 
