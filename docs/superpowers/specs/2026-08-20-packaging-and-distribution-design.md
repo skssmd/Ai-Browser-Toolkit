@@ -45,7 +45,7 @@ Settled during brainstorming, recorded so the plan does not relitigate them:
 | Decision | Choice |
 |---|---|
 | Bundle model | Self-contained bundles everywhere except PyPI, which stays a normal wheel. |
-| Bundle mechanism | `uv venv --relocatable` over a python-build-standalone CPython. Not PyInstaller. |
+| Bundle mechanism | Packages installed into a python-build-standalone CPython, plus a launcher shim. No venv, no PyInstaller. |
 | Build topology | Five native runners, one per target. Not a cross-build from one host. |
 | Install scope | Per-user on every platform. Never elevated. |
 | Autostart | Unchecked installer checkbox on Windows; a printed hint everywhere else. Never default-on. |
@@ -134,18 +134,44 @@ Identical on all five targets:
 
 ```
 aibrowsertoolkit-0.2.0-linux-x86_64/
-  venv/                       relocatable venv over python-build-standalone CPython 3.13
-    bin/abt                   the console script, relative shebang
-    lib/.../site-packages/    abt, playwright, selenium, fastapi, uvicorn, pydantic, httpx, typer
+  bin/abt                     launcher shim (abt.cmd at the root on Windows)
+  python/                     python-build-standalone CPython 3.13
+    bin/python3
+    lib/python3.13/site-packages/   abt, playwright, selenium, fastapi,
+                                    uvicorn, pydantic, httpx, typer
   LICENSE
   README.md
   guidelines/
 ```
 
-`uv venv --relocatable` is what makes this work. It rewrites script shebangs
-and the Windows launcher stubs to resolve relative to the venv, so the tree can
-be moved into `/opt`, a Homebrew Cellar, or `%LOCALAPPDATA%` with no post-install
-fixup and no path rewriting in any packaging script.
+**There is deliberately no virtualenv.** The obvious construction — a venv made
+with `uv venv --relocatable` — does not survive being moved. That flag rewrites
+script shebangs to be relative, which is real, but `pyvenv.cfg` retains an
+absolute `home =` pointing at the base interpreter, and the base interpreter
+would be the CI runner's. The bundle would pass its smoke test on the machine
+that built it and fail on every machine that installed it, which is the worst
+failure shape available.
+
+So packages are installed directly into the standalone interpreter's own
+`site-packages` (`uv pip install --python python/bin/python3 <wheel>`).
+python-build-standalone distributions are relocatable by construction, so the
+tree can be moved into `/opt`, a Homebrew Cellar or `%LOCALAPPDATA%` with no
+post-install fixup.
+
+The launcher is a two-line shim rather than the generated console script, whose
+shebang is absolute:
+
+```sh
+#!/bin/sh
+exec "$(dirname "$(readlink -f "$0")")/../python/bin/python3" -m abt "$@"
+```
+
+```bat
+@"%~dp0python\python.exe" -m abt %*
+```
+
+`python -m abt` requires a `src/abt/__main__.py`, which does not exist yet and
+is created as part of the bundle work.
 
 **Why not PyInstaller.** `onefile` extracts to a temporary directory and
 Playwright locates its Node driver at runtime, which breaks — this is recorded
@@ -161,9 +187,9 @@ Node driver and the embedded CPython.
 
 | Channel | Location | Entry point |
 |---|---|---|
-| Windows installer, winget | `%LOCALAPPDATA%\Programs\AIBrowserToolkit` | `venv\Scripts` added to the user `PATH` |
-| Scoop | Scoop's own `apps` directory | Scoop shim to `venv\Scripts\abt.exe` |
-| Homebrew | `libexec` in the Cellar | `bin.install_symlink libexec/"venv/bin/abt"` |
+| Windows installer, winget | `%LOCALAPPDATA%\Programs\AIBrowserToolkit` | install root on the user `PATH`, exposing `abt.cmd` |
+| Scoop | Scoop's own `apps` directory | Scoop shim to `abt.cmd` |
+| Homebrew | `libexec` in the Cellar | `bin.install_symlink libexec/"bin/abt"` |
 | AUR, deb, rpm, apk | `/opt/aibrowsertoolkit` | symlink at `/usr/bin/abt` |
 | pip / pipx | the user's environment | whatever pip does |
 
@@ -282,8 +308,8 @@ host. Each bundle job, on the operating system it targets, runs:
 3. poll `GET /status` until it answers
 4. `abt shutdown`
 
-That exercises the relocated venv, the rewritten shebang, and Playwright's Node
-driver import — the three things that break silently. A bundle that fails this
+That exercises the relocated interpreter, the launcher shim, and Playwright's
+Node driver import — the three things that break silently. A bundle that fails this
 never reaches the release.
 
 ### Guards
