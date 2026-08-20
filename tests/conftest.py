@@ -114,6 +114,12 @@ BASE_ACTION_TIMEOUT = 3.0
 BASE_SETTLE_TIMEOUT = 5.0
 BASE_SETTLE_NETWORK_GRACE = 0.5
 
+# Ceilings scale with --slowdown; the network grace does not, past this. See
+# the comment in `budgets` -- grace is charged on every navigation rather than
+# only on failures, so it is the one that turns a slower budget into a slower
+# suite.
+GRACE_SCALE_CAP = 2.0
+
 
 @pytest.fixture(scope="session")
 def slowdown(request):
@@ -131,9 +137,19 @@ def budgets(slowdown):
     the timeout would not have fixed that.
     """
     return {
+        # Both of these are ceilings: they are paid only when a wait actually
+        # fails or a page never settles, so scaling them hard is free on a
+        # green run.
         "action_timeout": BASE_ACTION_TIMEOUT * slowdown,
         "settle_timeout": BASE_SETTLE_TIMEOUT * slowdown,
-        "settle_network_grace": BASE_SETTLE_NETWORK_GRACE * slowdown,
+        # This one is not a ceiling. Settle waits for this much network
+        # silence before calling a page idle, so it is paid in full on *every
+        # navigation in the suite*. Scaling it by 5 alongside the others took
+        # CI from 10 minutes to 26. Capped at double, which is ample for the
+        # gap it exists to tolerate -- the chained fetches in slowfetch.html
+        # are a microtask apart, not a second.
+        "settle_network_grace": BASE_SETTLE_NETWORK_GRACE
+        * min(slowdown, GRACE_SCALE_CAP),
     }
 
 
