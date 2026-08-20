@@ -324,8 +324,9 @@ Also required, and not secrets: a fork of `microsoft/winget-pkgs` under an
 account the `WINGET_TOKEN` can push to, synced with upstream `master` before
 each run; and a `scoop-bucket` repository.
 
-**Waves 0 and 1 need no credentials at all.** `GITHUB_TOKEN` is issued
-automatically. The whole build half of this can be written and proven green
+**Waves 0 and 1 store no secrets.** `GITHUB_TOKEN` is issued automatically and
+PyPI's publisher registration is configuration on PyPI's side, not a value in
+this repository. The whole build half of this can be written and proven green
 before a single account is recovered.
 
 ## Files
@@ -362,8 +363,9 @@ those two are verified by reading the generated manifest in the dry run.
 ## Waves
 
 **Wave 0 — prerequisite.** `paths.py`, its tests, and the three call sites in
-`cli.py` and `launch.py`. No packaging. Nothing else can ship correctly until
-an installed `abt` finds its profile.
+`cli.py` and `launch.py`. Replace the "Packaged application + installer" entry
+in `docs/TODO.md` with a pointer to this document. No packaging. Nothing else
+can ship correctly until an installed `abt` finds its profile.
 
 **Wave 1 — build and PyPI.** `packaging/bundle.py`, the five-target matrix with
 its smoke test, the wheel, the GitHub release with `checksums.txt` and
