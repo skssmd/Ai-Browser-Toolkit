@@ -265,11 +265,12 @@ release.
 | macos-x86_64 | `macos-13` |
 | windows-x86_64 | `windows-latest` |
 
-The ARM runners are free for public repositories. **If
-`skssmd/Ai-Browser-Toolkit` is private, this is not available** and the
-fallback is to build the two ARM targets with `uv pip install --python-platform
-… --only-binary :all:` from their x86_64 counterparts, accepting that they are
-not smoke-tested. Confirm visibility before implementing the matrix.
+The ARM runners are free for public repositories, and this repository is public
+— confirmed 2026-08-20, see "Open questions". Had it been private, the fallback
+would have been to build the two ARM targets with `uv pip install
+--python-platform … --only-binary :all:` from their x86_64 counterparts and
+accept that they are never smoke-tested. That is recorded only so a future
+change of visibility has an answer ready; it is not the plan.
 
 ### The smoke test
 
@@ -389,8 +390,19 @@ None belongs in a first release that has not yet shipped once cleanly.
 
 ## Open questions
 
-- Is `skssmd/Ai-Browser-Toolkit` public? Free ARM runners and free build
-  provenance both depend on it. Resolve before wave 1.
-- Is the PyPI name `aibrowsertoolkit` unclaimed? Resolve before wave 1.
+Resolved 2026-08-20:
+
+- **`skssmd/Ai-Browser-Toolkit` is public.** The unauthenticated GitHub API
+  returns 200. Free ARM runners and free build provenance are both available,
+  so the five-runner matrix stands as written and the cross-build fallback
+  described under "Runners" is not needed.
+- **The PyPI name `aibrowsertoolkit` is unclaimed.** `pypi.org/pypi/
+  aibrowsertoolkit/json` returns 404, against a 200 for a known-taken name.
+  Note that the name `abt` *is* taken by an unrelated project — which costs
+  nothing, because `abt` is this package's console script, not its
+  distribution name.
+
+Still open:
+
 - Does `the-graft-project` permit fine-grained personal access tokens? If not,
   `TAP_TOKEN` is a classic token with `repo` scope. Resolve before wave 2.
