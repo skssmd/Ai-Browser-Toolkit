@@ -31,6 +31,8 @@ That entry is superseded by this document and should point here.
   Edge via `channel="chrome"`. No Chromium is downloaded and none is shipped.
 - **Machine-scope installation.** Every install is per-user. See "Why per-user
   on Windows".
+- **Invoking `sudo` on the user's behalf.** `abt doctor --install-browser`
+  installs only where no elevation is required of us. See "Dependencies".
 - **Snap, Nix and Chocolatey.** Wanted, deferred, and the reasons are recorded
   under "Wave 4".
 - **Authenticode signing.** Deliberately out of the free-tier signing decision.
@@ -51,6 +53,8 @@ Settled during brainstorming, recorded so the plan does not relitigate them:
 | Autostart | Unchecked installer checkbox on Windows; a printed hint everywhere else. Never default-on. |
 | Signing | Free tier only: PyPI OIDC, GitHub build provenance, `checksums.txt`. No GPG, no Authenticode. |
 | Chrome dependency | `optdepends` / `Recommends`, never a hard dependency. |
+| Dependency check | `abt doctor`, one cross-platform implementation. The installer is a caller, not a second copy. |
+| Installing a browser | Only where it needs no elevation from us. Elsewhere `doctor` prints the exact command. |
 | Homebrew tap | Reuse `the-graft-project/homebrew-tap`. |
 | winget fork | Reuse `the-graft-project/winget-pkgs`. |
 | Release ordering | The GitHub release is created first; all six publishers read from it. |
@@ -228,13 +232,62 @@ silent switches `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, package identifier
 but Google Chrome is not in Arch's repositories or Debian's, and Edge counts
 too. A hard dependency would make the package uninstallable on distributions
 where the only Chrome is itself an AUR build. So: `optdepends` on Arch,
-`Recommends:` on deb, and a clear runtime error from `abt` when neither browser
-is found.
+`Recommends:` on deb, and `abt doctor` to say what is actually missing.
+
+**Every channel points at `abt doctor` rather than describing browsers in
+prose.** The Homebrew caveats, the deb `postinstall` and the AUR `.install`
+each print one line telling the user to run it. `doctor` ships in the bundle
+and on PyPI, so it is present wherever the toolkit is.
 
 **Shared repositories need a retry.** The tap and the winget fork are also
 written by Graft's release workflow. Two releases in the same minute would make
 the second push a non-fast-forward rejection. Every push into a shared repo
 does `pull --rebase` and retries twice.
+
+## Dependencies
+
+The bundle carries its own CPython and every Python package, and Playwright's
+Node driver rides inside the wheel. So there is exactly one runtime
+dependency: a browser.
+
+`abt doctor` is the single implementation of that check. It reports which of
+Chrome and Edge are present and where, which one `abt` will default to, and
+whether the profile directory is writable. `--json` serves machine callers,
+and it exits non-zero when no browser is found.
+
+Detection never launches anything:
+
+| Platform | How |
+|---|---|
+| Windows | the `App Paths\chrome.exe` and `App Paths\msedge.exe` registry keys, then well-known paths |
+| macOS | `/Applications/Google Chrome.app` and `/Applications/Microsoft Edge.app`, plus the per-user `~/Applications` equivalents |
+| Linux | `shutil.which` over `google-chrome`, `google-chrome-stable`, `microsoft-edge`, `microsoft-edge-stable` |
+
+**Worth knowing before weighing any of this: Edge ships with Windows 10 and
+11**, and `pwdriver.py` already drives it via `channel="msedge"`. On Windows
+the check nearly always passes, so the Chrome offer serves people who want
+Chrome specifically, not people who have nothing.
+
+### Installing a browser
+
+`abt doctor --install-browser` uses each platform's own package manager, and
+draws its line at elevation:
+
+| Platform | Behaviour |
+|---|---|
+| Windows | **Runs** `winget install -e --id Google.Chrome`. Winget raises its own UAC prompt; the toolkit's installer still never does. Falls back to opening google.com/chrome when winget is absent. |
+| macOS | **Runs** `brew install --cask google-chrome`. Needs no `sudo`. Falls back to opening the download page when Homebrew is absent. |
+| Linux | **Prints** the exact command for the detected package manager — Google's `.deb` for `apt`, Google's repo for `dnf`, an AUR helper for `pacman` — and runs nothing. |
+
+Linux is print-only because every route to Chrome there needs root, and this
+design does not invoke `sudo` on anyone's behalf.
+
+`chromium` is deliberately not accepted as a substitute, despite being the one
+browser that *is* in Debian's, Fedora's and Arch's repositories:
+`launch.py`'s `SUPPORTED_BROWSERS` is `("chrome", "edge")` and `pwdriver.py`
+knows only the `chrome` and `msedge` channels. Installing chromium would
+satisfy a naive check and then fail at launch, which is worse than reporting
+nothing found.
 
 ## Autostart
 
@@ -243,7 +296,7 @@ changed by this design. What changes is that something now offers to call them.
 
 | Channel | Behaviour |
 |---|---|
-| Windows installer, winget | A `[Tasks]` entry, **unchecked**: "Start AI Browser Toolkit at logon". If checked, `[Run]` executes `abt autostart install --browser chrome`. |
+| Windows installer, winget | A `[Tasks]` entry, **unchecked**: "Start AI Browser Toolkit at logon". If checked, `[Run]` executes `abt autostart install --browser <whatever doctor found>`. Hardcoding `chrome` here would write a logon task that fails at every boot on an Edge-only machine. |
 | deb / rpm | `postinstall` prints the command. `prerm` runs `abt autostart uninstall`. |
 | AUR | A `.install` file prints the command. `pre_remove` runs `abt autostart uninstall`. |
 | Homebrew | A `caveats` block prints the command, and warns that uninstall will not remove the agent. |
@@ -360,6 +413,7 @@ before a single account is recovered.
 
 ```
 src/abt/paths.py                              tests/test_paths.py
+src/abt/doctor.py                             tests/test_doctor.py
 packaging/bundle.py                           builds one bundle; runs locally
 packaging/windows/abt.iss
 packaging/nfpm.yaml
@@ -379,7 +433,7 @@ per push.
 
 | Level | What |
 |---|---|
-| Unit | `paths.py` resolution per platform and per XDG variable, with the environment monkeypatched; the `pyproject.toml` escape hatch detected and not detected. |
+| Unit | `paths.py` resolution per platform and per XDG variable, with the environment monkeypatched; the `pyproject.toml` escape hatch detected and not detected. `doctor.py`'s detection and its per-platform install decision, driven from a fake filesystem — including that Linux never runs anything. |
 | Bundle | The four-step smoke test above, on each of the five native runners. |
 | Install | Against a dry-run release: `pipx install`, `scoop install`, `brew install`, a PKGBUILD build inside an `archlinux` container, and `apt install` from Gemfury inside a `debian` container. |
 
@@ -402,7 +456,8 @@ target.
 
 **Wave 2 — Windows.** The Inno Setup script, the standalone `.exe` on the
 release, the winget manifest, and the Scoop bucket. This is the wave that
-delivers the autostart checkbox.
+delivers the autostart checkbox and the dependency page that decides which
+browser that checkbox names.
 
 **Wave 3 — Unix packages.** The Homebrew formula, the AUR `-bin` package, and
 `nfpm` output pushed to Gemfury.

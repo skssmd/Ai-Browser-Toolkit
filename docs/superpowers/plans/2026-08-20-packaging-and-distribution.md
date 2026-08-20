@@ -34,6 +34,8 @@
 - Modified: `src/abt/launch.py` (the `LaunchConfig.profile` default), `src/abt/cli.py` (two `--profile` defaults, two `--log-dir` defaults).
 - Modified: `docs/TODO.md` — replace the parked entry with a pointer to the spec.
 - Modified: `src/abt/pwdriver.py` — translate a missing browser into this toolkit's own error (Task 2b).
+- `src/abt/doctor.py` — find the one runtime dependency, and install it where that needs no elevation. Pure detection, injectable `kind`/`home`/`exists`/`which` (Task 2c).
+- `tests/test_doctor.py` — all three platforms, including that Linux never runs anything.
 
 **Wave 2 — build and PyPI**
 - `src/abt/__main__.py` — makes `python -m abt` work, which the launcher shim depends on.
@@ -632,6 +634,418 @@ git commit -m "Say something useful when there is no browser, and once about aut
 
 ---
 
+### Task 2c: `abt doctor` — find the one dependency, and offer to install it
+
+**Files:**
+- Create: `src/abt/doctor.py`
+- Test: `tests/test_doctor.py`
+- Modify: `src/abt/cli.py` (register the command)
+
+**Interfaces:**
+- Consumes: `paths.default_profile()` from Task 1.
+- Produces:
+  - `Browser` dataclass: `name: str` (`"chrome"` or `"edge"`), `path: Path`.
+  - `find_browsers(kind: str | None = None, home: Path | None = None, exists=None, which=None) -> list[Browser]` — in preference order, Chrome first.
+  - `default_browser(...) -> str | None` — the name `abt` will use, or `None`.
+  - `install_plan(kind: str, which=None) -> InstallPlan` with fields `argv: list[str] | None`, `run: bool`, `message: str`.
+  - `report(...) -> dict` — what `--json` prints.
+
+The `kind` / `home` / `exists` / `which` parameters are injection points so all three platforms are checked from whichever one the tests run on. This is the same shape as `autostart.plan()` and `paths.default_profile()` — read `tests/test_autostart.py` first.
+
+The bundle carries its own CPython and every Python package, and Playwright's Node driver rides inside the wheel. There is exactly one runtime dependency, and this finds it.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+"""The one runtime dependency, found without launching anything.
+
+Detection is pure so all three platforms are checkable from whichever one the
+tests run on -- the same reason `autostart.plan()` takes a `kind`.
+
+The rule worth protecting here is the elevation line: we run a package manager
+only where it needs nothing of us. Every route to Chrome on Linux needs root,
+so Linux prints and runs nothing, and a test says so.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from abt import doctor
+
+
+WINDOWS_CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+WINDOWS_EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+
+
+def fake_fs(*present: Path):
+    found = {str(p) for p in present}
+    return lambda p: str(p) in found
+
+
+def fake_which(*available: str):
+    have = set(available)
+    return lambda name: f"/usr/bin/{name}" if name in have else None
+
+
+def test_nothing_installed_means_no_default(tmp_path):
+    assert doctor.default_browser(
+        kind="linux", home=tmp_path, exists=fake_fs(), which=fake_which()
+    ) is None
+
+
+def test_chrome_is_preferred_over_edge(tmp_path):
+    names = [
+        b.name
+        for b in doctor.find_browsers(
+            kind="linux",
+            home=tmp_path,
+            exists=fake_fs(),
+            which=fake_which("google-chrome", "microsoft-edge-stable"),
+        )
+    ]
+    assert names == ["chrome", "edge"]
+
+
+def test_edge_alone_is_a_valid_default(tmp_path):
+    """Edge ships with Windows. Defaulting to chrome regardless is what makes
+    an installer write a logon task that fails at every boot."""
+    got = doctor.default_browser(
+        kind="windows", home=tmp_path, exists=fake_fs(WINDOWS_EDGE), which=fake_which()
+    )
+    assert got == "edge"
+
+
+def test_linux_finds_either_edge_binary_name(tmp_path):
+    for binary in ("microsoft-edge", "microsoft-edge-stable"):
+        got = doctor.default_browser(
+            kind="linux", home=tmp_path, exists=fake_fs(), which=fake_which(binary)
+        )
+        assert got == "edge", binary
+
+
+def test_chromium_is_not_accepted_as_chrome(tmp_path):
+    """chromium IS in Debian's, Fedora's and Arch's repos, which makes it the
+    tempting answer. But SUPPORTED_BROWSERS is (chrome, edge) and pwdriver
+    knows only the chrome and msedge channels -- accepting it would pass the
+    check and then fail at launch."""
+    got = doctor.default_browser(
+        kind="linux", home=tmp_path, exists=fake_fs(), which=fake_which("chromium")
+    )
+    assert got is None
+
+
+def test_windows_installs_through_winget():
+    plan = doctor.install_plan("windows", which=fake_which("winget"))
+    assert plan.run is True
+    assert plan.argv[:2] == ["winget", "install"]
+    assert "Google.Chrome" in plan.argv
+
+
+def test_windows_without_winget_falls_back_to_the_download_page():
+    plan = doctor.install_plan("windows", which=fake_which())
+    assert plan.run is False
+    assert "google.com/chrome" in plan.message
+
+
+def test_macos_installs_through_a_brew_cask():
+    plan = doctor.install_plan("macos", which=fake_which("brew"))
+    assert plan.run is True
+    assert plan.argv == ["brew", "install", "--cask", "google-chrome"]
+
+
+@pytest.mark.parametrize("manager", ["apt", "dnf", "pacman"])
+def test_linux_never_runs_anything(manager):
+    """Every route to Chrome on Linux needs root, and this design does not
+    invoke sudo on anyone's behalf."""
+    plan = doctor.install_plan("linux", which=fake_which(manager))
+    assert plan.run is False
+    assert plan.argv is None
+    assert plan.message.strip() != ""
+
+
+def test_linux_names_the_right_manager():
+    assert "dpkg" in doctor.install_plan("linux", which=fake_which("apt")).message
+    assert "dnf" in doctor.install_plan("linux", which=fake_which("dnf")).message
+
+
+def test_report_is_json_serialisable(tmp_path):
+    import json
+
+    got = doctor.report(
+        kind="linux", home=tmp_path, exists=fake_fs(), which=fake_which("google-chrome")
+    )
+    json.dumps(got)
+    assert got["default_browser"] == "chrome"
+    assert got["browsers"][0]["name"] == "chrome"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/Scripts/python -m pytest tests/test_doctor.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'abt.doctor'`
+
+- [ ] **Step 3: Write `src/abt/doctor.py`**
+
+```python
+"""What this toolkit needs that it cannot carry: a browser.
+
+The bundle ships its own CPython and every Python package, and Playwright's
+Node driver rides inside the wheel. So there is exactly one runtime
+dependency, and this is where it is found and -- sometimes -- installed.
+
+Detection never launches anything: starting Chrome to find out whether Chrome
+exists costs two minutes on a persistent profile.
+
+Pure, with `kind`, `home`, `exists` and `which` injectable, so all three
+platforms are checked from whichever one the tests run on. Same shape as
+`autostart.plan()`, and for the same reason.
+
+**The elevation rule.** `--install-browser` runs a package manager only where
+it needs nothing of us: winget on Windows raises its own UAC prompt, and a
+Homebrew cask on macOS needs no `sudo` at all. Every route to Chrome on Linux
+needs root, so there we print the command and run nothing.
+"""
+
+from __future__ import annotations
+
+import os
+import platform
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import paths
+
+CHROME_URL = "https://www.google.com/chrome/"
+
+# Order is preference order: chrome first, because it is `abt serve`'s default
+# and the channel pwdriver reaches for.
+_WINDOWS = (
+    ("chrome", r"Google\Chrome\Application\chrome.exe"),
+    ("edge", r"Microsoft\Edge\Application\msedge.exe"),
+)
+_MACOS = (
+    ("chrome", "Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ("edge", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+)
+# chromium is deliberately absent -- see the test that says so.
+_LINUX = (
+    ("chrome", ("google-chrome", "google-chrome-stable")),
+    ("edge", ("microsoft-edge", "microsoft-edge-stable")),
+)
+
+
+@dataclass(frozen=True)
+class Browser:
+    name: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class InstallPlan:
+    argv: list[str] | None
+    run: bool
+    message: str
+
+
+def _defaults(kind, home, exists, which):
+    return (
+        kind or paths.current_kind(),
+        Path(home) if home is not None else Path.home(),
+        exists or (lambda p: Path(p).exists()),
+        which or shutil.which,
+    )
+
+
+def find_browsers(kind=None, home=None, exists=None, which=None) -> list[Browser]:
+    kind, home, exists, which = _defaults(kind, home, exists, which)
+    found: list[Browser] = []
+
+    if kind == "windows":
+        roots = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", str(home / "AppData" / "Local")),
+        ]
+        for name, tail in _WINDOWS:
+            for root in roots:
+                candidate = Path(root) / tail
+                if exists(candidate):
+                    found.append(Browser(name, candidate))
+                    break
+    elif kind == "macos":
+        roots = [Path("/Applications"), home / "Applications"]
+        for name, tail in _MACOS:
+            for root in roots:
+                candidate = root / tail
+                if exists(candidate):
+                    found.append(Browser(name, candidate))
+                    break
+    else:
+        for name, binaries in _LINUX:
+            for binary in binaries:
+                hit = which(binary)
+                if hit:
+                    found.append(Browser(name, Path(hit)))
+                    break
+
+    return found
+
+
+def default_browser(kind=None, home=None, exists=None, which=None) -> str | None:
+    browsers = find_browsers(kind, home, exists, which)
+    return browsers[0].name if browsers else None
+
+
+def install_plan(kind: str, which=None) -> InstallPlan:
+    which = which or shutil.which
+
+    if kind == "windows":
+        if which("winget"):
+            return InstallPlan(
+                argv=["winget", "install", "-e", "--id", "Google.Chrome"],
+                run=True,
+                message="Installing Google Chrome with winget.",
+            )
+        return InstallPlan(
+            argv=None,
+            run=False,
+            message=f"winget is not available. Install Chrome from {CHROME_URL}",
+        )
+
+    if kind == "macos":
+        if which("brew"):
+            return InstallPlan(
+                argv=["brew", "install", "--cask", "google-chrome"],
+                run=True,
+                message="Installing Google Chrome with Homebrew.",
+            )
+        return InstallPlan(
+            argv=None,
+            run=False,
+            message=f"Homebrew is not available. Install Chrome from {CHROME_URL}",
+        )
+
+    # Linux: print, never run. Every one of these needs root.
+    if which("apt") or which("apt-get"):
+        how = (
+            "  wget https://dl.google.com/linux/direct/"
+            "google-chrome-stable_current_amd64.deb\n"
+            "  sudo dpkg -i google-chrome-stable_current_amd64.deb"
+        )
+    elif which("dnf"):
+        how = "  sudo dnf install fedora-workstation-repositories\n  sudo dnf install google-chrome-stable"
+    elif which("pacman"):
+        how = "  yay -S google-chrome    # Chrome is AUR-only on Arch"
+    else:
+        how = f"  Install Chrome from {CHROME_URL}"
+    return InstallPlan(
+        argv=None,
+        run=False,
+        message="Installing Chrome on Linux needs root, so run this yourself:\n" + how,
+    )
+
+
+def report(kind=None, home=None, exists=None, which=None) -> dict:
+    kind, home, exists, which = _defaults(kind, home, exists, which)
+    browsers = find_browsers(kind, home, exists, which)
+    profile = paths.default_profile()
+    return {
+        "platform": kind,
+        "browsers": [{"name": b.name, "path": str(b.path)} for b in browsers],
+        "default_browser": browsers[0].name if browsers else None,
+        "profile": str(profile),
+        "profile_writable": _writable(profile),
+    }
+
+
+def _writable(profile: Path) -> bool:
+    probe = profile if profile.exists() else profile.parent
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    return os.access(probe, os.W_OK)
+```
+
+- [ ] **Step 4: Register the command in `cli.py`**
+
+```python
+@app.command()
+def doctor(
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    print_browser: bool = typer.Option(
+        False,
+        "--print-browser",
+        help="Print just the browser name and nothing else. For the Windows "
+        "installer, whose Pascal has no JSON parser.",
+    ),
+    install_browser: bool = typer.Option(
+        False,
+        "--install-browser",
+        help="Install Google Chrome with this platform's package manager. "
+        "Runs nothing on Linux, where it would need root -- prints the "
+        "command instead.",
+    ),
+) -> None:
+    """Check the one thing this toolkit needs and cannot carry: a browser."""
+    from . import doctor as doc
+
+    info = doc.report()
+
+    if install_browser and not info["browsers"]:
+        plan = doc.install_plan(info["platform"])
+        typer.echo(plan.message)
+        if plan.run and plan.argv:
+            subprocess.run(plan.argv, check=False)
+            info = doc.report()
+
+    if print_browser:
+        typer.echo(info["default_browser"] or "")
+    elif json_out:
+        typer.echo(json.dumps(info, indent=2))
+    else:
+        if info["browsers"]:
+            for b in info["browsers"]:
+                typer.echo(f"  {b['name']:<7} {b['path']}")
+            typer.echo(f"\nabt will use: {info['default_browser']}")
+        else:
+            typer.echo("No supported browser found. This toolkit drives an")
+            typer.echo("existing Google Chrome or Microsoft Edge and bundles neither.")
+            typer.echo("\n" + doc.install_plan(info["platform"]).message)
+        typer.echo(f"\nprofile: {info['profile']}")
+        if not info["profile_writable"]:
+            typer.echo("  WARNING: that directory is not writable.")
+
+    raise typer.Exit(0 if info["browsers"] else 1)
+```
+
+Add `import json` and `import subprocess` to `cli.py` if they are not already imported.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `.venv/Scripts/python -m pytest tests/test_doctor.py -v`
+Expected: PASS.
+
+- [ ] **Step 6: Run it against this machine**
+
+```bash
+.venv/Scripts/abt doctor
+.venv/Scripts/abt doctor --json
+```
+
+Expected: your real Chrome is listed with its real path, `abt will use: chrome`, and the profile line points at this checkout's `profiles\default` — the escape hatch from Task 1 still holding.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/abt/doctor.py tests/test_doctor.py src/abt/cli.py
+git commit -m "Find the one dependency this toolkit cannot carry"
+```
+
+---
+
 # Wave 2 — Build and PyPI
 
 Needs no repository secrets. `GITHUB_TOKEN` is issued automatically; PyPI Trusted Publishing is configuration on PyPI's side.
@@ -1155,6 +1569,12 @@ fi
 
 "$abt" --version
 
+# Proves doctor works from inside a bundle, where paths.py and the relocated
+# interpreter are both in play. Exit code is ignored on purpose: doctor exits
+# non-zero when no browser is present, and whether a runner has one is not
+# what this test is about.
+"$abt" doctor --json || true
+
 port=8${RANDOM:-765}
 "$abt" serve --browser chrome --no-start-browser --port "$port" >smoke.log 2>&1 &
 
@@ -1311,7 +1731,12 @@ the whole release; the release and its assets already exist.
 
     pipx install aibrowsertoolkit
     abt --version
+    abt doctor        # finds the browser, and shows where the profile landed
 ```
+
+The `abt doctor` line is the one worth running on every channel: it prints the
+resolved profile directory, which is the thing most likely to be wrong in a
+freshly packaged install.
 
 - [ ] **Step 3: Tag a real release and verify from PyPI**
 
@@ -1382,13 +1807,21 @@ Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubd
 ; Unchecked, deliberately. The opt-in rule is recorded in autostart.py.
 Name: "autostart"; Description: "Start {#AppName} at logon"; Flags: unchecked
 Name: "addtopath"; Description: "Add abt to my PATH"
+; Only offered when the dependency check found nothing. Edge ships with
+; Windows, so this box is usually not shown at all.
+Name: "chrome"; Description: "Install Google Chrome (via winget)"; \
+    Flags: unchecked; Check: NoBrowserFound
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
     ValueData: "{olddata};{app}"; Check: NeedsAddPath('{app}'); Tasks: addtopath
 
 [Run]
-Filename: "{app}\{#AppExe}"; Parameters: "autostart install --browser chrome"; \
+Filename: "{app}\{#AppExe}"; Parameters: "doctor --install-browser"; \
+    Tasks: chrome; StatusMsg: "Installing Google Chrome..."
+; --browser is whatever doctor found, never a hardcoded 'chrome'. On an
+; Edge-only machine a hardcoded one writes a logon task that fails every boot.
+Filename: "{app}\{#AppExe}"; Parameters: "autostart install --browser {code:DetectedBrowser}"; \
     Tasks: autostart; Flags: runhidden; StatusMsg: "Registering the logon task..."
 
 [UninstallRun]
@@ -1397,6 +1830,10 @@ Filename: "{app}\{#AppExe}"; Parameters: "autostart uninstall"; \
     Flags: runhidden; RunOnceId: "RemoveAutostart"
 
 [Code]
+var
+  Detected: string;
+  DetectionDone: Boolean;
+
 function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
@@ -1408,7 +1845,54 @@ begin
   end;
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
 end;
+
+// The same detection `abt doctor` does, rather than a second copy of it in
+// Pascal. Reading App Paths here would drift from doctor.py the first time
+// either changed.
+procedure Detect;
+var
+  Tmp: string;
+  Code: Integer;
+  Lines: TArrayOfString;
+begin
+  // Cache only a SUCCESSFUL detection. This runs once on the wizard page --
+  // where {app}\abt.cmd does not exist yet and it necessarily fails -- and
+  // again from [Run] after [Files] has copied it. Caching the first, empty
+  // answer would make every install register a logon task for the wrong
+  // browser.
+  if DetectionDone then exit;
+  Detected := '';
+  Tmp := ExpandConstant('{tmp}\browser.txt');
+  // Inno cannot capture stdout, so route it through cmd into a file. This is
+  // why doctor grew --print-browser: one word, no JSON to parse in Pascal.
+  if Exec(ExpandConstant('{cmd}'),
+          '/C ""' + ExpandConstant('{app}\{#AppExe}') + '" doctor --print-browser > "' + Tmp + '""',
+          '', SW_HIDE, ewWaitUntilTerminated, Code) then
+  begin
+    if LoadStringsFromFile(Tmp, Lines) and (GetArrayLength(Lines) > 0) then
+      Detected := Trim(Lines[0]);
+  end;
+  if Detected <> '' then
+    DetectionDone := True;
+end;
+
+function DetectedBrowser(Param: string): string;
+begin
+  Detect;
+  if Detected = '' then
+    Result := 'chrome'   // nothing found; the chrome task will have installed one
+  else
+    Result := Detected;
+end;
+
+function NoBrowserFound: Boolean;
+begin
+  Detect;
+  Result := Detected = '';
+end;
 ```
+
+**Ordering note the implementer must not get wrong:** `Detect` shells out to `{app}\abt.cmd`, which only exists once `[Files]` has been copied. `[Tasks]` checks run on the *wizard* page, before that. So the `chrome` task's `Check: NoBrowserFound` cannot use the installed copy — point it at the payload inside `{src}` if running from an extracted directory, or accept that the box shows whenever detection fails and let `doctor --install-browser` no-op when a browser is already present. **Take the second option**: `abt doctor --install-browser` already checks `info["browsers"]` first and does nothing when one is found, so a spuriously-shown checkbox is harmless, whereas a missing one is not.
 
 - [ ] **Step 2: Add the `installer` job**
 
@@ -1453,8 +1937,9 @@ Download the `.exe` from a dry run and check, in order:
 2. A new terminal resolves `abt --version`.
 3. With the box left unchecked, `abt autostart` reports nothing installed — confirm in Task Scheduler that no "AI Browser Toolkit server" task exists.
 4. Re-run the installer with the box **checked**, confirm the task appears, then uninstall and confirm the task is gone.
+5. Open the registered task's action and confirm the `--browser` argument matches what `abt doctor --print-browser` says on that machine.
 
-Point 4 is the one that regresses silently. Do not skip it.
+Points 4 and 5 are the ones that regress silently. Do not skip them. Point 5 is only fully exercised on a machine without Chrome — if you have no such machine, temporarily rename your Chrome directory, run `abt doctor` to confirm it now reports `edge`, and install again.
 
 - [ ] **Step 4: Commit**
 
@@ -1517,7 +2002,8 @@ The manifest's installer metadata (`InstallerType: inno`, `Scope: user`, silent 
     },
     "bin": "abt.cmd",
     "notes": [
-        "Needs Google Chrome or Microsoft Edge installed.",
+        "Check what this needs: abt doctor",
+        "It drives an existing Chrome or Edge and bundles neither.",
         "To start the server at logon: abt autostart install --browser chrome"
     ],
     "checkver": {
@@ -1634,7 +2120,11 @@ class Aibrowsertoolkit < Formula
 
   def caveats
     <<~EOS
-      Needs Google Chrome or Microsoft Edge installed; no browser is bundled.
+      Check what this needs and whether you have it:
+        abt doctor
+
+      It drives an existing Google Chrome or Microsoft Edge and bundles
+      neither. `abt doctor --install-browser` will fetch Chrome via Homebrew.
 
       To start the server at logon:
         abt autostart install --browser chrome
@@ -1765,7 +2255,12 @@ The tarball's top-level directory is named for the bundle target, and `CARCH` is
 ```bash
 post_install() {
     cat <<'EOF'
-Needs Google Chrome or Microsoft Edge installed; no browser is bundled.
+Check what this needs and whether you have it:
+    abt doctor
+
+It drives an existing Google Chrome or Microsoft Edge and bundles neither.
+Chrome is AUR-only on Arch, so `abt doctor` prints the command rather than
+running it -- installing it needs root, and this package will not ask for it.
 
 To start the server at logon:
     abt autostart install --browser chrome
@@ -1888,7 +2383,12 @@ scripts:
 cat <<'EOF'
 AI Browser Toolkit installed.
 
-Needs Google Chrome or Microsoft Edge; no browser is bundled.
+Check what it needs and whether you have it:
+    abt doctor
+
+It drives an existing Google Chrome or Microsoft Edge and bundles neither.
+On Linux `abt doctor` prints the install command rather than running it --
+every route to Chrome here needs root, and this package will not ask for it.
 
 To start the server at logon:
     abt autostart install --browser chrome
