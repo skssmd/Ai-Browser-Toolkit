@@ -39,7 +39,7 @@
 
 **Wave 2 — build and PyPI**
 - `src/abt/__main__.py` — makes `python -m abt` work, which the launcher shim depends on.
-- `packaging/__init__.py` — empty; makes `packaging.bundle` importable by the tests.
+- **No `packaging/__init__.py`.** `packaging` is a real installed distribution that pip and setuptools import, and `python -m pytest` puts the repo root on `sys.path` — a top-level `packaging` package would shadow it for the whole session. `tests/test_bundle.py` loads `bundle.py` by file path instead.
 - `packaging/bundle.py` — builds one bundle. Runs on a laptop, not only in CI.
 - `packaging/smoke.sh` — proves a built bundle runs. The reason the matrix is native.
 - `tests/test_bundle.py` — target table, naming, and shim content. Not the download.
@@ -1144,7 +1144,7 @@ def test_unix_shim_lives_in_bin_and_dereferences_symlinks():
 Run: `.venv/Scripts/python -m pytest tests/test_bundle.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'packaging.bundle'`
 
-If the stdlib-adjacent `packaging` distribution shadows the local directory, add `packaging/__init__.py` (empty) and ensure the repo root is on `sys.path` — `tests/conftest.py` already runs from the repo root, so an empty `__init__.py` is sufficient.
+Do **not** add `packaging/__init__.py` to fix this. `packaging` is a real installed distribution and the repo root is on `sys.path` under `python -m pytest`, so the package would shadow it for pip and setuptools. Load the module by file path with `importlib.util.spec_from_file_location`, as `tests/test_bundle.py` does.
 
 - [ ] **Step 3: Write `src/abt/__main__.py`**
 
@@ -2497,3 +2497,42 @@ git commit -m "Push deb, rpm and apk to Gemfury"
 ## Deferred: Snap, Nix, Chocolatey
 
 Not tasks in this plan, recorded so the reasons are not rediscovered. Snap needs store credentials and passes a review — Graft's `snapcrafts:` block is commented out. Nix means a pull request into `nixpkgs` reviewed by strangers on their schedule. Chocolatey has a moderation queue and in practice expects an Authenticode-signed installer, which the free-tier signing decision does not provide. All three are wanted; none belongs in a first release that has not shipped once cleanly.
+
+---
+
+## Execution log
+
+Wave 1 and Task 3 executed 2026-08-20, straight onto `main`. What the plan got
+wrong, found only by running it — recorded so the corrections are not undone:
+
+1. **`packaging/__init__.py` would shadow the real `packaging` distribution.**
+   Repo root is on `sys.path` under `python -m pytest`. Tests load `bundle.py`
+   by file path instead.
+2. **`uv python install --install-dir` writes more than an interpreter.** It
+   leaves `.gitignore`, `.lock`, `.temp` and a minor-version *alias*
+   (`cpython-3.13-…`) beside the concrete `cpython-3.13.15-…`. "First
+   directory" picked `.temp` and produced an empty `python/`; sorting would
+   have picked the alias, which is a link. `_fetch_python` now installs to a
+   scratch dir and moves only the concretely-versioned one.
+3. **uv stamps managed interpreters `EXTERNALLY-MANAGED`**, which blocks the
+   install into a copy already moved out of uv's control. The marker is
+   removed rather than worked around with `--break-system-packages`.
+4. **`abt --version` did not exist**, though `smoke.sh`, the Inno
+   verification, the Homebrew `test do` block and `docs/packaging.md` all
+   assume it. Added as an eager `--version` on the app callback.
+5. **`port=8${RANDOM:-765}` in `smoke.sh` is wrong twice**: it concatenates
+   (8 + 32767 = port 832767, which `bind()` rejects), and under `dash`
+   `$RANDOM` is unset so it falls back to 8765 and collides with a running
+   server. Now derived from `$$`.
+
+Verified by hand on `windows-x86_64`: built in the repo, unpacked in an
+unrelated directory, `abt --version` and `abt doctor` both answered there,
+the profile resolved to `%LOCALAPPDATA%\AIBrowserToolkit\profiles\default`
+rather than the working directory, and the server answered `/status` in six
+seconds. Bundle size 78 MB, against the 55–70 MB the design estimated.
+
+**Unrelated pre-existing bug, noticed while restarting:** `abt shutdown`
+closes the Playwright thread pool but leaves uvicorn listening for a while.
+During that window `/status` returns 500 with `cannot schedule new futures
+after shutdown`, and `start-server.sh` sees a live port and no-ops — so a
+restart silently leaves the *old* code serving. Not touched here.
