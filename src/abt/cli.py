@@ -151,7 +151,7 @@ def serve(
         help="Stop capturing once one session's frames reach this size.",
     ),
     engine: str = typer.Option(
-        "selenium",
+        "playwright",
         "--engine",
         help="Which driver backs the browser: selenium (default) or playwright. "
         "Both answer every op identically -- the whole suite passes on each -- "
@@ -630,7 +630,7 @@ def autostart_install(
         Path("./logs"), "--log-dir", help="Where session logs are written."
     ),
     engine: str = typer.Option(
-        "selenium", "--engine", help="Driver backing the browser."
+        "playwright", "--engine", help="Driver backing the browser."
     ),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
     dry_run: bool = typer.Option(

@@ -113,7 +113,7 @@ def serve_argv(
     browser: str,
     profile: Path,
     log_dir: Path,
-    engine: str = "selenium",
+    engine: str = "playwright",
     headless: bool = False,
     exe: str | None = None,
 ) -> list[str]:
@@ -204,7 +204,7 @@ def plan(
     browser: str,
     profile: Path,
     log_dir: Path,
-    engine: str = "selenium",
+    engine: str = "playwright",
     headless: bool = False,
     kind: str | None = None,
     exe: str | None = None,

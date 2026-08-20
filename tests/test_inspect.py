@@ -224,3 +224,166 @@ def test_status_answers_even_when_the_browser_is_gone(clean_session):
 
     assert body["ok"] is False
     assert body["error"]["type"] == "browser_dead"
+
+
+# --- what only a browser-level network log can answer -------------------------
+#
+# Resource Timing is a page API. Everything below is a question it cannot
+# answer at all, which is why these are the reason the Playwright backend
+# exists rather than a nicety on top of it.
+
+
+def _native(client) -> bool:
+    """Whether this engine keeps its own network log."""
+    session = client.app.state.session if hasattr(client, "app") else None
+    return session is not None and hasattr(session.driver, "network_log")
+
+
+def _post(client, **payload):
+    return client.post("/command", json=payload).json()["result"]
+
+
+def test_a_cors_blocked_request_is_still_reported_as_a_failure(client, base_url, other_origin):
+    """The status is genuinely unavailable, but the attempt is not.
+
+    Resource Timing records what loaded, so a blocked request leaves no entry
+    at all and the failure is invisible. The browser's own events at least say
+    it happened and why.
+    """
+    if not _native(client):
+        pytest.skip("native log only")
+    _post(client, op="goto", url=f"{base_url}/cards.html")
+    _post(
+        client,
+        op="run_js",
+        script=f"return fetch('{other_origin}/blocked-xyz')"
+        ".then(function () { return 1; })"
+        ".catch(function () { return 1; });",
+    )
+    rows = _post(client, op="read_network", failures_only=True, pattern="blocked-xyz")
+    assert rows["requests"], "a blocked request left no trace"
+    assert rows["requests"][-1].get("error")
+
+
+def test_the_method_is_recorded(client, base_url):
+    """Not a field Resource Timing has. A GET and a POST to one URL are
+    different events, and telling them apart used to be impossible."""
+    if not _native(client):
+        pytest.skip("Resource Timing has no method")
+    _post(client, op="goto", url=f"{base_url}/cards.html")
+    _post(
+        client,
+        op="run_js",
+        script="return fetch('/echo-xyz', {method: 'POST', body: 'x'})"
+        ".then(function () { return 1; })"
+        ".catch(function () { return 1; });",
+    )
+    rows = _post(client, op="read_network", pattern="echo-xyz")["requests"]
+    assert rows and rows[-1]["method"] == "POST"
+
+
+def test_a_request_that_never_got_a_response_is_reported(client, base_url):
+    """Resource Timing records what *loaded*. A refused connection produces no
+    entry at all, so the failure is invisible -- and a request that never lands
+    is precisely the one worth knowing about.
+
+    It arrives with `status: null`, which `failures_only` already treats as a
+    failure, so it surfaces where a caller looking for trouble is looking.
+    """
+    if not _native(client):
+        pytest.skip("Resource Timing cannot see a refused connection")
+    _post(client, op="goto", url=f"{base_url}/cards.html")
+    _post(
+        client,
+        op="run_js",
+        script="return fetch('http://127.0.0.1:1/gone-xyz')"
+        ".then(function () { return 1; })"
+        ".catch(function () { return 1; });",
+    )
+    rows = _post(client, op="read_network", failures_only=True, pattern="gone-xyz")
+    assert rows["requests"], "a refused connection left no trace"
+    entry = rows["requests"][-1]
+    assert entry["status"] is None
+    assert entry.get("error")
+
+
+def test_the_log_is_cleared_when_the_page_navigates(client, base_url):
+    """Resource Timing is per document, so `read_network` has always meant
+    "this page". Keeping entries across a navigation would quietly change what
+    the op answers."""
+    if not _native(client):
+        pytest.skip("native log only")
+    _post(client, op="goto", url=f"{base_url}/cards.html")
+    _post(client, op="goto", url=f"{base_url}/links.html")
+    urls = [r["url"] for r in _post(client, op="read_network")["requests"]]
+    assert not any(u.endswith("cards.html") for u in urls)
+
+
+# --- credentials must not leave in a URL --------------------------------------
+#
+# `diff.py` already refuses to capture password field values, for the stated
+# reason that diffs get written to session logs. Network rows go to the same
+# file and are handed to a model besides. Watching the browser's own events
+# sees more requests than the page ever did, so the rule matters more, not less.
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (
+            "https://api.example.com/v1/me?access_token=ya29.SECRET&pretty=1",
+            "https://api.example.com/v1/me?access_token=REDACTED&pretty=1",
+        ),
+        (
+            "https://cdn.example.com/f.pdf?sig=abc&Expires=99",
+            "https://cdn.example.com/f.pdf?sig=REDACTED&Expires=99",
+        ),
+        (
+            "https://example.com/cb?code=4/0AY0e&scope=email",
+            "https://example.com/cb?code=REDACTED&scope=email",
+        ),
+        ("https://user:hunter2@example.com/x", "https://user:REDACTED@example.com/x"),
+    ],
+)
+def test_a_credential_in_a_url_is_replaced(raw, expected):
+    from abt.ops.inspect import redact
+
+    assert redact(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://example.com/plain?page=2&q=hello",
+        "https://example.com/no-query",
+        "https://example.com/path/with/segments",
+    ],
+)
+def test_an_ordinary_url_is_untouched(raw):
+    """Redaction that rewrites innocent URLs would make every diagnosis harder
+    and every log harder to trust."""
+    from abt.ops.inspect import redact
+
+    assert redact(raw) == raw
+
+
+def test_the_status_survives_redaction(client, base_url):
+    """The credential goes, the diagnosis stays: path, status and method are
+    what a failure is read from, and none of them are secret."""
+    if not _native(client):
+        pytest.skip("native log only")
+    _post(client, op="goto", url=f"{base_url}/cards.html")
+    _post(
+        client,
+        op="run_js",
+        script="return fetch('/guarded-xyz?token=SECRETVALUE&page=2')"
+        ".then(function () { return 1; })"
+        ".catch(function () { return 1; });",
+    )
+    rows = _post(client, op="read_network", pattern="guarded-xyz")["requests"]
+    assert rows, "the request was not recorded"
+    row = rows[-1]
+    assert "SECRETVALUE" not in row["url"]
+    assert "token=REDACTED" in row["url"]
+    assert "page=2" in row["url"]
+    assert row["status"] == 404

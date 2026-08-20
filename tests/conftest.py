@@ -82,7 +82,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--engine",
         action="store",
-        default="selenium",
+        default="playwright",
         choices=("selenium", "playwright"),
         help="which driver the browser-backed fixtures use",
     )

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import base64
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -65,6 +66,10 @@ from .engine import (
 # every script in the codebase runs unedited. Proven byte-identical against
 # Selenium on 11 pages up to 390KB -- see docs/playwright-spike-2026-08-19.md.
 WRAP = "(a) => (function(){%s}).apply(null, a)"
+
+# Network entries kept per page. A busy SPA makes hundreds; the tail is what
+# anyone asks for, and `read_network` already returns the last N.
+MAX_NETWORK_ENTRIES = 500
 
 # Whether a script's result has any DOM node in it, answered in the page.
 #
@@ -538,6 +543,14 @@ class PlaywrightDriver:
         self._action_timeout = action_timeout
         self._closed = False
         self._cdp: dict[int, object] = {}
+        self._net: dict[int, list[dict]] = {}
+        self._net_started: dict[int, float] = {}
+        # A failure that follows a response annotates that row rather than
+        # adding a second one. Matched on url+method, not on the Request
+        # object: Playwright hands out a *different* wrapper per event, so
+        # keying on identity silently never matched and every ORB-blocked or
+        # CORS-blocked request was logged twice -- once with its real status,
+        # once with None, the useless row last. Same trap as element handles.
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
@@ -580,6 +593,11 @@ class PlaywrightDriver:
         self._context.set_default_timeout(self._action_timeout * 1000)
         self._pages = list(self._context.pages) or [self._context.new_page()]
         self._active = 0
+        # Every page, including ones the site opens itself -- a target=_blank
+        # popup makes requests too, and it is usually the interesting one.
+        self._context.on("page", self._watch)
+        for page in self._pages:
+            self._watch(page)
 
     # -- pages -------------------------------------------------------------
     @property
@@ -595,9 +613,134 @@ class PlaywrightDriver:
         """Whatever `find`/`evaluate` should run against right now."""
         return self._frame if self._frame is not None else self._page
 
+    # -- network ------------------------------------------------------------
+    #
+    # The first capability this engine has that the other cannot reach.
+    #
+    # Resource Timing, which is what `read_network` used on both engines until
+    # now, is a *page* API: a cross-origin response without Timing-Allow-Origin
+    # reports `status: null` and `opaque: true`, because the browser genuinely
+    # will not tell the page. Subscribing to the browser's own events has no
+    # such limit -- the status is known for every response, cross-origin or not,
+    # and a request that never got a response at all (DNS failure, blocked,
+    # aborted) is reported instead of being invisible.
+    #
+    # Two things it gives up, stated rather than hidden:
+    #
+    #   `bytes` is best effort. Resource Timing knows `encodedBodySize`
+    #   exactly; a response event knows only what the headers say, and
+    #   content-length is absent on anything chunked or compressed -- measured,
+    #   not assumed. Reading the body to find out costs a round trip per
+    #   request and can fail outright on a redirect or a stream.
+    #
+    #   `ms` is measured here rather than read. `request.timing.responseEnd` is
+    #   -1 at the moment the response arrives, because the timing is not
+    #   complete yet, so the elapsed time is taken between the request and
+    #   response events instead.
+    #
+    # Scoped per page and cleared when the page navigates, which is what
+    # Resource Timing did implicitly. Keeping everything across navigations
+    # would quietly change what `read_network` means.
+
+    def _watch(self, page) -> None:
+        if id(page) in self._net:
+            return
+        self._net[id(page)] = []
+
+        def on_request(request) -> None:
+            self._net_started[id(request)] = time.monotonic()
+
+        def on_response(response) -> None:
+            request = response.request
+            started = self._net_started.pop(id(request), None)
+            entry = {
+                "url": response.url,
+                "kind": request.resource_type,
+                "method": request.method,
+                "status": response.status,
+                "ms": _elapsed_ms(started),
+                "bytes": _content_length(response),
+            }
+            self._push(page, entry)
+
+        def on_failed(request) -> None:
+            started = self._net_started.pop(id(request), None)
+            reason = (request.failure or "request failed")[:200]
+
+            # One request, one row. A cross-origin response the server
+            # answered and the browser then blocked fires *both* events -- the
+            # real status, then the failure -- and logging each reports one
+            # request twice, burying the informative row behind the useless
+            # one. Annotate what is already there: the status the server
+            # returned, plus why the page never saw it.
+            existing = self._recent(page, request.url, request.method)
+            if existing is not None:
+                existing["error"] = reason
+                return
+
+            # No response at all: refused, DNS failure, aborted. Status stays
+            # None, which `failures_only` already treats as a failure, so it
+            # surfaces where a caller looking for trouble is already looking.
+            self._push(
+                page,
+                {
+                    "url": request.url,
+                    "kind": request.resource_type,
+                    "method": request.method,
+                    "status": None,
+                    "ms": _elapsed_ms(started),
+                    "bytes": None,
+                    "error": reason,
+                },
+            )
+
+        def on_navigated(frame) -> None:
+            if frame == page.main_frame:
+                self._net[id(page)] = []
+                self._net_started.clear()
+
+        page.on("request", on_request)
+        page.on("response", on_response)
+        page.on("requestfailed", on_failed)
+        page.on("framenavigated", on_navigated)
+
+    def _recent(self, page, url: str, method: str) -> dict | None:
+        """The newest row for this request that has not already failed.
+
+        Bounded, because a page that requests one URL hundreds of times should
+        not make each failure walk the whole log.
+        """
+        log = self._net.get(id(page), [])
+        for entry in reversed(log[-50:]):
+            if (
+                entry.get("url") == url
+                and entry.get("method") == method
+                and "error" not in entry
+            ):
+                return entry
+        return None
+
+    def _push(self, page, entry: dict) -> None:
+        log = self._net.setdefault(id(page), [])
+        log.append(entry)
+        # An unattended agent on a busy SPA would otherwise grow this without
+        # bound. The tail is what anyone asks for.
+        if len(log) > MAX_NETWORK_ENTRIES:
+            del log[: len(log) - MAX_NETWORK_ENTRIES]
+
+    def network_log(self) -> list[dict]:
+        """Requests this page has made since it last navigated.
+
+        Presence of this method is what `read_network` probes to decide whether
+        the engine can answer natively -- the Selenium driver has no such
+        method and falls back to Resource Timing.
+        """
+        return list(self._call(lambda: self._net.get(id(self._page), [])))
+
     def _open_page(self):
         def work():
             page = self._context.new_page()
+            self._watch(page)
             self._pages.append(page)
             self._active = len(self._pages) - 1
             self._frame = None
@@ -827,6 +970,28 @@ def _as_script_error(exc: BaseException) -> BaseException:
     if isinstance(mapped, EngineError) and type(mapped) is EngineError:
         return ScriptError(str(exc))
     return mapped
+
+
+def _elapsed_ms(started: float | None) -> int | None:
+    if started is None:
+        return None
+    return int((time.monotonic() - started) * 1000)
+
+
+def _content_length(response) -> int | None:
+    """Bytes, when the headers admit to a number.
+
+    Absent on anything chunked or compressed, which is most of the modern web,
+    so this is genuinely often None rather than nominally so.
+    """
+    try:
+        raw = response.header_value("content-length")
+    except Exception:
+        return None
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _split_keys(text: str):

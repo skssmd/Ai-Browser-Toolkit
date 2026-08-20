@@ -1,6 +1,6 @@
 # aibrowsertoolkit
 
-A Selenium-backed HTTP server that lets an AI agent drive a real browser — **Chrome or Edge** — by
+An HTTP server that lets an AI agent drive a real browser — **Chrome or Edge** — by
 sending JSON. The server process is the loop: it opens the chosen browser with a persistent
 profile, stays up waiting for commands, and only stops when you send `shutdown`.
 
@@ -876,11 +876,10 @@ local port — no network, deterministic. Around seven minutes for the full run.
 .venv/Scripts/python -m pytest --engine playwright   # the same 485 against Playwright
 ```
 
-**Two engines, one suite.** Selenium is the default; `--engine playwright` runs
-every assertion against the Playwright backend instead. Both pass all 485 —
-Selenium in 416s, Playwright in 408s. The flag exists because "a caller cannot
-tell which engine is underneath" is a claim worth checking by running the tests
-rather than by reading the diff. Install it with `pip install -e ".[playwright]"`.
+**Two engines, one suite.** Playwright is the default; `--engine selenium` runs
+every assertion against the Selenium backend instead. Both pass. The flag exists
+because "a caller cannot tell which engine is underneath" is a claim worth
+checking by running the tests rather than by reading the diff.
 
 `tests/test_engine.py` needs no browser and runs in under a second. It guards the
 driver seam: that nothing outside `engine.py` and `browser.py` imports Selenium

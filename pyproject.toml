@@ -5,9 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "aibrowsertoolkit"
 version = "0.1.0"
-description = "Selenium-backed HTTP browser API for AI agents"
+description = "Browser API for AI agents, over HTTP"
 requires-python = ">=3.11"
 dependencies = [
+    # Playwright is the default engine. Selenium is still required rather
+    # than optional because `engine.py` derives the neutral exception names
+    # from Selenium's classes at import time -- making it opt-in means
+    # defining those natively first. See docs/TODO.md.
+    "playwright>=1.50",
     "selenium>=4.20",
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -18,9 +23,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-# The Playwright engine is opt-in (--engine playwright). Selenium remains
-# the default, so a plain install stays free of the Node driver bundle.
-playwright = ["playwright>=1.50"]
 
 [project.scripts]
 abt = "abt.cli:app"

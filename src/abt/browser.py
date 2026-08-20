@@ -104,7 +104,7 @@ class BrowserSession:
         frames_enabled: bool = True,
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
-        engine: str = "selenium",
+        engine: str = "playwright",
     ) -> None:
         # Validation lives in LaunchConfig, so an unsupported browser is
         # rejected identically whether it arrived from `abt serve` or from
