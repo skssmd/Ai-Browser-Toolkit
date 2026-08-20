@@ -63,7 +63,8 @@ def test_no_browser_is_launched_at_login(kind, tmp_path):
 def test_every_path_is_absolute(kind, tmp_path):
     """A logon entry has no working directory worth resolving against.
 
-    A relative ./profile would resolve against the launcher's cwd -- on Windows
+    A relative ./profiles/default would resolve against the launcher's cwd --
+    on Windows that is C:\Windows\System32 -- so the server would build a
     that is C:\\Windows\\System32 -- so the server would build a second, empty
     profile there and none of the logins would be in it.
     """

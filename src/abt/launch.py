@@ -20,7 +20,7 @@ SUPPORTED_BROWSERS = ("chrome", "edge")
 @dataclass(frozen=True)
 class LaunchConfig:
     browser: str = "chrome"
-    profile: Path = Path("./profile")
+    profile: Path = Path("./profiles/default")
     headless: bool = False
 
     def __post_init__(self) -> None:

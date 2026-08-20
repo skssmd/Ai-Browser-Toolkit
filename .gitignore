@@ -1,5 +1,7 @@
 .venv/
-profile/
+# Browser profiles. One directory per named profile, and every one of them
+# holds live logins -- see docs/superpowers/specs on profile sessions.
+profiles/
 logs/
 .e2e-profile/
 .demo-profile/

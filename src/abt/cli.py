@@ -84,7 +84,7 @@ def serve(
         help="Browser to drive: chrome or edge. Prompts when omitted.",
     ),
     profile: Path = typer.Option(
-        Path("./profile"), "--profile", help="Persistent browser user-data-dir."
+        Path("./profiles/default"), "--profile", help="Persistent browser user-data-dir."
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
@@ -624,7 +624,7 @@ def autostart_install(
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
     profile: Path = typer.Option(
-        Path("./profile"), "--profile", help="Persistent browser user-data-dir."
+        Path("./profiles/default"), "--profile", help="Persistent browser user-data-dir."
     ),
     log_dir: Path = typer.Option(
         Path("./logs"), "--log-dir", help="Where session logs are written."

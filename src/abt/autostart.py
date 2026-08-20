@@ -28,7 +28,7 @@ another user and find none of them.
 Three things that are invisible until they bite, all of them observed:
 
 * **An absolute interpreter and absolute paths.** A logon entry has no working
-  directory of its own and no venv on `PATH`. A relative `./profile` resolves
+  directory of its own and no venv on `PATH`. A relative `./profiles/default` resolves
   against whatever the launcher's cwd happens to be -- on Windows that is
   `C:\\Windows\\System32` -- so the server would quietly build a second, empty
   profile there and none of your logins would be in it.
