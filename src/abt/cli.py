@@ -7,6 +7,7 @@ can do, curl can do too.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -437,6 +438,55 @@ def input_(
 def tabs(port: int = _port_option()) -> None:
     """List open tabs."""
     _call(port, "/command", {"op": "tab_list"})
+
+
+@app.command()
+def doctor(
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    print_browser: bool = typer.Option(
+        False,
+        "--print-browser",
+        help="Print just the browser name and nothing else. For the Windows "
+        "installer, whose Pascal has no JSON parser.",
+    ),
+    install_browser: bool = typer.Option(
+        False,
+        "--install-browser",
+        help="Install Google Chrome with this platform's package manager. "
+        "Runs nothing on Linux, where it would need root -- prints the "
+        "command instead.",
+    ),
+) -> None:
+    """Check the one thing this toolkit needs and cannot carry: a browser."""
+    from . import doctor as doc
+
+    info = doc.report()
+
+    if install_browser and not info["browsers"]:
+        plan = doc.install_plan(info["platform"])
+        typer.echo(plan.message)
+        if plan.run and plan.argv:
+            subprocess.run(plan.argv, check=False)
+            info = doc.report()
+
+    if print_browser:
+        typer.echo(info["default_browser"] or "")
+    elif json_out:
+        typer.echo(json.dumps(info, indent=2))
+    else:
+        if info["browsers"]:
+            for found in info["browsers"]:
+                typer.echo(f"  {found['name']:<7} {found['path']}")
+            typer.echo(f"\nabt will use: {info['default_browser']}")
+        else:
+            typer.echo("No supported browser found. This toolkit drives an")
+            typer.echo("existing Google Chrome or Microsoft Edge and bundles neither.")
+            typer.echo("\n" + doc.install_plan(info["platform"]).message)
+        typer.echo(f"\nprofile: {info['profile']}")
+        if not info["profile_writable"]:
+            typer.echo("  WARNING: that directory is not writable.")
+
+    raise typer.Exit(0 if info["browsers"] else 1)
 
 
 @app.command()
