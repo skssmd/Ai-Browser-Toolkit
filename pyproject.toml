@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-browser-toolkit"
-version = "0.2.1"
+version = "0.2.2"
 description = "Agentic browser automation CLI for AI agents"
 # PyPI renders this as the whole project page. Without it the page is a blank
 # stub carrying only the one-line description above -- which is what every
