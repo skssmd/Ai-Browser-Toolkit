@@ -27,7 +27,7 @@ from . import paths
 # and on a bare `abt`. An agent that runs the tool and gets "Missing command"
 # learns nothing; this is the one place it is guaranteed to look.
 AGENT_EPILOG = (
-    'First three commands, in this order:\n\n\x08\n  abt up             start the server (no-op if already up)\n  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n  abt goto <url>     drive it\n\nThe server runs without a browser on purpose: it answers in a second,\nwhile Chrome on a persistent profile can take two minutes. browser_dead\nor \'no browser is running\' means you skipped `abt browser start`.\n\nThen:\n\n\x08\n  abt status                            URL, tabs, live refs\n  abt find --text \'Sign in\'             then: abt click --ref el_3\n  abt ops                               every op and its exact parameters\n  abt exec -                            any op at all, JSON on stdin\n  abt guidelines show toolkit-workflow  the whole workflow: read it\n  abt guidelines search <domain>        a playbook for this site?\n  abt browser restart                   the way back from browser_dead\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n\x08\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
+    'First three commands, in this order:\n\n\x08\n  abt up             start the server (no-op if already up)\n  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n  abt goto <url>     drive it\n\nThe server runs without a browser on purpose: it answers in a second,\nwhile Chrome on a persistent profile can take two minutes. browser_dead\nor \'no browser is running\' means you skipped `abt browser start`.\n\nEvery op, reachable as `abt exec \'{"op": ...}\'` and the named ones\ndirectly. `abt ops` prints their exact parameters.\n\n\x08\n  navigate  goto back forward reload current_url\n  read      find find_full get_text get_html run_js screenshot\n  inspect   read_console read_network\n  interact  click input press select hover scroll wait_for\n  tabs      tab_new tab_switch tab_close tab_list\n  control   diff status shutdown browser_start browser_stop browser_restart\n\nElements are addressed by exactly one of css, xpath, text or ref; `near`\nqualifies a selector that matches too much. Every match returns a ref you\nact on directly.\n\n\x08\n  abt status                            URL, tabs, live refs\n  abt find --text \'Sign in\'             then: abt click --ref el_3\n  abt exec -                            any op at all, JSON on stdin\n  abt guidelines show toolkit-workflow  the whole workflow: read it\n  abt guidelines search <domain>        a playbook for this site?\n  abt browser restart                   the way back from browser_dead\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool. Every error also\ncarries a `hint` saying what to do next.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n\x08\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
 )
 
 app = typer.Typer(
@@ -176,6 +176,14 @@ def _call(port: int, path: str, payload: Any = None, method: str = "POST") -> No
         raise typer.Exit(1)
 
     typer.echo(json.dumps(body, indent=2))
+
+    # The hint is in the JSON, but an agent reading a failure scans the last
+    # line before it decides what to do. Repeat it on stderr so it is the last
+    # thing said, and so it survives `| jq` or any other stdout filter.
+    error = body.get("error") or {}
+    if not body.get("ok") and error.get("hint"):
+        typer.secho(f"\nhint: {error['hint']}", fg="yellow", err=True)
+
     raise typer.Exit(0 if body.get("ok") else 1)
 
 

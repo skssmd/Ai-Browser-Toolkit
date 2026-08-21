@@ -462,3 +462,44 @@ def test_the_epilog_leads_with_the_start_sequence():
     assert "abt browser start" in epilog
     assert "SEPARATE step" in epilog
     assert epilog.index("abt up") < epilog.index("abt goto")
+
+
+# -- errors teach ---------------------------------------------------------
+
+
+def test_every_error_type_carries_a_hint():
+    """An agent that hits browser_dead and is told only 'browser is not
+    reachable' restarts the server, hits it again, and guesses. That is a real
+    session; it cost four commands to get moving."""
+    from abt.errors import ERROR_TYPES, HINTS, OpError
+
+    assert set(HINTS) == set(ERROR_TYPES)
+    for kind in sorted(ERROR_TYPES):
+        hint = OpError(kind, "something went wrong").to_dict()["hint"]
+        assert hint and len(hint) > 30, kind
+
+
+def test_a_hint_says_what_to_do_not_what_happened():
+    """The message already says what happened."""
+    from abt.errors import OpError
+
+    hint = OpError("browser_dead", "no active page").hint
+    assert "abt browser start" in hint
+    assert "abt browser restart" in hint
+
+
+def test_an_explicit_hint_beats_the_type_default():
+    """Some failures know more about the remedy than their type does."""
+    from abt.errors import OpError
+
+    assert OpError("timeout", "slow", hint="specific advice").hint == "specific advice"
+
+
+def test_the_op_vocabulary_is_in_the_help():
+    """The agent never ran `abt ops`, so the ops have to be where it already
+    looks."""
+    from abt import cli
+
+    for op in ("goto", "find", "click", "input", "run_js", "tab_new", "wait_for"):
+        assert op in cli.AGENT_EPILOG, op
+    assert "abt ops" in cli.AGENT_EPILOG
