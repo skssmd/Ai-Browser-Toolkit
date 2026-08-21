@@ -5,7 +5,7 @@ version: ${PKG_VERSION}
 section: utils
 priority: optional
 maintainer: skssmd <skssmd78475@gmail.com>
-description: Browser API for AI agents, over HTTP
+description: Agentic browser automation CLI for AI agents
 vendor: skssmd
 homepage: https://github.com/skssmd/Ai-Browser-Toolkit
 license: Apache-2.0

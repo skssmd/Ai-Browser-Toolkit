@@ -1,5 +1,5 @@
 class Aibrowsertoolkit < Formula
-  desc "Browser API for AI agents, over HTTP"
+  desc "Agentic browser automation CLI for AI agents"
   homepage "https://github.com/skssmd/Ai-Browser-Toolkit"
   version "@VERSION@"
   license "Apache-2.0"

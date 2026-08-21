@@ -10,8 +10,13 @@ from ..errors import OpError
 
 
 def goto(session: BrowserSession, cmd) -> dict:
-    session.goto(cmd.url)
+    settled = session.goto(cmd.url)
     result = session.location()
+    if not settled:
+        # Landed, but the redirect chain overran the navigation budget. Said
+        # out loud rather than swallowed: the page is usable, and a caller
+        # that cares can raise --action-timeout.
+        result["navigation_slow"] = True
     found = _playbook_for(result.get("url") or cmd.url)
     if found is not None:
         result["guideline"] = found

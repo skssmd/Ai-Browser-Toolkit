@@ -1,6 +1,6 @@
 {
     "version": "@VERSION@",
-    "description": "Browser API for AI agents, over HTTP",
+    "description": "Agentic browser automation CLI for AI agents",
     "homepage": "https://github.com/skssmd/Ai-Browser-Toolkit",
     "license": "Apache-2.0",
     "architecture": {

@@ -5,24 +5,48 @@ site. These are the lessons that took the longest to learn.
 
 ## The mental model
 
-The toolkit is a JSON-over-HTTP server that *owns* a real Chrome window. You do
-not write WebDriver code; you POST small JSON commands and read JSON responses.
-The server keeps the browser up between calls, so state (tabs, logins, focus)
-persists across commands.
+A long-running server owns a real Chrome window, and **`abt` drives it**. You
+do not write WebDriver code; you run small commands and read JSON back. The
+browser stays up between commands, so tabs, logins and focus persist.
 
-Because it is long-running, **you never start it with `abt serve` from a tool
-call** — that command never returns and your call hangs on it. Run
-`start-server.bat` (Windows cmd) or `./start-server.sh` (bash) from the repo
-root: safe to call any time, no-ops when a server is already up, and exits once
-`/status` answers. `--status` alone just tells you whether one is running.
+```bash
+abt status                            # a server up? usually yes. URL, tabs, refs
+abt up                                # start one if not; returns immediately
+abt goto https://example.com
+abt find --text "Sign in"
+abt click --ref el_3
+abt input --css "#email" --value "someone@example.com"
+abt ops                               # every op and its exact parameters
+abt exec '{"op":"scroll","to":"bottom"}'           # any op, raw
+abt exec-batch '[{"op":"click","text":"Edit"},{"op":"get_text","css":"h1"}]'
+abt guidelines show toolkit-workflow  # this document
+abt guidelines search <domain>        # a playbook for the site you are on?
+```
 
-- `POST /command` — run one command, wait for its result.
-- `POST /commands` — run a batch in order. Stops on first error unless you send
-  `{"commands": [...], "continue_on_error": true}`.
-- `GET /status` — current URL, tabs, live refs. Safe to call mid-flight.
-- `GET /ops` — the live op list.
-- `/viewer` — a web UI that replays every command and response as they happen.
-  Open it in a second tab and watch yourself work; it is the best debugging tool.
+`abt exec` reaches **every** op, including those with no named subcommand — so
+the op tables below are the real vocabulary. `abt --help` lists subcommands;
+`abt <command> --help` lists flags. On PowerShell, pipe JSON rather than
+quoting it inline: `'{"op":"press","key":"Enter"}' | abt exec -`.
+
+**Never run `abt serve` from a tool call.** That is the command loop itself: it
+never returns, so whatever launched it hangs until killed. `abt up` is the one
+you want — safe at any time, no-ops when a server already answers, and spawns
+the server outside your job object so your call returns while it keeps running.
+The server usually *is* already running, holding tabs and logins that must not
+be thrown away, so check before starting anything.
+
+**Batch what you already know.** `abt exec-batch` runs a list in order and stops
+at the first error. Two round trips become one, and you stop guessing between
+them.
+
+**The viewer.** `/viewer` in a browser tab replays every command and response as
+it happens — the best debugging tool here. Open it beside your work.
+
+**Underneath is HTTP**, and that surface is supported: `POST /command`,
+`POST /commands`, `GET /status`, `GET /ops`. Every `abt` subcommand except
+`serve` is one of those requests. Use it directly when you are already making
+HTTP calls and want to avoid a process launch per command; otherwise prefer
+`abt`.
 
 ## The op groups
 
@@ -35,10 +59,11 @@ root: safe to call any time, no-ops when a server is already up, and exits once
 | Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` |
 | Control | `diff` `status` `shutdown` |
 
-Some sequences that always run together are also packaged as their own
-endpoints — see `/messenger/*` in [messenger.md](messenger.md). They are
-shortcuts over these same ops, never a replacement: when one does not fit what
-you need, drive the page with the ops directly.
+A few sites have sequences that always run together, and those are packaged as
+shortcuts of their own. They are shortcuts over these same ops, never a
+replacement: when one does not fit what you need, drive the page with the ops
+directly. Which sites have them, and what they do, belongs in that site's
+playbook — `abt guidelines search <domain>`.
 
 ## Targeting and refs
 
@@ -77,56 +102,44 @@ you need, drive the page with the ops directly.
 
 > **Trust the diff. Do not re-read the page to check what a command did.**
 >
-> This is the most common and most expensive mistake made with this toolkit: a
+> This is the most common and most expensive mistake made with this toolkit. A
 > click succeeds, returns a `dom_diff` saying exactly what changed — and the
-> agent then fires `get_text {"css": "body"}` or a broad `find_full` to "see
-> what happened". You already have what happened. That follow-up costs a round
-> trip and can cost tens of thousands of tokens on a real page, to learn what
-> was in the response you just received.
+> agent fires `get_text {"css": "body"}` to "see what happened". You already
+> have what happened. That follow-up costs a round trip and can cost tens of
+> thousands of tokens, to learn what was in the response you just received.
 >
-> The diff is the designed answer to "what did that do", it is snapshotted from
-> the live DOM either side of the command, and it is the most heavily tested
-> part of this codebase. It is not a hint to be confirmed. **Read it and act.**
->
-> This is worth stating plainly because it was once untrue: navigations used to
-> snapshot before a single-page app had rendered, so the diff came back holding
-> a spinner and agents learned, correctly, to re-read the page. Navigation now
-> waits for the network to go idle and the DOM to stop moving before it looks.
-> If you still see `Loading…` in a diff, that is a bug worth reporting, not a
-> reason to go back to reading the body.
+> The diff is snapshotted from the live DOM either side of the command. It is
+> not a hint to be confirmed. **Read it and act.** (It was once worth
+> distrusting — navigations snapshotted before an SPA had rendered. Navigation
+> now waits for network idle and a still DOM. A `Loading…` in a diff today is a
+> bug to report, not a reason to re-read.)
 
 Interactive ops (`click input press select hover scroll wait_for run_js`) and
-navigation ops (`goto back forward reload`) snapshot the page before/after and
-return `dom_diff`. This is how you see what an action *did*, in real time. Three
-tracks:
+navigation ops (`goto back forward reload`) snapshot before/after and return
+`dom_diff`. Three tracks:
 
-**`text` — always on, no budget.** The strings that appeared on screen, one
-entry per element, plus form-control values. Read this first; on most pages it
-is the whole answer and it costs almost nothing.
+**`text` — always on, no budget.** Strings that appeared on screen, one entry
+per element, plus form-control values. Read this first; on most pages it is the
+whole answer.
 
 ```json
 "text": {"added": ["Widgets", "Gadgets"], "removed_count": 1, "truncated": false}
 ```
 
-Only rendered text counts, so a hover that reveals a menu reads as its items
-being added. An attribute-only change — `aria-expanded`, a class flip — has no
-text and shows up as an empty diff. That is the trade: text is clean because it
-drops exactly that state churn.
+Only *rendered* text counts, so a hover that reveals a menu reads as its items
+appearing, and an attribute-only change (`aria-expanded`, a class flip) shows as
+an empty diff. That is the trade: text stays clean because it drops that churn.
+Removals are counted, not listed — on a page that rewrites itself they are the
+whole old document. Add `"include_removed": true` when the count says it matters.
 
-Text that *left* the screen is counted, not listed — on a page that rewrites
-itself the removals are the whole old document. `removed_count` tells you
-whether it is worth asking; add `"include_removed": true` when it is.
-
-**When you navigate, `added` is the whole destination page.** `goto` `back`
-`forward` `reload`, and any click that redirected, hand back the text of the
-page they landed on — there is no diff to take against a document that is gone.
-So you do **not** need a `find` or `get_text` just to see what is on a page you
-just opened; read `dom_diff.text.added` and act. The element track is skipped
-here.
+**After a navigation, `added` is the whole destination page.** `goto` `back`
+`forward` `reload`, and any click that redirected, return the text of the page
+they landed on. So you never need a `find` or `get_text` merely to see what is
+on a page you just opened. The element track is skipped there.
 
 **`actionable` — on by default.** The controls among those additions, each with
 a **ref you can act on immediately**. This is the shortest path in the toolkit:
-click, read what appeared, click the thing that appeared — no `find` in between.
+click, read what appeared, click what appeared — no `find` in between.
 
 ```json
 {"op": "click", "css": "#insert-menu"}
@@ -138,33 +151,21 @@ click, read what appeared, click the thing that appeared — no `find` in betwee
 {"op": "click", "ref": "el_7"}
 ```
 
-Every `name` here is also a string in `text.added`, so the two line up — read
-the text to decide, use the ref to act. `role` tells you what a thing is when
-the label alone is ambiguous, and `disabled` warns you off a control that has
-appeared but is not ready.
+Every `name` is also a string in `text.added`, so the two line up: read the text
+to decide, use the ref to act. `role` disambiguates, `disabled` warns you off.
 
-**When several controls share a name, each carries `near`** — the nearest text
-that is not its own label, so a row of identical `Edit` buttons tells you which
-row each one belongs to:
+When several controls share a name each carries `near` — the nearest text that
+is not its own label, so a row of identical `Edit` buttons tells you which row
+it belongs to: `{"ref": "el_9", "name": "Edit", "near": "Medication"}`. **This
+exists so you do not reach for `run_js` to match a button to its row.** That
+DOM-walking is expensive and wrong more often than it looks — it has opened the
+wrong row's dialog and returned `ok: true`.
 
-```json
-{"ref": "el_9", "role": "button", "name": "Edit", "near": "Medication"}
-```
-
-Only when names actually repeat; a uniquely-named control gets nothing. **This
-is there so you do not reach for `run_js` to match a button to its row.** That
-DOM-walking is expensive and it is wrong more often than it looks — it has
-opened the wrong row's dialog and returned `ok: true`.
-
-Two things it deliberately does not do. It **skips navigations**, because on a
-new page every control is "new" and the list would just be the page again — use
-`find` after you land. And it **drops controls with no accessible name**, so you
-never get a ref you cannot tie to something you read.
-
-The exception worth knowing: **file inputs are reported even when invisible**.
-Sites hide the real `<input type=file>` behind a custom uploader, so the element
-you must send a path to is never the one on screen. Look for `role: "file"`,
-then write the path straight to it — `input` handles the hiding for you:
+It skips navigations (on a new page every control is "new") and drops controls
+with no accessible name, so you never get a ref you cannot tie to something you
+read. **Exception: file inputs are reported even when invisible**, because sites
+hide the real `<input type=file>` behind a custom uploader. Look for
+`role: "file"` and write the path straight to it — `input` handles the hiding:
 
 ```json
 {"op": "input", "ref": "el_4", "value": "C:/shots/page.png"}
@@ -174,54 +175,41 @@ Unlike the text track this one is not free — roughly a quarter again on a diff
 op. Pass `"actionable": false` on batch steps whose new controls you will never
 click.
 
-**`elements` — pass `element_diff: true`.** The line-per-element unified diff
-with tags, ids, classes, and attributes. Reach for it when the change was an
-attribute with no visible text, or when you need a selector for something the
-text track told you appeared. Budget it with `diff_max_tokens` (per command) or
-`--diff-max-tokens` (server); passing a budget implies `element_diff: true`.
+**`elements` — pass `element_diff: true`.** A line-per-element unified diff with
+tags, ids, classes and attributes. For a change with no visible text, or when
+you need a selector for something the text track reported. Budget it with
+`diff_max_tokens`; passing a budget implies `element_diff: true`.
 
 - Navigation and tab ops reset the baseline automatically.
-- Reading a page is often free: `goto` already returned its text. Reach for
-  `find`/`find_full` when you need selectors or refs, not to see the content.
-- Suppress noise on a single command with `"diff": false`; disable entirely with
+- Suppress noise on one command with `"diff": false`; disable entirely with
   `--no-diff`.
 - Set a manual baseline with `{"op": "diff", "reset": true}`, then re-check with
   `{"op": "diff"}` to catch async SPA updates. The manual `diff` is explicit, so
-  it returns everything by default: both tracks, removals listed.
+  it returns everything: both tracks, removals listed.
 
 ### When the diff looks empty
 
-An empty diff is the one case that tempts you back into re-reading the page.
-Do not. An empty `text.added` has three possible causes, and each has a cheaper
-answer than dumping the body:
+The one case that tempts you back into re-reading the page. Don't — there are
+three causes and each has a cheaper answer:
 
-1. **The change had no visible text** — a class flip, `aria-expanded`, a
-   `data-` attribute. The text track drops exactly that churn on purpose, which
-   is why it stays clean. Ask for the element track instead:
+1. **No visible text changed** — a class flip, `aria-expanded`, a `data-`
+   attribute. Ask for the element track:
    `{"op": "click", "css": "…", "element_diff": true}`.
-2. **The change has not landed yet** — an SPA that updates after the command
-   returned. Take a second look with `{"op": "diff"}`, which compares against
-   the state the last command left behind. That is what it is for.
-3. **Nothing actually happened** — a real outcome, and worth knowing. Before
-   this was reported honestly, a click could be swallowed by an overlay and
-   still return `ok: true`; `click` now hit-tests first and raises
-   `not_interactable` naming what covered it. So `ok: true` with an empty diff
-   now genuinely means the click landed and the page did not react.
+2. **It has not landed yet** — an SPA updating after the command returned. Take
+   a second look with `{"op": "diff"}`, which compares against the state the
+   last command left. That is what it is for.
+3. **Nothing happened** — a real outcome, and worth knowing. `click` hit-tests
+   first and raises `not_interactable` naming what covered it, so `ok: true`
+   with an empty diff genuinely means the click landed and the page did not
+   react.
 
-`get_text {"css": "body"}` answers none of these better than the three commands
-above, and costs more than all of them together.
+`get_text {"css": "body"}` answers none of these better, and costs more than all
+three together. There used to be a fourth cause — a change inside an iframe,
+invisible to every selector. All three tracks now read into frames and refs from
+inside them act normally; you never switch frames yourself.
 
-There used to be a fourth cause, and it was the bad one: **the change happened
-inside an iframe**, where nothing could see it. A frame is a separate document,
-so the snapshot walk, `innerText` and every selector all stopped at its edge —
-and stopped *quietly*. On `linkedin.com/login`, `find text:"Continue with
-Google"` returned `count: 0` while the button sat on screen. All three tracks
-now read into frames and refs from inside them act normally, so this is no
-longer on the list. Nothing is required of you: you never switch frames, and a
-frame's content arrives in the same `text.added` as the page's own.
-
-**Rule of thumb:** verify *effects* with the diff, not with screenshots or
-external downloads. Downloads and exports lag; the diff is live.
+**Verify effects with the diff, not with screenshots or downloads.** Downloads
+and exports lag; the diff is live.
 
 **The loop, in one line:** act, read `dom_diff.text.added` to see what appeared,
 act on `dom_diff.actionable.added[].ref` to use it. A `find` between those steps
@@ -230,17 +218,15 @@ is usually a round trip you did not need.
 ## Searching for something that should be there
 
 The rule above is about *verifying what a command did*. This one is about
-*looking for something*, and it has its own failure mode: a search comes back
-empty, the agent reads that as "my selector was wrong", and starts guessing.
+*looking for something*, and its failure mode is the opposite: a search comes
+back empty, the agent reads that as "my selector was wrong", and starts
+guessing. On a live LinkedIn profile an agent searched for `input[type=file]`,
+got `count: 0`, and spent **fifteen commands and six minutes** widening
+`run_js` scans. There was no file input — the page creates it when you engage
+the drop zone.
 
-It is expensive. On a live LinkedIn profile page an agent searched for
-`input[type=file]`, got `count: 0`, and spent **fifteen commands and six
-minutes** on progressively wider `run_js` DOM scans. There was no file input.
-The page creates it when you engage the drop zone, so no selector would ever
-have found one.
-
-**A search that finds nothing is an answer.** Climb this ladder once, in order,
-and then believe it:
+**A search that finds nothing is an answer.** Climb this ladder once, then
+believe it:
 
 | | step | what it covers |
 |---|---|---|
@@ -250,41 +236,33 @@ and then believe it:
 | 4 | **`find` with `"shadow": true`** | Turns shadow content into a ref you can act on |
 | 5 | **Stop** | It is not there |
 
-Step 3 is worth knowing: `get_text` reports *rendered* text, which follows the
-composed tree, so a component's internals are in it without any flag. Discovery
-is free. Step 4 exists only because reading a label is not the same as being
-able to click it — `shadow: true` is how you get the ref.
+Step 3 follows the composed tree, so a component's internals are in it with no
+flag — discovery is free. Step 4 exists because reading a label is not the same
+as being able to click it.
 
-**You will be told when step 4 is worth taking.** Shadow roots are counted on
-every snapshot but never walked, so:
+**You are told when step 4 is worth taking.** Shadow roots are counted on every
+snapshot but never walked:
 
 ```json
 {"op": "find", "css": "#resume"}
 → {"count": 0, "shadow_hosts": 2,
    "note": "nothing matched, but this page has 2 shadow root(s) … retry with \"shadow\": true"}
-
-{"op": "click", "css": "#next"}
-→ {"dom_diff": {"text": {"added": []},
-                "shadow": {"hosts": 2, "note": "not walked; …"}}}
 ```
 
-No hosts, no note — so on the overwhelming majority of pages this costs you
-nothing and says nothing.
+No hosts, no note — so on most pages this costs and says nothing.
 
-**What not to do:** `run_js` with `querySelectorAll` to "look harder". Steps 2–4
-already searched the document, its frames and its open shadow roots. Repeating
-that in JavaScript finds the same nothing, one round trip and a few thousand
-tokens later.
+**Do not `run_js` a `querySelectorAll` to "look harder".** Steps 2–4 already
+searched the document, its frames and its open shadow roots. JavaScript finds
+the same nothing, a round trip and a few thousand tokens later.
 
-**The usual real cause.** When a control is genuinely absent it is almost always
-because *the page has not created it yet*. Hidden file inputs are the classic:
-they are mounted when you click the visible upload button or drop zone. Act on
-the control the page is showing you, then look again.
+**The usual real cause:** the page has not created the control yet. Hidden file
+inputs are the classic — mounted when you click the visible upload button or
+drop zone. Act on what the page is showing you, then look again.
 
-**The one limit, stated honestly.** A `mode: "closed"` shadow root returns
-`null` from `.shadowRoot` — no JavaScript can read it or even prove it exists,
-so nothing here can. "Not there" therefore means *nothing reachable has it*.
-Closed roots are rare outside browser internals like `<video>` controls.
+**The one honest limit:** a `mode: "closed"` shadow root returns `null` from
+`.shadowRoot`, so no JavaScript can read it or prove it exists, and neither can
+this. "Not there" means *nothing reachable has it*. Closed roots are rare
+outside browser internals like `<video>` controls.
 
 ## Types of work
 
@@ -372,39 +350,18 @@ dies** — every later call returns `browser_dead` with `no such window: target
 window already closed`, and neither `tab_switch` nor `tab_list` can recover it,
 even though the other windows are still on screen.
 
-The workaround is to not be standing there: `tab_switch` back to the tab you
-came from *before* clicking the control that completes the flow, when the flow
-allows it.
+Avoid it by not standing there: `tab_switch` back to the tab you came from
+*before* clicking the control that completes the flow, when the flow allows it.
 
-Once it has happened, send `{"op": "browser_restart"}` (or
-`POST /browser/restart`). Like `status` and `shutdown` it skips the health
-check, so it works precisely when everything else returns `browser_dead`. The
-server stays up, the session log continues, and you get a fresh browser on the
-same profile — so you are still logged in, but **every tab and every ref is
-gone** and you must navigate back to where you were.
+Once it has happened, send `{"op": "browser_restart"}`. Like `status` and
+`shutdown` it skips the health check, so it works precisely when everything else
+returns `browser_dead`. The server stays up, the session log continues, and you
+get a fresh browser on the same profile — so you are still logged in, but
+**every tab and every ref is gone** and you must navigate back.
 
-You no longer have to check by hand that nothing else is holding the profile.
-`stop` waits for the old browser to release it, and `start` probes the new
-session and fails loudly rather than handing you one that dies on first use.
-The rest of this note explains the failure that used to cause:
-
-<details><summary>Why this used to be fatal</summary>
-
-Before restarting, you had to make sure no Chrome was still holding the toolkit
-profile — if one was, the fresh Chrome handed off to it and the new session died
-immediately
-with `invalid session id`. Filter on the profile path, never blanket-kill
-`chrome.exe`; the human's own browser is in that process list too.
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
-  Where-Object { $_.CommandLine -like "*aibrowsertoolkit\profile*" }
-```
-
-Worth fixing in the server: falling back to any surviving window handle on
-`NoSuchWindowException` would make this recoverable without a restart.
-
-</details>
+You no longer have to check by hand that nothing else holds the profile: `stop`
+waits for the old browser to release it, and `start` probes the new session and
+fails loudly rather than handing you one that dies on first use.
 
 Still worth fixing properly: falling back to a surviving window handle on
 `NoSuchWindowException` would keep the tabs, which `browser_restart` cannot.

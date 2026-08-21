@@ -571,13 +571,33 @@ class BrowserSession:
         except WebDriverException:
             return None
 
-    def goto(self, url: str) -> None:
+    def goto(self, url: str) -> bool:
+        """Navigate. Returns False when it landed but overran the budget.
+
+        A redirect chain can outrun the navigation timeout while the
+        navigation itself succeeds -- `https://sheets.new` is the canonical
+        case: it 302s to a freshly created document, the wait expires, and the
+        page is nevertheless there. Reporting that as `navigation_failed` sends
+        a caller off to retry something that already worked.
+
+        So a timeout is only a failure if the browser did not actually move.
+        """
+        before = None
+        try:
+            before = self.driver.current_url
+        except WebDriverException:
+            pass
+
+        overran = False
         try:
             self.driver.get(url)
         except WebDriverException as exc:
-            raise OpError(
-                "navigation_failed", f"could not load {url!r}: {exc.msg or exc}"
-            ) from exc
+            if not self._moved_from(before):
+                raise OpError(
+                    "navigation_failed", f"could not load {url!r}: {exc.msg or exc}"
+                ) from exc
+            overran = True
+
         self.refs.invalidate(self.active_tab)
         code = self.error_page_code()
         if code:
@@ -585,6 +605,23 @@ class BrowserSession:
                 "navigation_failed", f"could not load {url!r}: chrome reported {code}"
             )
         self.settle()
+        return not overran
+
+    def _moved_from(self, before: str | None) -> bool:
+        """Did the browser actually end up somewhere new and usable?
+
+        `about:blank` and a chrome error page both count as not having moved:
+        one means nothing happened, the other means something did and failed.
+        """
+        try:
+            after = self.driver.current_url
+        except WebDriverException:
+            return False
+        if not after or after.startswith("about:"):
+            return False
+        if after == before:
+            return False
+        return not self.error_page_code()
 
     def settle(self, timeout: float | None = None) -> bool:
         """Wait for the DOM to stop changing. Returns whether it did.

@@ -135,6 +135,16 @@ def _packaged_root() -> Path | None:
         packaged = files("abt") / "guidelines"
         if packaged.is_dir():
             return Path(str(packaged))
+
+        # An editable install points `files("abt")` at src/abt, which has no
+        # guidelines directory -- that only exists at the repo root and is
+        # force-included when the wheel is built. Without this, a developer
+        # running `abt guidelines show toolkit-workflow` from anywhere outside
+        # the checkout is told no such playbook exists, which is both wrong
+        # and the exact case where they most need the answer.
+        source = Path(str(files("abt"))).parent.parent / "guidelines"
+        if source.is_dir():
+            return source
     except (ModuleNotFoundError, FileNotFoundError, TypeError):
         pass
     return None

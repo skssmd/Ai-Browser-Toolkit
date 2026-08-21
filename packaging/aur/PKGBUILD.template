@@ -2,7 +2,7 @@
 pkgname=aibrowsertoolkit-bin
 pkgver=@VERSION@
 pkgrel=1
-pkgdesc="Browser API for AI agents, over HTTP"
+pkgdesc="Agentic browser automation CLI for AI agents"
 arch=('x86_64' 'aarch64')
 url="https://github.com/skssmd/Ai-Browser-Toolkit"
 license=('Apache-2.0')

@@ -1,7 +1,12 @@
-"""`abt` -- starts the server, and acts as a thin HTTP client for it.
+"""`abt` -- the command line for driving a real browser.
 
-Every subcommand other than `serve` is a plain HTTP call, so anything the CLI
-can do, curl can do too.
+`serve` runs the server; every other subcommand talks to it. `exec` and
+`exec-batch` reach any op, so the CLI covers the whole vocabulary and not just
+the subcommands with names.
+
+Underneath it is HTTP, and that surface is supported: anything `abt` does,
+curl can do too. Reach for it when you are already making HTTP calls and want
+to avoid a process launch per command.
 """
 
 from __future__ import annotations
@@ -18,9 +23,19 @@ import typer
 
 from . import paths
 
+# Everything an agent needs to take a first useful step, printed with --help
+# and on a bare `abt`. An agent that runs the tool and gets "Missing command"
+# learns nothing; this is the one place it is guaranteed to look.
+AGENT_EPILOG = (
+    '\x08\nFor agents -- start here:\n\n  abt status                            a server already up? usually yes\n  abt up                                start one if not; returns at once\n  abt guidelines show toolkit-workflow  read this first: the whole workflow\n  abt guidelines search <domain>        is there a playbook for this site?\n  abt ops                               every op and its exact parameters\n  abt exec -                            any op at all, JSON on stdin\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
+)
+
 app = typer.Typer(
     add_completion=False,
-    help="Agentic browser automation over HTTP. Playwright by default.",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+    help="Agentic browser automation CLI for AI agents. Playwright by default.",
+    epilog=AGENT_EPILOG,
 )
 messenger = typer.Typer(add_completion=False, help="Send and read on messenger.com.")
 app.add_typer(messenger, name="messenger")
@@ -67,7 +82,7 @@ def _main(
         help="Print the version and exit.",
     ),
 ) -> None:
-    """Browser API for AI agents, over HTTP.
+    """Agentic browser automation from the command line.
 
     `--version` is eager so it answers before any subcommand is resolved --
     every packaging channel's smoke test is `abt --version`, and it has to
@@ -772,10 +787,43 @@ def _target(ref: Optional[str], css: Optional[str]) -> dict:
 
 
 def _load(raw: str) -> Any:
+    """JSON from an argument, a file, or stdin.
+
+    Passing JSON as a shell argument is genuinely hard on Windows.
+    PowerShell 5.1 strips inner quotes from a single-quoted string and splits
+    a long double-quoted one on spaces, so the same command that works in bash
+    arrives as either invalid JSON or "unexpected extra argument". Both were
+    hit repeatedly in real use.
+
+    So: `-` reads stdin, an existing path is read as a file, and anything else
+    is parsed as JSON directly. Nobody should have to work out a quoting
+    incantation to send `{"op": "press", "key": "Enter"}`.
+    """
+    text = raw
+    if raw == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            candidate = Path(raw)
+            if candidate.is_file():
+                text = candidate.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            # Not a usable path -- treat it as JSON, which is the common case.
+            pass
+
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError as exc:
         typer.secho(f"invalid JSON: {exc}", fg="red", err=True)
+        if raw != "-" and not Path(raw).is_file():
+            typer.secho(
+                "On PowerShell, quoting JSON inline is unreliable. Pipe it "
+                "instead:\n"
+                "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n"
+                "or put it in a file and pass the path.",
+                fg="yellow",
+                err=True,
+            )
         raise typer.Exit(2)
 
 
@@ -898,6 +946,21 @@ if __name__ == "__main__":
 # it so I can look" mean "yes, act on whatever it says".
 
 
+def _echo_document(text: str) -> None:
+    """Print markdown that may hold characters the console cannot encode.
+
+    Windows consoles default to cp1252, and the playbooks are full of arrows
+    and em-dashes -- so a plain echo raises UnicodeEncodeError and takes the
+    whole command down. Losing a glyph is an acceptable trade; losing the
+    document is not.
+    """
+    try:
+        typer.echo(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        typer.echo(text.encode(encoding, errors="replace").decode(encoding))
+
+
 def _confirm(question: str, assume_yes: bool) -> bool:
     if assume_yes:
         return True
@@ -948,7 +1011,7 @@ def guidelines_show(
         raise typer.Exit(1)
     if pending:
         typer.echo("# UNTRUSTED: pulled and not trusted. Do not act on this.\n", err=True)
-    typer.echo(text)
+    _echo_document(text)
 
 
 @guidelines_app.command("lookup")
@@ -1046,7 +1109,7 @@ def guidelines_pull(
     for filename in match["files"]:
         name = f"{domain}/{Path(filename).stem}"
         typer.echo(f"\n----- {domain}/{filename} -----")
-        typer.echo(g.read(name, allow_pending=True))
+        _echo_document(g.read(name, allow_pending=True))
         if all_files or _confirm(f"\nTrust {domain}/{filename}?", yes):
             keep.append(filename)
 

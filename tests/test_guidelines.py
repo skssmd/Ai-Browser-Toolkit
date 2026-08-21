@@ -397,3 +397,42 @@ def test_the_daily_limit_holds(home, monkeypatch):
         guidelines, "fetch_index", lambda **kw: (_ for _ in ()).throw(AssertionError)
     )
     assert guidelines.check_updates() == []
+
+
+# -- CLI input handling ---------------------------------------------------
+
+
+def test_json_can_arrive_on_stdin(monkeypatch, capsys):
+    """Passing JSON as a shell argument is genuinely hard on Windows.
+    PowerShell 5.1 strips inner quotes from a single-quoted string and splits
+    a long double-quoted one on spaces, so the same command that works in bash
+    arrives as invalid JSON or 'unexpected extra argument'."""
+    import io
+
+    from abt import cli
+
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO('{"op":"status"}'))
+    assert cli._load("-") == {"op": "status"}
+
+
+def test_json_can_arrive_as_a_file(tmp_path):
+    from abt import cli
+
+    path = tmp_path / "cmd.json"
+    path.write_text('{"op":"status"}', encoding="utf-8")
+    assert cli._load(str(path)) == {"op": "status"}
+
+
+def test_inline_json_still_works():
+    from abt import cli
+
+    assert cli._load('{"op":"status"}') == {"op": "status"}
+
+
+def test_a_document_prints_even_when_the_console_cannot_encode_it(capsys):
+    """Windows consoles default to cp1252 and the playbooks are full of arrows
+    and em-dashes. Losing a glyph is acceptable; losing the document is not."""
+    from abt import cli
+
+    cli._echo_document("an arrow \u2192 and an em-dash \u2014 here")
+    assert "here" in capsys.readouterr().out
