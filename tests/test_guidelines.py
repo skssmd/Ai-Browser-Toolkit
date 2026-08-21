@@ -347,3 +347,53 @@ def test_declining_one_file_actually_leaves_it_out(home):
     with pytest.raises(KeyError):
         guidelines.read("example.com/skip")
     assert (pending / "skip.md").is_file()
+
+
+# -- the startup check ----------------------------------------------------
+
+
+def test_the_startup_check_runs_in_the_background(monkeypatch):
+    """The server must listen in about a second. A network call on the
+    critical path is how this feature gets switched off."""
+    from abt import cli
+
+    started = {}
+    monkeypatch.setattr(
+        cli, "_start_guideline_check", lambda disabled: started.update(disabled=disabled)
+    )
+    cli._start_guideline_check(False)
+    assert started["disabled"] is False
+
+
+def test_the_startup_check_can_be_switched_off_for_one_run(monkeypatch):
+    from abt import cli
+    from abt import guidelines as g
+
+    called = []
+    monkeypatch.setattr(g, "check_updates", lambda *a, **kw: called.append(1) or [])
+    cli._start_guideline_check(disabled=True)
+    assert called == []
+
+
+def test_the_startup_check_never_raises(monkeypatch):
+    """A playbook source being unreachable is not a reason for a browser
+    server to say anything alarming at boot."""
+    from abt import cli
+    from abt import guidelines as g
+
+    monkeypatch.setattr(
+        g, "check_updates", lambda *a, **kw: (_ for _ in ()).throw(OSError("down"))
+    )
+    cli._start_guideline_check(disabled=False)  # must not raise
+
+
+def test_the_daily_limit_holds(home, monkeypatch):
+    """Once a day, not once a launch. A toolkit that reaches out on every
+    start is a toolkit people turn off."""
+    import time as clock
+
+    guidelines.set_config(guidelines_checked_at=clock.time())
+    monkeypatch.setattr(
+        guidelines, "fetch_index", lambda **kw: (_ for _ in ()).throw(AssertionError)
+    )
+    assert guidelines.check_updates() == []

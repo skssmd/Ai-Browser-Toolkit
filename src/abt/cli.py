@@ -76,6 +76,41 @@ def _port_option() -> int:
     return typer.Option(DEFAULT_PORT, "--port", "-p", help="Server port.")
 
 
+def _start_guideline_check(disabled: bool) -> None:
+    """Check for newer playbooks in the background, at most once a day.
+
+    A daemon thread, never awaited: the server must listen in about a second,
+    and a toolkit that pauses on startup for a network call is one people
+    launch with the feature switched off.
+
+    Reports only. Nothing is fetched, nothing is trusted -- `check_updates`
+    compares versions and prints, and the pull still needs a person.
+    """
+    if disabled:
+        return
+
+    import threading
+
+    def run() -> None:
+        try:
+            from . import guidelines as g
+
+            behind = g.check_updates()
+            for entry in behind:
+                typer.echo(
+                    f"playbook update: {entry['domain']} "
+                    f"v{entry['held_version']} -> v{entry['available_version']}"
+                    f"  (`abt guidelines pull {entry['domain']}`)",
+                    err=True,
+                )
+        except Exception:
+            # Silent by design. A playbook source being unreachable is not a
+            # reason for a browser server to say anything alarming at boot.
+            pass
+
+    threading.Thread(target=run, name="guideline-check", daemon=True).start()
+
+
 def _choose_browser(browser: str | None) -> str:
     """Resolve the browser choice, prompting interactively when omitted.
 
@@ -151,6 +186,14 @@ def serve(
         "--log-dir",
         help="Where session logs are written. Defaults to this install's own "
         "per-user directory, or ./logs inside a checkout.",
+    ),
+    no_guideline_lookup: bool = typer.Option(
+        False,
+        "--no-guideline-lookup",
+        help="Do not check the playbook source at startup. The check is "
+        "once a day, in the background, and reports only -- this switches it "
+        "off for this run; `abt guidelines lookup --off` switches it off for "
+        "good.",
     ),
     no_log: bool = typer.Option(False, "--no-log", help="Disable session logging."),
     no_diff: bool = typer.Option(
@@ -235,6 +278,8 @@ def serve(
         )
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("", encoding="utf-8")
+
+    _start_guideline_check(no_guideline_lookup)
 
     browser = _choose_browser(browser)
     session = BrowserSession(
