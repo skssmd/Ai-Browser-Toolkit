@@ -306,8 +306,15 @@ jobs:
           git commit -m "aibrowsertoolkit: ${{ needs.wheel.outputs.version }}"
           # Graft's release workflow writes to this repo too; a simultaneous
           # release would otherwise lose this push to a non-fast-forward.
+          # Push first, rebase only when the push is rejected. `git pull
+          # --rebase` fails outright against a repository with no commits --
+          # "no such ref was fetched" -- which is exactly the state a freshly
+          # created bucket is in, so pulling first meant the very first
+          # release could never land. The rebase still covers the real case
+          # it was written for: a concurrent write to a shared repo.
           for attempt in 1 2 3; do
-            git pull --rebase && git push && exit 0
+            git push -u origin HEAD:main && exit 0
+            git pull --rebase origin main || true
             sleep 5
           done
           exit 1
@@ -347,8 +354,15 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "aibrowsertoolkit ${{ needs.wheel.outputs.version }}"
           # Graft writes Formula/graft.rb in this same repo.
+          # Push first, rebase only when the push is rejected. `git pull
+          # --rebase` fails outright against a repository with no commits --
+          # "no such ref was fetched" -- which is exactly the state a freshly
+          # created bucket is in, so pulling first meant the very first
+          # release could never land. The rebase still covers the real case
+          # it was written for: a concurrent write to a shared repo.
           for attempt in 1 2 3; do
-            git pull --rebase && git push && exit 0
+            git push -u origin HEAD:main && exit 0
+            git pull --rebase origin main || true
             sleep 5
           done
           exit 1
