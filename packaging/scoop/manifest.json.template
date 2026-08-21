@@ -1,0 +1,31 @@
+{
+    "version": "@VERSION@",
+    "description": "Browser API for AI agents, over HTTP",
+    "homepage": "https://github.com/skssmd/Ai-Browser-Toolkit",
+    "license": "Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/skssmd/Ai-Browser-Toolkit/releases/download/v@VERSION@/aibrowsertoolkit-@VERSION@-windows-x86_64.zip",
+            "hash": "@HASH@",
+            "extract_dir": "aibrowsertoolkit-@VERSION@-windows-x86_64"
+        }
+    },
+    "bin": "abt.cmd",
+    "notes": [
+        "Check what this needs: abt doctor",
+        "It drives an existing Chrome or Edge and bundles neither.",
+        "To start the server at logon: abt autostart install --browser chrome",
+        "Scoop has no uninstall hook, so run `abt autostart uninstall` first if you enabled it."
+    ],
+    "checkver": {
+        "github": "https://github.com/skssmd/Ai-Browser-Toolkit"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/skssmd/Ai-Browser-Toolkit/releases/download/v$version/aibrowsertoolkit-$version-windows-x86_64.zip",
+                "extract_dir": "aibrowsertoolkit-$version-windows-x86_64"
+            }
+        }
+    }
+}

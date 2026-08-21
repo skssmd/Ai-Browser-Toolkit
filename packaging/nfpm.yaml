@@ -1,0 +1,28 @@
+name: aibrowsertoolkit
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+section: utils
+priority: optional
+maintainer: skssmd <skssmd78475@gmail.com>
+description: Browser API for AI agents, over HTTP
+vendor: skssmd
+homepage: https://github.com/skssmd/Ai-Browser-Toolkit
+license: Apache-2.0
+
+# Chrome is required at runtime but is not in Debian's repositories, and Edge
+# counts too. A hard dependency would make this uninstallable; `abt doctor`
+# reports what is actually missing.
+recommends:
+  - google-chrome-stable
+
+contents:
+  - src: ./payload/
+    dst: /opt/aibrowsertoolkit
+  - src: /opt/aibrowsertoolkit/bin/abt
+    dst: /usr/bin/abt
+    type: symlink
+
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
