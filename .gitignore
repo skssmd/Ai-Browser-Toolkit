@@ -30,3 +30,6 @@ dist/
 *OneHr*
 *ONEHR*
 *.exe
+
+# Local-only playbooks: client material and sites not worth shipping.
+private/

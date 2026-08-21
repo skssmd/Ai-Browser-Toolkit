@@ -171,3 +171,24 @@ def test_the_index_matches_the_files_on_disk():
 
     for domain, entry in index.items():
         assert entry["files"] == sorted(p.name for p in (root / domain).glob("*.md"))
+
+
+def test_only_domain_folders_are_indexed():
+    """The playbooks repository carries domain-specific content and nothing
+    else. toolkit-workflow.md ships with the tool: it is how to drive the
+    toolkit, not how to drive a site, so it is never fetched or versioned."""
+    root = Path(__file__).resolve().parent.parent / "guidelines"
+    index = json.loads((root / "index.json").read_text(encoding="utf-8"))
+
+    assert all("." in domain for domain in index), sorted(index)
+    assert "toolkit-workflow" not in index
+    assert (root / "toolkit-workflow.md").is_file()
+
+
+def test_local_testing_playbooks_do_not_ship():
+    """kayoanime and fojik were local testing targets, not something to
+    publish. They live under private/, which is gitignored."""
+    root = Path(__file__).resolve().parent.parent / "guidelines"
+    names = " ".join(p.as_posix().lower() for p in root.rglob("*"))
+    for excluded in ("kayoanime", "fojik", "onehr"):
+        assert excluded not in names, excluded
