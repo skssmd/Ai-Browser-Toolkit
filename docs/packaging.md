@@ -47,7 +47,7 @@ none of your logins.
 | PyPI | wheel + sdist | pypi.org/project/aibrowsertoolkit |
 | Standalone / winget | Inno `.exe` | GitHub release / microsoft/winget-pkgs |
 | Scoop | Windows zip | the-graft-project/scoop-bucket |
-| Homebrew | macOS tarballs | the-graft-project/homebrew-tap |
+| Homebrew | macOS **arm64** tarball | the-graft-project/homebrew-tap |
 | AUR | Linux tarballs | aibrowsertoolkit-bin |
 | apt / dnf / apk | Linux tarballs | apt.fury.io/skssmd |
 
@@ -74,9 +74,23 @@ pending publisher registered at pypi.org naming owner `skssmd`, repository
 secret; both are easy to forget, and their absence only shows up during a real
 release.
 
+## No Intel Mac build
+
+`macos-13` is GitHub's last Intel image and is being retired; it queued badly
+enough to hold up every release behind it, so the matrix dropped it on
+2026-08-21. Consequences worth knowing:
+
+* The Homebrew formula is arm64-only and says so with `depends_on arch: :arm64`,
+  which refuses the install up front rather than failing on a dead download URL.
+* `packaging/bundle.py` still knows the `macos-x86_64` target, so an Intel Mac
+  can build a bundle locally with `python packaging/bundle.py --target
+  macos-x86_64 ...`. Nothing publishes it.
+* Intel Mac users are served by `pipx install aibrowsertoolkit`, which is
+  architecture-independent.
+
 ## Why the build matrix is native
 
-Five runners, one per target, rather than one host cross-building all five.
+Four runners, one per target, rather than one host cross-building all four.
 The point is the smoke test: each bundle starts its own server and answers
 `/status` on the operating system it targets. A cross-built bundle is never
 executed on the platform it is for, and the relocated interpreter, the

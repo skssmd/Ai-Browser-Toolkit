@@ -83,8 +83,12 @@ jobs:
             os: ubuntu-24.04-arm
           - target: macos-arm64
             os: macos-14
-          - target: macos-x86_64
-            os: macos-13
+          # macos-x86_64 is deliberately absent. macos-13 is GitHub's last
+          # Intel image and is being retired, so it queues badly and held up
+          # every release behind it. bundle.py still knows the target, so an
+          # Intel Mac can build one locally; nothing ships it automatically.
+          # The Homebrew formula is arm64-only as a result -- see
+          # docs/packaging.md.
           - target: windows-x86_64
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -190,13 +194,13 @@ jobs:
           find staging -type f \( -name '*.tar.gz' -o -name '*.zip' \
             -o -name '*.whl' -o -name '*.exe' \) -exec cp -n {} out/ \;
           ls -l out
-          # Five bundles + wheel + sdist + installer. A missing one means a job
+          # Four bundles + wheel + sdist + installer. A missing one means a job
           # was skipped, and shipping a partial release is worse than failing
           # here -- the publishers downstream would each pin a URL that never
           # gets an asset.
           count=$(ls out | wc -l)
-          if [ "$count" -lt 8 ]; then
-            echo "expected at least 8 artifacts, found $count"
+          if [ "$count" -lt 7 ]; then
+            echo "expected at least 7 artifacts, found $count"
             exit 1
           fi
 

@@ -12,6 +12,7 @@ Both parsed as valid YAML. Only looking for control characters found them.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -99,3 +100,44 @@ def test_the_release_waits_for_every_artifact_it_publishes():
     """
     release = load("release.yml")["jobs"]["release"]
     assert set(release["needs"]) == {"wheel", "bundle"}
+
+
+def test_the_artifact_guard_matches_the_matrix():
+    """These two drift. The release job asserts a minimum artifact count, and
+    dropping a matrix target without lowering it fails every release; raising
+    the matrix without raising the count lets a partial release through.
+
+    Derived here rather than hardcoded: bundles + wheel + sdist + installer.
+    """
+    jobs = load("release.yml")["jobs"]
+    targets = jobs["bundle"]["strategy"]["matrix"]["include"]
+    expected = len(targets) + 3
+
+    collect = next(
+        s for s in jobs["release"]["steps"] if "Collect" in s.get("name", "")
+    )
+    guard = re.search(r'"\$count" -lt (\d+)', collect["run"])
+    assert guard, "the artifact-count guard has moved or been removed"
+    assert int(guard.group(1)) == expected, (
+        f"{len(targets)} bundle targets + wheel + sdist + installer = "
+        f"{expected}, but the guard says {guard.group(1)}"
+    )
+
+
+def test_intel_mac_is_not_built_by_ci():
+    """macos-13 is GitHub's last Intel image and is being retired, so it
+    queued badly and blocked every release behind it. bundle.py still knows
+    the target for a local build; nothing ships it automatically, which is
+    why the Homebrew formula is arm64-only.
+    """
+    targets = {
+        t["target"]
+        for t in load("release.yml")["jobs"]["bundle"]["strategy"]["matrix"]["include"]
+    }
+    assert "macos-x86_64" not in targets
+    assert targets == {
+        "linux-x86_64",
+        "linux-aarch64",
+        "macos-arm64",
+        "windows-x86_64",
+    }

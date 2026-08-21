@@ -22,7 +22,7 @@
 - **Signing is free-tier only:** PyPI Trusted Publishing (OIDC), `actions/attest-build-provenance`, `checksums.txt`. No GPG. No Authenticode.
 - **Secret names:** `TAP_TOKEN`, `WINGET_TOKEN`, `AUR_SSH_KEY`, `FURY_TOKEN`. PyPI uses no secret.
 - **Shared repositories** (`the-graft-project/homebrew-tap`, `the-graft-project/winget-pkgs`) are also written by Graft's release workflow. Every push into one does `pull --rebase` and retries twice.
-- **Five bundle targets:** `linux-x86_64`, `linux-aarch64`, `macos-arm64`, `macos-x86_64`, `windows-x86_64`.
+- **Four CI bundle targets:** `linux-x86_64`, `linux-aarch64`, `macos-arm64`, `windows-x86_64`. `macos-x86_64` remains in `bundle.py`'s TARGETS for a local build but is not built by CI: `macos-13` is GitHub's last Intel image, is being retired, and queued badly enough to block every release behind it (dropped 2026-08-21). The Homebrew formula is arm64-only as a result.
 
 ---
 
@@ -1517,8 +1517,8 @@ jobs:
             os: ubuntu-24.04-arm
           - target: macos-arm64
             os: macos-14
-          - target: macos-x86_64
-            os: macos-13
+          # No macos-x86_64: macos-13 is GitHub's last Intel image, is being
+          # retired, and queued badly enough to block every release.
           - target: windows-x86_64
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -2090,7 +2090,7 @@ Needs `TAP_TOKEN`, `AUR_SSH_KEY` and `FURY_TOKEN`.
 - Modify: `.github/workflows/release.yml` (add the `brew` job), `docs/packaging.md`
 
 **Interfaces:**
-- Consumes: `bundle-macos-arm64`, `bundle-macos-x86_64`.
+- Consumes: `bundle-macos-arm64`. There is no Intel bundle; see Global Constraints.
 - Produces: `Formula/aibrowsertoolkit.rb` in `the-graft-project/homebrew-tap`.
 
 - [ ] **Step 1: Write the template**
@@ -2102,15 +2102,16 @@ class Aibrowsertoolkit < Formula
   version "@VERSION@"
   license "Apache-2.0"
 
+  # arm64 only. macos-13 is GitHub's last Intel image and is being retired,
+  # so it queued badly and blocked every release; the matrix dropped it on
+  # 2026-08-21. There is deliberately no on_intel block rather than one
+  # pointing at a release asset that is never built -- a formula with a dead
+  # URL fails at download time with no explanation, while `depends_on arch:`
+  # refuses the install up front and says why.
+  depends_on arch: :arm64
   on_macos do
-    on_arm do
-      url "https://github.com/skssmd/Ai-Browser-Toolkit/releases/download/v@VERSION@/aibrowsertoolkit-@VERSION@-macos-arm64.tar.gz"
-      sha256 "@SHA_ARM@"
-    end
-    on_intel do
-      url "https://github.com/skssmd/Ai-Browser-Toolkit/releases/download/v@VERSION@/aibrowsertoolkit-@VERSION@-macos-x86_64.tar.gz"
-      sha256 "@SHA_INTEL@"
-    end
+    url "https://github.com/skssmd/Ai-Browser-Toolkit/releases/download/v@VERSION@/aibrowsertoolkit-@VERSION@-macos-arm64.tar.gz"
+    sha256 "@SHA_ARM@"
   end
 
   def install
@@ -2160,8 +2161,7 @@ The caveats' final paragraph is required, not decorative — it is the one known
         run: |
           version="${{ needs.wheel.outputs.version }}"
           arm=$(sha256sum dl/bundle-macos-arm64/*.tar.gz | cut -d' ' -f1)
-          intel=$(sha256sum dl/bundle-macos-x86_64/*.tar.gz | cut -d' ' -f1)
-          sed -e "s/@VERSION@/$version/g" -e "s/@SHA_ARM@/$arm/g" -e "s/@SHA_INTEL@/$intel/g" \
+          sed -e "s/@VERSION@/$version/g" -e "s/@SHA_ARM@/$arm/g" \
             packaging/homebrew/formula.rb.template > aibrowsertoolkit.rb
           cat aibrowsertoolkit.rb
       - name: Push to the tap
