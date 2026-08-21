@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Browser API for AI agents, over HTTP"
 # PyPI renders this as the whole project page. Without it the page is a blank
 # stub carrying only the one-line description above -- which is what every
-# `pip install aibrowsertoolkit` sends people to look at.
+# `pip install ai-browser-toolkit` sends people to look at.
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

@@ -18,7 +18,10 @@ import typer
 
 from . import paths
 
-app = typer.Typer(add_completion=False, help="Selenium browser API for AI agents.")
+app = typer.Typer(
+    add_completion=False,
+    help="Agentic browser automation over HTTP. Playwright by default.",
+)
 messenger = typer.Typer(add_completion=False, help="Send and read on messenger.com.")
 app.add_typer(messenger, name="messenger")
 autostart_app = typer.Typer(
