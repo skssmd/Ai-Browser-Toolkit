@@ -37,6 +37,7 @@ runs inline if so, which makes nesting safe rather than forbidden.
 from __future__ import annotations
 
 import base64
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -567,6 +568,8 @@ class PlaywrightDriver:
         self._console_source = console_source
         self._action_timeout = action_timeout
         self._closed = False
+        self._cdp_attached = False
+        self._browser = None
         self._cdp: dict[int, object] = {}
         self._net: dict[int, list[dict]] = {}
         self._net_started: dict[int, float] = {}
@@ -597,20 +600,42 @@ class PlaywrightDriver:
     def _boot(self, config) -> None:
         self._pw = sync_playwright().start()
         launcher = self._pw.chromium
-        args = ["--no-first-run", "--no-default-browser-check"]
-        try:
-            self._context = launcher.launch_persistent_context(
-                user_data_dir=str(config.profile),
-                channel="msedge" if config.browser == "edge" else "chrome",
-                headless=config.headless,
-                viewport=None,
-                args=args,
-            )
-        except Exception as exc:
-            translated = translate_launch_failure(exc, config.browser)
-            if translated is None:
-                raise
-            raise translated from exc
+        cdp_url = os.environ.get("ABT_CDP_URL")
+        if cdp_url:
+            # Attach mode: drive a browser this process did not launch,
+            # addressed by its CDP endpoint. The point of the mode is sharing --
+            # a harness (BrowserGym) owns the launch and the scoring, this
+            # toolkit drives the pages, and both must sit on the same browser.
+            # Quitting therefore means disconnecting; closing the context or
+            # the browser would take the harness down with it (see quit()).
+            self._cdp_attached = True
+            try:
+                self._browser = launcher.connect_over_cdp(cdp_url)
+                contexts = self._browser.contexts
+                self._context = (
+                    contexts[0] if contexts else self._browser.new_context()
+                )
+            except Exception as exc:
+                raise OpError(
+                    "browser_dead", f"could not attach to {cdp_url}: {exc}"
+                ) from exc
+        else:
+            self._cdp_attached = False
+            self._browser = None
+            args = ["--no-first-run", "--no-default-browser-check"]
+            try:
+                self._context = launcher.launch_persistent_context(
+                    user_data_dir=str(config.profile),
+                    channel="msedge" if config.browser == "edge" else "chrome",
+                    headless=config.headless,
+                    viewport=None,
+                    args=args,
+                )
+            except Exception as exc:
+                translated = translate_launch_failure(exc, config.browser)
+                if translated is None:
+                    raise
+                raise translated from exc
         if self._console_source:
             # Must exist before the document does, and survive navigation --
             # the same reason the Selenium path uses CDP
@@ -849,7 +874,11 @@ class PlaywrightDriver:
         def work():
             self._closed = True
             try:
-                self._context.close()
+                # Attached sessions only drop the connection: the browser was
+                # launched by someone else, and its pages are theirs. Closing
+                # the adopted context would close every harness page with it.
+                if not getattr(self, "_cdp_attached", False):
+                    self._context.close()
             finally:
                 self._pw.stop()
 
