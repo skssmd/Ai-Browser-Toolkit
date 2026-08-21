@@ -928,49 +928,89 @@ def guidelines_lookup(
     typer.echo(json.dumps(found, indent=2))
 
 
-@guidelines_app.command("pull")
-def guidelines_pull(
-    domain: str = typer.Argument(..., help="Domain to fetch a playbook for."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip both prompts."),
-    trust_it: bool = typer.Option(
-        False, "--trust", help="Trust it after pulling, without the second prompt."
-    ),
+@guidelines_app.command("search")
+def guidelines_search(
+    query: str = typer.Argument(..., help="A domain, a URL, or just a word."),
 ) -> None:
-    """Fetch a playbook, show it, and ask before trusting it."""
+    """Find playbooks. Exact domains answer with everything they have."""
     from . import guidelines as g
 
-    found = g.lookup(domain)
-    if found is None:
-        typer.echo(f"nothing for {domain}", err=True)
+    found = g.search(query)
+    if not found["matches"]:
+        typer.echo(f"nothing found for {query!r}")
+        raise typer.Exit(1)
+    for match in found["matches"]:
+        held = (
+            f"held v{match['held_version']}"
+            if match["held_version"] is not None
+            else "not installed"
+        )
+        typer.echo(
+            f"  {match['domain']:<24} v{match['version']:<4} "
+            f"{', '.join(match['files']):<32} {held}"
+            + ("  UPDATE" if match["update_available"] else "")
+        )
+    if not found["exact"]:
+        typer.echo("\n(fuzzy match -- name the domain exactly for everything it has)")
+
+
+@guidelines_app.command("pull")
+def guidelines_pull(
+    query: str = typer.Argument(..., help="A domain, a URL, or a word to search for."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip every prompt."),
+    all_files: bool = typer.Option(
+        False, "--all", help="Take every file the domain has without asking per file."
+    ),
+) -> None:
+    """Fetch playbooks, reviewing each file before it is trusted."""
+    from . import guidelines as g
+
+    found = g.search(query)
+    if not found["matches"]:
+        typer.echo(f"nothing found for {query!r}", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"  domain    {found['domain']}")
-    typer.echo(f"  version   {found['available_version']}")
-    typer.echo(f"  files     {', '.join(found['files'])}")
+    if len(found["matches"]) > 1:
+        typer.echo("several domains match:")
+        for match in found["matches"]:
+            typer.echo(f"  {match['domain']:<24} {', '.join(match['files'])}")
+        typer.echo("\nname one of them exactly.")
+        raise typer.Exit(1)
+
+    match = found["matches"][0]
+    domain = match["domain"]
+    typer.echo(f"  domain    {domain}")
+    typer.echo(f"  version   {match['version']}")
+    typer.echo(f"  files     {', '.join(match['files'])}")
     typer.echo(f"  source    {g.source_url()}/{domain}")
-    if found["held_version"] is not None:
-        typer.echo(f"  you hold  v{found['held_version']} ({found['source']})")
+    if match["held_version"] is not None:
+        typer.echo(f"  you hold  v{match['held_version']}")
 
-    if not _confirm("\nPull this?", yes):
+    if not _confirm("\nFetch these for review?", yes):
         raise typer.Exit(1)
 
-    written = g.pull(domain)
-    typer.echo(f"\npulled {len(written)} file(s) to pending")
+    # Fetched into pending first, then reviewed one file at a time. Reviewing
+    # before fetching is not possible without fetching, so the boundary that
+    # matters is the one before *trusting*, not before downloading.
+    g.pull(domain, only=match["files"])
 
-    for path in written:
-        typer.echo(f"\n----- {path.name} -----")
-        typer.echo(path.read_text(encoding="utf-8"))
+    keep: list[str] = []
+    for filename in match["files"]:
+        name = f"{domain}/{Path(filename).stem}"
+        typer.echo(f"\n----- {domain}/{filename} -----")
+        typer.echo(g.read(name, allow_pending=True))
+        if all_files or _confirm(f"\nTrust {domain}/{filename}?", yes):
+            keep.append(filename)
 
-    typer.echo(
-        "\nA playbook is instructions an agent will follow. Trusting it means "
-        "the toolkit will hand this text to agents driving that site."
-    )
-    if not _confirm(f"Trust and use the playbook for {domain}?", yes or trust_it):
-        typer.echo(f"left untrusted. `abt guidelines trust {domain}` when ready.")
+    if not keep:
+        typer.echo("\nnothing trusted; the fetched copies stay in pending")
         raise typer.Exit(0)
 
-    g.trust(domain)
-    typer.echo(f"trusted. `abt guidelines show {domain}/<file>` to read it.")
+    if len(keep) == len(match["files"]):
+        g.trust(domain)
+    else:
+        g.trust_files(domain, keep)
+    typer.echo(f"\ntrusted: {', '.join(keep)}")
 
 
 @guidelines_app.command("trust")

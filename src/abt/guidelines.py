@@ -291,7 +291,7 @@ def lookup(domain: str, timeout: float = 10.0) -> dict | None:
     }
 
 
-def pull(domain: str, timeout: float = 30.0) -> list[Path]:
+def pull(domain: str, only: list[str] | None = None, timeout: float = 30.0) -> list[Path]:
     """Fetch a domain's playbooks into `pending/`. Never into use.
 
     Deliberately not `trusted/`: see this module's docstring. The caller has
@@ -312,8 +312,9 @@ def pull(domain: str, timeout: float = 30.0) -> list[Path]:
         raise KeyError(domain)
     target.mkdir(parents=True, exist_ok=True)
 
+    wanted = entry.get("files", []) if only is None else list(only)
     written = []
-    for filename in entry.get("files", []):
+    for filename in wanted:
         if not filename.endswith(".md") or "/" in filename or "\\" in filename:
             continue
         response = httpx.get(f"{source_url()}/{domain}/{filename}", timeout=timeout)
@@ -452,3 +453,161 @@ def submission_paths(domain: str) -> tuple[Path, str]:
     if root is None or not root.is_dir():
         raise KeyError(f"no local playbook for {domain}")
     return root, f"playbook/{domain}"
+
+
+# -- searching ------------------------------------------------------------
+
+
+def _normalise_query(query: str) -> tuple[str, str]:
+    """Split a query into (domain-ish, file-ish).
+
+    Accepts anything a person or an agent is likely to have: a bare word, a
+    host, a full URL, or `domain/path`. `sheets`, `sheets.google.com`,
+    `https://docs.google.com/spreadsheets/d/abc` all arrive here.
+    """
+    import re
+
+    text = query.strip().lower()
+    text = re.sub(r"^[a-z][a-z0-9+.-]*://", "", text)
+    if text.startswith("www."):
+        text = text[4:]
+    domain, _, rest = text.partition("/")
+    return domain, rest.strip("/")
+
+
+def _score(needle: str, hay: str) -> float:
+    """How well `needle` matches `hay`. 1.0 is exact.
+
+    Substring beats similarity on purpose: someone typing `sheets` means the
+    thing with `sheets` in the name, even when a different entry happens to
+    score higher on edit distance.
+    """
+    from difflib import SequenceMatcher
+
+    if not needle:
+        return 0.0
+    if needle == hay:
+        return 1.0
+    if needle in hay:
+        return 0.9
+    if any(needle in part for part in hay.replace("-", ".").split(".")):
+        return 0.85
+    return SequenceMatcher(None, needle, hay).ratio()
+
+
+def search(query: str, limit: int = 8, timeout: float = 10.0) -> dict:
+    """Find playbooks for anything domain-ish, exactly or approximately.
+
+    An exact domain is the fast path and returns every file that domain has
+    in one answer -- no "which one did you mean" round trip, which is the
+    whole point when an agent has just landed somewhere.
+
+    Anything else is fuzzy, across both domain names and file names, so
+    `sheets` finds `docs.google.com/sheets.md` and a hypothetical
+    `sheets.google.com` alike. `domain/file` narrows the file search to that
+    domain.
+    """
+    try:
+        index = fetch_index(timeout=timeout)
+    except Exception:
+        return {"query": query, "exact": False, "matches": [], "source": None}
+
+    domain, rest = _normalise_query(query)
+    held = installed()
+
+    def entry(name: str, files: list[str], matched_on: str, score: float) -> dict:
+        local = held.get(name)
+        return {
+            "domain": name,
+            "version": int(index[name].get("version", 1)),
+            "files": files,
+            "matched_on": matched_on,
+            "score": round(score, 3),
+            "held_version": local["version"] if local else None,
+            "trusted": bool(local and local["trusted"]),
+            "update_available": bool(
+                local and int(index[name].get("version", 1)) > local["version"]
+            ),
+        }
+
+    # Fast path: the domain is known. Return everything it has at once.
+    if domain in index:
+        files = index[domain].get("files", [])
+        if rest:
+            narrowed = [
+                f for f in files if _score(rest, Path(f).stem.lower()) >= 0.6
+            ] or files
+        else:
+            narrowed = files
+        return {
+            "query": query,
+            "exact": True,
+            "source": source_url(),
+            "matches": [entry(domain, narrowed, "domain", 1.0)],
+        }
+
+    needle = domain or rest
+    scored: list[tuple[float, dict]] = []
+    for name, meta in index.items():
+        files = meta.get("files", [])
+        best = _score(needle, name)
+        matched_on = "domain"
+        for filename in files:
+            file_score = _score(needle, Path(filename).stem.lower())
+            if file_score > best:
+                best, matched_on = file_score, f"file:{filename}"
+        if best >= 0.5:
+            hits = [
+                f for f in files if _score(needle, Path(f).stem.lower()) >= 0.6
+            ] or files
+            scored.append((best, entry(name, hits, matched_on, best)))
+
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["domain"]))
+    return {
+        "query": query,
+        "exact": False,
+        "source": source_url(),
+        "matches": [match for _, match in scored[:limit]],
+    }
+
+
+def trust_files(domain: str, filenames: list[str]) -> Path:
+    """Trust some of a domain's pulled files and leave the rest pending.
+
+    Reviewing a folder file by file only means something if declining one
+    actually leaves it out -- otherwise the per-file prompt is theatre.
+    """
+    pending_root = _layer_root(PENDING)
+    source = _resolve_within(pending_root, domain)
+    if source is None or not source.is_dir():
+        raise KeyError(f"{domain} is not pending")
+
+    target = _resolve_within(_layer_root(TRUSTED), domain)
+    if target is None:
+        raise KeyError(domain)
+    target.mkdir(parents=True, exist_ok=True)
+
+    for filename in filenames:
+        if "/" in filename or "\\" in filename:
+            continue
+        path = source / filename
+        if path.is_file():
+            (target / filename).write_text(
+                path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            path.unlink()
+
+    # The meta travels with whatever was accepted, so a partial trust still
+    # records a version -- and the pending copy keeps its own for the rest.
+    meta = source / "meta.json"
+    if meta.is_file():
+        (target / "meta.json").write_text(
+            meta.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        if not any(p.suffix == ".md" for p in source.iterdir()):
+            meta.unlink()
+            try:
+                source.rmdir()
+            except OSError:
+                pass
+    return target

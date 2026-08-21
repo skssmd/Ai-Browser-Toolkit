@@ -242,3 +242,108 @@ def test_the_pulled_copy_records_where_it_came_from(home, monkeypatch):
     assert meta["ref"] == "abc123"
     assert meta["source"].endswith("ABT-Playbooks/main")
     assert meta["pulled_at"]
+
+
+# -- the server surface ---------------------------------------------------
+
+
+def test_the_server_lists_and_reads_but_cannot_trust(unstarted_client):
+    """Pulling and trusting stay on the CLI, where a person is present. An
+    endpoint that could trust a playbook would let anything able to reach
+    loopback decide what instructions agents follow."""
+    routes = {r.path for r in unstarted_client.app.routes}
+    assert "/guidelines" in routes
+    assert "/guidelines/{name:path}" in routes
+    assert not any("trust" in path or "pull" in path for path in routes)
+
+
+def test_reading_a_missing_playbook_over_http_is_a_clean_error(unstarted_client):
+    response = unstarted_client.get("/guidelines/nowhere.com/nothing")
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+
+
+def test_the_server_never_serves_an_untrusted_playbook(unstarted_client, monkeypatch):
+    from abt import guidelines as g
+
+    monkeypatch.setattr(g, "read", lambda name, allow_pending=False: (_ for _ in ()).throw(
+        AssertionError("allow_pending was set") if allow_pending else KeyError(name)
+    ))
+    response = unstarted_client.get("/guidelines/example.com/example")
+    assert response.json()["ok"] is False
+
+
+# -- fuzzy search ---------------------------------------------------------
+
+
+@pytest.fixture
+def index(monkeypatch):
+    data = {
+        "docs.google.com": {"version": 1, "files": ["docs.md", "sheets.md"]},
+        "script.google.com": {"version": 2, "files": ["forms-apps-script.md"]},
+        "messenger.com": {"version": 1, "files": ["messenger.md"]},
+    }
+    monkeypatch.setattr(guidelines, "fetch_index", lambda **kw: data)
+    return data
+
+
+def test_an_exact_domain_answers_with_everything_it_has(home, index):
+    """The fast path. An agent that just landed somewhere should not need a
+    second round trip to find out which files exist."""
+    found = guidelines.search("docs.google.com")
+    assert found["exact"] is True
+    assert len(found["matches"]) == 1
+    assert found["matches"][0]["files"] == ["docs.md", "sheets.md"]
+
+
+def test_a_full_url_is_treated_as_its_domain(home, index):
+    found = guidelines.search("https://www.docs.google.com/spreadsheets/d/abc")
+    assert found["exact"] is True
+    assert found["matches"][0]["domain"] == "docs.google.com"
+
+
+def test_a_bare_word_matches_a_file_inside_a_domain(home, index):
+    """`sheets` should find docs.google.com/sheets.md."""
+    found = guidelines.search("sheets")
+    assert found["exact"] is False
+    assert found["matches"][0]["domain"] == "docs.google.com"
+    assert found["matches"][0]["files"] == ["sheets.md"]
+    assert found["matches"][0]["matched_on"] == "file:sheets.md"
+
+
+def test_a_partial_domain_matches_several(home, index):
+    names = [m["domain"] for m in guidelines.search("google")["matches"]]
+    assert "docs.google.com" in names
+    assert "script.google.com" in names
+
+
+def test_domain_slash_file_narrows_within_that_domain(home, index):
+    found = guidelines.search("docs.google.com/sheets")
+    assert found["exact"] is True
+    assert found["matches"][0]["files"] == ["sheets.md"]
+
+
+def test_search_survives_an_unreachable_source(home, monkeypatch):
+    monkeypatch.setattr(
+        guidelines, "fetch_index", lambda **kw: (_ for _ in ()).throw(OSError())
+    )
+    assert guidelines.search("anything")["matches"] == []
+
+
+# -- partial trust --------------------------------------------------------
+
+
+def test_declining_one_file_actually_leaves_it_out(home):
+    """Reviewing file by file only means something if a refusal sticks."""
+    pending = home / "guidelines" / "pending" / "example.com"
+    pending.mkdir(parents=True)
+    (pending / "keep.md").write_text("wanted", encoding="utf-8")
+    (pending / "skip.md").write_text("unwanted", encoding="utf-8")
+    (pending / "meta.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
+
+    guidelines.trust_files("example.com", ["keep.md"])
+
+    assert guidelines.read("example.com/keep") == "wanted"
+    with pytest.raises(KeyError):
+        guidelines.read("example.com/skip")
+    assert (pending / "skip.md").is_file()

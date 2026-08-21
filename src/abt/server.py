@@ -313,6 +313,47 @@ def create_app(
     async def ops():
         return ok(OP_NAMES)
 
+    # --- playbooks ------------------------------------------------------------
+    #
+    # Read-only over HTTP, deliberately. Pulling and trusting stay on the CLI,
+    # where a person is present to consent -- an endpoint that could trust a
+    # playbook would let anything able to reach loopback decide what
+    # instructions agents follow.
+
+    @app.get("/guidelines")
+    async def guidelines_list():
+        from . import guidelines as g
+
+        return ok(
+            {
+                "installed": list(g.installed().values()),
+                "general": g.general(),
+                "source": g.source_url(),
+                "lookup_enabled": g.lookup_enabled(),
+            }
+        )
+
+    @app.get("/guidelines/lookup")
+    async def guidelines_lookup(domain: str):
+        from . import guidelines as g
+
+        found = await run_in_threadpool(g.lookup, domain)
+        if found is None:
+            return fail(OpError("element_not_found", f"no playbook for {domain}"))
+        return ok(found)
+
+    @app.get("/guidelines/{name:path}")
+    async def guidelines_read(name: str):
+        from . import guidelines as g
+
+        try:
+            # allow_pending stays False: an untrusted playbook is never served
+            # to whatever is driving the browser. `abt guidelines show
+            # --pending` is the reviewing path, and it warns.
+            return ok({"name": name, "markdown": g.read(name)})
+        except KeyError:
+            return fail(OpError("element_not_found", f"no playbook named {name}"))
+
     # --- browser lifecycle ----------------------------------------------------
 
     @app.get("/health")
