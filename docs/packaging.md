@@ -46,14 +46,19 @@ none of your logins.
 |---|---|---|
 | PyPI | wheel + sdist | pypi.org/project/aibrowsertoolkit |
 | Standalone / winget | Inno `.exe` | GitHub release / microsoft/winget-pkgs |
-| Scoop | Windows zip | the-graft-project/scoop-bucket |
-| Homebrew | macOS **arm64** tarball | the-graft-project/homebrew-tap |
+| Scoop | Windows zip | skssmd/scoop-bucket |
+| Homebrew | macOS **arm64** tarball | skssmd/homebrew-tap |
 | AUR | Linux tarballs | aibrowsertoolkit-bin |
 | apt / dnf / apk | Linux tarballs | apt.fury.io/skssmd |
 
-The tap and the winget fork are shared with the Graft project. Every push into
-them rebases and retries, because a simultaneous Graft release would otherwise
-lose this one to a non-fast-forward rejection.
+All of these live under `skssmd`. The pushes still rebase and retry, which
+costs nothing and covers any concurrent write to the same repository.
+
+**The first winget submission is manual.** `winget-releaser` only *updates* a
+package that already exists in `microsoft/winget-pkgs`; on a brand-new
+identifier it fails with "Package skssmd.AIBrowserToolkit does not exist in
+the winget-pkgs repository". Submit version one with `wingetcreate new`, and
+every release after that is automatic.
 
 ## Secrets
 

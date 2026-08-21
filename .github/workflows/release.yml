@@ -258,7 +258,7 @@ jobs:
           identifier: skssmd.AIBrowserToolkit
           version: ${{ needs.wheel.outputs.version }}
           installers-regex: '-setup\.exe$'
-          fork-user: the-graft-project
+          fork-user: skssmd
           token: ${{ secrets.WINGET_TOKEN }}
 
   scoop:
@@ -286,7 +286,7 @@ jobs:
           TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           set -eu
-          git clone "https://x-access-token:$TOKEN@github.com/the-graft-project/scoop-bucket.git" bucket
+          git clone "https://x-access-token:$TOKEN@github.com/skssmd/scoop-bucket.git" bucket
           mkdir -p bucket/bucket
           cp aibrowsertoolkit.json bucket/bucket/aibrowsertoolkit.json
           cd bucket
@@ -328,7 +328,7 @@ jobs:
           TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           set -eu
-          git clone "https://x-access-token:$TOKEN@github.com/the-graft-project/homebrew-tap.git" tap
+          git clone "https://x-access-token:$TOKEN@github.com/skssmd/homebrew-tap.git" tap
           mkdir -p tap/Formula
           cp aibrowsertoolkit.rb tap/Formula/aibrowsertoolkit.rb
           cd tap
