@@ -33,9 +33,19 @@ HOST = "127.0.0.1"
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
-    typer.echo(version("aibrowsertoolkit"))
+    # paths.DIST_NAME, not a literal. The distribution was renamed to
+    # ai-browser-toolkit when PyPI rejected the old spelling, and a literal
+    # here survived that rename to fail on every channel at once -- this is
+    # the lookup `abt --version` depends on, and `abt --version` is what the
+    # smoke test, the Inno verification and the Homebrew test block all run.
+    # A test asserts DIST_NAME equals pyproject's name.
+    try:
+        typer.echo(version(paths.DIST_NAME))
+    except PackageNotFoundError:
+        # Running from a source tree with nothing installed.
+        typer.echo("unknown (not installed)")
     raise typer.Exit()
 
 
