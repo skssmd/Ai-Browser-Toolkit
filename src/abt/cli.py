@@ -27,7 +27,7 @@ from . import paths
 # and on a bare `abt`. An agent that runs the tool and gets "Missing command"
 # learns nothing; this is the one place it is guaranteed to look.
 AGENT_EPILOG = (
-    '\x08\nFor agents -- start here:\n\n  abt status                            a server already up? usually yes\n  abt up                                start one if not; returns at once\n  abt guidelines show toolkit-workflow  read this first: the whole workflow\n  abt guidelines search <domain>        is there a playbook for this site?\n  abt ops                               every op and its exact parameters\n  abt exec -                            any op at all, JSON on stdin\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
+    'First three commands, in this order:\n\n\x08\n  abt up             start the server (no-op if already up)\n  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n  abt goto <url>     drive it\n\nThe server runs without a browser on purpose: it answers in a second,\nwhile Chrome on a persistent profile can take two minutes. browser_dead\nor \'no browser is running\' means you skipped `abt browser start`.\n\nThen:\n\n\x08\n  abt status                            URL, tabs, live refs\n  abt find --text \'Sign in\'             then: abt click --ref el_3\n  abt ops                               every op and its exact parameters\n  abt exec -                            any op at all, JSON on stdin\n  abt guidelines show toolkit-workflow  the whole workflow: read it\n  abt guidelines search <domain>        a playbook for this site?\n  abt browser restart                   the way back from browser_dead\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n\x08\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
 )
 
 app = typer.Typer(
@@ -48,6 +48,11 @@ guidelines_app = typer.Typer(
     help="Site playbooks. Nothing fetched is used until you say so.",
 )
 app.add_typer(guidelines_app, name="guidelines")
+browser_app = typer.Typer(
+    add_completion=False,
+    help="Start, stop or restart the browser. The server runs without one.",
+)
+app.add_typer(browser_app, name="browser")
 
 DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
@@ -1198,3 +1203,53 @@ def guidelines_submit(
     typer.echo(f'  git add {domain} && git commit -m "Add a playbook for {domain}"')
     typer.echo(f"  git push -u origin {branch}")
     typer.echo(f"\nthen open a pull request at {repo}/compare/{branch}?expand=1")
+
+
+# -- browser lifecycle -----------------------------------------------------
+#
+# `abt up` starts the *server*; the server deliberately starts without a
+# browser, because Chrome on a persistent profile can take two minutes and a
+# server that is useful in one second is worth more. That makes browser start
+# a second, explicit step -- and until these commands existed, the error
+# telling you so pointed at a JSON payload, which is no help at all to
+# somebody holding a command line.
+
+
+@browser_app.command("start")
+def browser_start(
+    browser: str = typer.Option(None, "--browser", help="chrome or edge."),
+    profile: Path = typer.Option(None, "--profile", help="user-data-dir to use."),
+    headless: bool = typer.Option(None, "--headless/--windowed"),
+    port: int = _port_option(),
+) -> None:
+    """Open the browser. Takes up to two minutes on a persistent profile."""
+    payload: dict[str, Any] = {}
+    if browser is not None:
+        payload["browser"] = browser
+    if profile is not None:
+        payload["profile"] = str(profile)
+    if headless is not None:
+        payload["headless"] = headless
+    _call(port, "/browser/start", payload)
+
+
+@browser_app.command("stop")
+def browser_stop(port: int = _port_option()) -> None:
+    """Close the browser. The server keeps running."""
+    _call(port, "/browser/stop", {})
+
+
+@browser_app.command("restart")
+def browser_restart(port: int = _port_option()) -> None:
+    """Close and reopen the browser on the same profile.
+
+    The way back from `browser_dead` -- which is what a tab that closed itself
+    leaves behind. You stay logged in; every tab and ref is gone.
+    """
+    _call(port, "/browser/restart", {})
+
+
+@browser_app.command("status")
+def browser_status(port: int = _port_option()) -> None:
+    """Is a browser running, and on what configuration."""
+    _call(port, "/browser", None, method="GET")

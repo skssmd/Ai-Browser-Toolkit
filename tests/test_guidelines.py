@@ -436,3 +436,29 @@ def test_a_document_prints_even_when_the_console_cannot_encode_it(capsys):
 
     cli._echo_document("an arrow \u2192 and an em-dash \u2014 here")
     assert "here" in capsys.readouterr().out
+
+
+# -- the two-step start ---------------------------------------------------
+
+
+def test_browser_lifecycle_is_reachable_from_the_cli():
+    """`abt up` starts the server; the browser is a separate step. Until these
+    existed, the error telling you so pointed at a JSON payload -- no help to
+    somebody holding a command line, which is exactly where an agent got stuck.
+    """
+    from abt import cli
+
+    names = {c.name for c in cli.browser_app.registered_commands}
+    assert names == {"start", "stop", "restart", "status"}
+
+
+def test_the_epilog_leads_with_the_start_sequence():
+    """An agent reads this before anything else. The two-step start is the
+    thing it gets wrong, so it goes first."""
+    from abt import cli
+
+    epilog = cli.AGENT_EPILOG
+    assert "abt up" in epilog
+    assert "abt browser start" in epilog
+    assert "SEPARATE step" in epilog
+    assert epilog.index("abt up") < epilog.index("abt goto")

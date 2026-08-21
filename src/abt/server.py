@@ -308,6 +308,20 @@ def create_app(
             return fail(
                 OpError("browser_dead", f"browser is not reachable: {exc.msg or exc}")
             )
+        except Exception as exc:
+            # Anything else, too. A half-shut-down driver raises RuntimeError
+            # ("cannot schedule new futures after shutdown"), not EngineError,
+            # and /status answering `Internal Server Error` to that tells a
+            # caller nothing about what to do next. Observed: an agent saw it,
+            # could not tell the server was wedged, and guessed for four
+            # commands. `abt browser restart` is the way out.
+            return fail(
+                OpError(
+                    "browser_dead",
+                    f"browser is not reachable ({type(exc).__name__}: {exc}). "
+                    f"Try `abt browser restart`.",
+                )
+            )
 
     @app.get("/ops")
     async def ops():
