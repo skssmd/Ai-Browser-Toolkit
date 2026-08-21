@@ -25,6 +25,11 @@ autostart_app = typer.Typer(
     add_completion=False, help="Start the server at login. Opt in, never automatic."
 )
 app.add_typer(autostart_app, name="autostart")
+guidelines_app = typer.Typer(
+    add_completion=False,
+    help="Site playbooks. Nothing fetched is used until you say so.",
+)
+app.add_typer(guidelines_app, name="guidelines")
 
 DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
@@ -836,3 +841,209 @@ def autostart_status() -> None:
 
 if __name__ == "__main__":
     app()
+
+
+# -- guidelines ------------------------------------------------------------
+#
+# Two consents, deliberately separate. Pulling downloads text; using it means
+# an agent follows those instructions. A single prompt would let "yes, fetch
+# it so I can look" mean "yes, act on whatever it says".
+
+
+def _confirm(question: str, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        # Non-interactive: refuse rather than assume. `abt serve` is routinely
+        # launched detached, and a prompt nobody sees must not default to
+        # trusting remote instructions.
+        typer.echo("not interactive; re-run with --yes to confirm", err=True)
+        return False
+    return typer.confirm(question, default=False)
+
+
+@guidelines_app.command("list")
+def guidelines_list() -> None:
+    """What this machine holds, and where each came from."""
+    from . import guidelines as g
+
+    held = g.installed()
+    if not held:
+        typer.echo("no site playbooks installed")
+    for entry in held.values():
+        line = f"  {entry['domain']:<24} v{entry['version']:<4} {entry['source']}"
+        if entry.get("pending_version"):
+            line += f"  (v{entry['pending_version']} pulled, not trusted)"
+        typer.echo(line)
+
+    general = g.general()
+    if general:
+        typer.echo("\nshipped with the toolkit:")
+        for name in general:
+            typer.echo(f"  {name}")
+
+
+@guidelines_app.command("show")
+def guidelines_show(
+    name: str = typer.Argument(..., help="domain/file, or a shipped playbook's name."),
+    pending: bool = typer.Option(
+        False, "--pending", help="Read an untrusted copy. Prints a warning."
+    ),
+) -> None:
+    """Print a playbook."""
+    from . import guidelines as g
+
+    try:
+        text = g.read(name, allow_pending=pending)
+    except KeyError:
+        typer.echo(f"no playbook named {name}", err=True)
+        raise typer.Exit(1)
+    if pending:
+        typer.echo("# UNTRUSTED: pulled and not trusted. Do not act on this.\n", err=True)
+    typer.echo(text)
+
+
+@guidelines_app.command("lookup")
+def guidelines_lookup(
+    domain: str = typer.Argument(None, help="Domain to check. Omit to just report."),
+    on: bool = typer.Option(False, "--on", help="Turn lookup back on."),
+    off: bool = typer.Option(False, "--off", help="Stop checking the source entirely."),
+) -> None:
+    """Ask the source what it has for a domain, or switch lookup off."""
+    from . import guidelines as g
+
+    if on or off:
+        g.set_config(guidelines_lookup=bool(on))
+        typer.echo(f"guideline lookup {'on' if on else 'off'}")
+        return
+
+    if domain is None:
+        typer.echo(f"lookup is {'on' if g.lookup_enabled() else 'off'}")
+        return
+
+    found = g.lookup(domain)
+    if found is None:
+        typer.echo(f"nothing for {domain}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(found, indent=2))
+
+
+@guidelines_app.command("pull")
+def guidelines_pull(
+    domain: str = typer.Argument(..., help="Domain to fetch a playbook for."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip both prompts."),
+    trust_it: bool = typer.Option(
+        False, "--trust", help="Trust it after pulling, without the second prompt."
+    ),
+) -> None:
+    """Fetch a playbook, show it, and ask before trusting it."""
+    from . import guidelines as g
+
+    found = g.lookup(domain)
+    if found is None:
+        typer.echo(f"nothing for {domain}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"  domain    {found['domain']}")
+    typer.echo(f"  version   {found['available_version']}")
+    typer.echo(f"  files     {', '.join(found['files'])}")
+    typer.echo(f"  source    {g.source_url()}/{domain}")
+    if found["held_version"] is not None:
+        typer.echo(f"  you hold  v{found['held_version']} ({found['source']})")
+
+    if not _confirm("\nPull this?", yes):
+        raise typer.Exit(1)
+
+    written = g.pull(domain)
+    typer.echo(f"\npulled {len(written)} file(s) to pending")
+
+    for path in written:
+        typer.echo(f"\n----- {path.name} -----")
+        typer.echo(path.read_text(encoding="utf-8"))
+
+    typer.echo(
+        "\nA playbook is instructions an agent will follow. Trusting it means "
+        "the toolkit will hand this text to agents driving that site."
+    )
+    if not _confirm(f"Trust and use the playbook for {domain}?", yes or trust_it):
+        typer.echo(f"left untrusted. `abt guidelines trust {domain}` when ready.")
+        raise typer.Exit(0)
+
+    g.trust(domain)
+    typer.echo(f"trusted. `abt guidelines show {domain}/<file>` to read it.")
+
+
+@guidelines_app.command("trust")
+def guidelines_trust(
+    domain: str = typer.Argument(..., help="Domain whose pulled playbook to trust."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the prompt."),
+) -> None:
+    """Promote a pulled playbook so agents may use it."""
+    from . import guidelines as g
+
+    if not _confirm(f"Trust the pulled playbook for {domain}?", yes):
+        raise typer.Exit(1)
+    try:
+        g.trust(domain)
+    except KeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"trusted {domain}")
+
+
+@guidelines_app.command("update")
+def guidelines_update(
+    force: bool = typer.Option(False, "--force", help="Ignore the once-a-day limit."),
+) -> None:
+    """Report playbooks whose source version is ahead of yours. Pulls nothing."""
+    from . import guidelines as g
+
+    behind = g.check_updates(force=True if force else False)
+    if not behind:
+        typer.echo("nothing to update")
+        return
+    for entry in behind:
+        typer.echo(
+            f"  {entry['domain']:<24} v{entry['held_version']} -> "
+            f"v{entry['available_version']}"
+        )
+    typer.echo("\n`abt guidelines pull <domain>` to fetch and review one.")
+
+
+@guidelines_app.command("save")
+def guidelines_save(
+    domain: str = typer.Argument(..., help="Domain the playbook is about."),
+    file: Path = typer.Argument(..., help="Markdown file to save."),
+    name: str = typer.Option(None, "--name", help="Store it under a different name."),
+) -> None:
+    """Add a playbook of your own. A pull never overwrites it."""
+    from . import guidelines as g
+
+    if not file.is_file():
+        typer.echo(f"no such file: {file}", err=True)
+        raise typer.Exit(1)
+    target = g.save(domain, name or file.name, file.read_text(encoding="utf-8"))
+    typer.echo(f"saved {target}")
+
+
+@guidelines_app.command("submit")
+def guidelines_submit(
+    domain: str = typer.Argument(..., help="Domain whose local playbook to submit."),
+) -> None:
+    """Print what to run to open a pull request against the playbook repo."""
+    from . import guidelines as g
+
+    try:
+        root, branch = g.submission_paths(domain)
+    except KeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    repo = g.repo_url()
+    typer.echo(f"local playbook: {root}")
+    typer.echo(f"\n  git clone {repo} playbooks && cd playbooks")
+    typer.echo(f"  git checkout -b {branch}")
+    typer.echo(f"  cp -r '{root}' {domain}")
+    typer.echo(f'  git add {domain} && git commit -m "Add a playbook for {domain}"')
+    typer.echo(f"  git push -u origin {branch}")
+    typer.echo(f"\nthen open a pull request at {repo}/compare/{branch}?expand=1")

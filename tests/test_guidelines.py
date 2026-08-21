@@ -192,3 +192,53 @@ def test_local_testing_playbooks_do_not_ship():
     names = " ".join(p.as_posix().lower() for p in root.rglob("*"))
     for excluded in ("kayoanime", "fojik", "onehr"):
         assert excluded not in names, excluded
+
+
+# -- consent --------------------------------------------------------------
+
+
+def test_consent_is_refused_when_nobody_is_there_to_give_it(monkeypatch):
+    """`abt serve` is routinely launched detached. A prompt nobody sees must
+    not default to trusting remote instructions."""
+    from abt import cli
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    assert cli._confirm("trust this?", assume_yes=False) is False
+
+
+def test_explicit_yes_still_works_without_a_terminal(monkeypatch):
+    """Scripted use is legitimate; it just has to be stated."""
+    from abt import cli
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    assert cli._confirm("trust this?", assume_yes=True) is True
+
+
+def test_the_pulled_copy_records_where_it_came_from(home, monkeypatch):
+    """A version says the author thinks something changed; a ref says exactly
+    which upstream state this copy is."""
+    monkeypatch.setattr(
+        guidelines,
+        "fetch_index",
+        lambda **kw: {"example.com": {"version": 2, "files": ["a.md"]}},
+    )
+    monkeypatch.setattr(guidelines, "source_ref", lambda **kw: "abc123")
+
+    class Response:
+        text = "body"
+
+        def raise_for_status(self):
+            pass
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: Response())
+    guidelines.pull("example.com")
+
+    meta = json.loads(
+        (home / "guidelines" / "pending" / "example.com" / "meta.json").read_text()
+    )
+    assert meta["version"] == 2
+    assert meta["ref"] == "abc123"
+    assert meta["source"].endswith("ABT-Playbooks/main")
+    assert meta["pulled_at"]

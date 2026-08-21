@@ -322,9 +322,46 @@ def pull(domain: str, timeout: float = 30.0) -> list[Path]:
         path.write_text(response.text, encoding="utf-8")
         written.append(path)
 
-    meta = {"version": int(entry.get("version", 1)), "files": entry.get("files", [])}
+    # The ref matters as much as the version. A version says "the author
+    # thinks this changed"; a commit says exactly which upstream state this
+    # copy is, which is the only thing that survives a version somebody forgot
+    # to bump.
+    meta = {
+        "version": int(entry.get("version", 1)),
+        "files": entry.get("files", []),
+        "source": source_url(),
+        "ref": source_ref(),
+        "pulled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     (target / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return written
+
+
+def source_ref(timeout: float = 10.0) -> str | None:
+    """The commit the source is currently at, when it is a GitHub raw URL.
+
+    Best effort: a source that is not GitHub, or a network that is down, gets
+    None rather than failing the pull. The version is still recorded.
+    """
+    import httpx
+
+    prefix = "https://raw.githubusercontent.com/"
+    url = source_url()
+    if not url.startswith(prefix):
+        return None
+    parts = url[len(prefix) :].split("/")
+    if len(parts) < 3:
+        return None
+    owner, repo, branch = parts[0], parts[1], parts[2]
+    try:
+        response = httpx.get(
+            f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}",
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return str(response.json()["sha"])
+    except Exception:
+        return None
 
 
 def trust(domain: str) -> Path:
