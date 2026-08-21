@@ -22,7 +22,7 @@ from pathlib import Path
 # Windows and macOS want a display name; XDG wants a lowercase one.
 APP_DIR = "AIBrowserToolkit"
 XDG_DIR = "aibrowsertoolkit"
-DIST_NAME = "aibrowsertoolkit"
+DIST_NAME = "ai-browser-toolkit"
 
 
 def current_kind() -> str:

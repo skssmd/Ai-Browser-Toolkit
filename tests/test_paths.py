@@ -34,7 +34,7 @@ def checkout(tmp_path: Path) -> Path:
     d = tmp_path / "checkout"
     d.mkdir()
     (d / "pyproject.toml").write_text(
-        '[project]\nname = "aibrowsertoolkit"\nversion = "0.1.0"\n',
+        '[project]\nname = "ai-browser-toolkit"\nversion = "0.1.0"\n',
         encoding="utf-8",
     )
     return d

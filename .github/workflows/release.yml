@@ -267,7 +267,7 @@ jobs:
           identifier: skssmd.AIBrowserToolkit
           version: ${{ needs.wheel.outputs.version }}
           installers-regex: '-setup\.exe$'
-          fork-user: skssmd
+          fork-user: The-Graft-Project
           token: ${{ secrets.WINGET_TOKEN }}
 
   scoop:

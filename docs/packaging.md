@@ -30,7 +30,7 @@ release and its assets already exist.
 
 ## Verifying an install by hand
 
-    pipx install aibrowsertoolkit
+    pipx install ai-browser-toolkit
     abt --version
     abt doctor        # finds the browser, and shows where the profile landed
 
@@ -44,21 +44,53 @@ none of your logins.
 
 | Channel | Artifact | Repository |
 |---|---|---|
-| PyPI | wheel + sdist | pypi.org/project/aibrowsertoolkit |
+| PyPI | wheel + sdist | pypi.org/project/ai-browser-toolkit |
 | Standalone / winget | Inno `.exe` | GitHub release / microsoft/winget-pkgs |
 | Scoop | Windows zip | skssmd/scoop-bucket |
 | Homebrew | macOS **arm64** tarball | skssmd/homebrew-tap |
 | AUR | Linux tarballs | aibrowsertoolkit-bin |
 | apt / dnf / apk | Linux tarballs | apt.fury.io/skssmd |
 
-All of these live under `skssmd`. The pushes still rebase and retry, which
-costs nothing and covers any concurrent write to the same repository.
+The tap and the Scoop bucket live under `skssmd`. The winget fork does not:
+`skssmd/winget-pkgs` redirects to **`The-Graft-Project/winget-pkgs`**, because
+the fork was transferred to that org. `fork-user` in the winget job names the
+org for that reason -- a redirect is not something the action follows.
+
+The pushes rebase and retry, and they push *before* pulling. `git pull
+--rebase` fails outright against a repository with no commits, which is
+exactly what a freshly created bucket is, so pulling first meant the very
+first release could never land.
 
 **The first winget submission is manual.** `winget-releaser` only *updates* a
 package that already exists in `microsoft/winget-pkgs`; on a brand-new
 identifier it fails with "Package skssmd.AIBrowserToolkit does not exist in
-the winget-pkgs repository". Submit version one with `wingetcreate new`, and
-every release after that is automatic.
+the winget-pkgs repository". Version 0.1.2 was submitted by hand with
+`wingetcreate new`; every release after that is automatic. Once it merges,
+remove `continue-on-error: true` from the winget job -- it is there only to
+stop that one manual prerequisite colouring every release red, and leaving it
+would hide a genuine winget failure later.
+
+## The name is different on every channel
+
+Only the command is constant. This trips people up, so it is written down:
+
+| Channel | Install as |
+|---|---|
+| PyPI | `pip install ai-browser-toolkit` |
+| winget | `winget install skssmd.AIBrowserToolkit` (moniker `abt`) |
+| Scoop | `scoop install aibrowsertoolkit` |
+| Homebrew | `brew install aibrowsertoolkit` |
+| AUR | `yay -S aibrowsertoolkit-bin` |
+| apt / dnf / apk | `aibrowsertoolkit` |
+
+Then always `abt`.
+
+PyPI's is the odd one out and not by choice: `aibrowsertoolkit` was rejected
+as "too similar to an existing project" -- PyPI strips `-`, `_` and `.` before
+comparing, and the project it collided with was our own `ai-browser-toolkit`,
+registered earlier. The bundle, installer and distro package names keep the
+old spelling deliberately: the winget manifest pins an installer URL, and
+renaming the assets would break it.
 
 ## Secrets
 
@@ -74,10 +106,15 @@ left, and which wave first needs it:
 | `FURY_TOKEN` -- Gemfury **push** token | 4 |
 
 PyPI additionally needs a GitHub environment named exactly `pypi`, and a
-pending publisher registered at pypi.org naming owner `skssmd`, repository
-`Ai-Browser-Toolkit`, workflow `release.yml`, environment `pypi`. Neither is a
-secret; both are easy to forget, and their absence only shows up during a real
-release.
+publisher registered at pypi.org naming **project `ai-browser-toolkit`**,
+owner `skssmd`, repository `Ai-Browser-Toolkit`, workflow `release.yml`,
+environment `pypi`. Neither is a secret; both are easy to forget, and their
+absence only shows up during a real release.
+
+The project name is the field that goes wrong. It must match
+`pyproject.toml`'s `name`, not the repository name -- a mismatch fails with
+"Non-user identities cannot create new projects", which reads like an
+authentication problem and is not one.
 
 ## No Intel Mac build
 
@@ -90,7 +127,7 @@ enough to hold up every release behind it, so the matrix dropped it on
 * `packaging/bundle.py` still knows the `macos-x86_64` target, so an Intel Mac
   can build a bundle locally with `python packaging/bundle.py --target
   macos-x86_64 ...`. Nothing publishes it.
-* Intel Mac users are served by `pipx install aibrowsertoolkit`, which is
+* Intel Mac users are served by `pipx install ai-browser-toolkit`, which is
   architecture-independent.
 
 ## Why the build matrix is native

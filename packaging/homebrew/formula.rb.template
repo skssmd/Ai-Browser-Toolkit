@@ -8,7 +8,7 @@ class Aibrowsertoolkit < Formula
   # retired, so the matrix stopped building macos-x86_64 -- and a formula with
   # an on_intel block pointing at an asset that is never built fails at
   # download time with no explanation. This refuses up front and says why.
-  # Intel Macs are served by `pipx install aibrowsertoolkit`.
+  # Intel Macs are served by `pipx install ai-browser-toolkit`.
   depends_on arch: :arm64
   depends_on :macos
 
