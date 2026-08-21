@@ -34,6 +34,16 @@ abt = "abt.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abt"]
+# onehr names a real organisation, its routes and its staff records. It is
+# gitignored, but a build reads the working tree rather than git -- so without
+# this, anyone building from a checkout that still has those files would ship
+# them to PyPI. A test asserts they are absent from the built wheel.
+exclude = ["**/onehr/**", "**/*onehr*"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Shipped inside the package so every channel carries them, and so the server
+# can serve one to an agent that is already talking to it.
+"guidelines" = "abt/guidelines"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

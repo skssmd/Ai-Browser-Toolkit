@@ -262,7 +262,7 @@ returns only what arrived since your last read of that thread — matched by
 content, not position, because Messenger trims the top of a long thread as it
 grows.
 
-Full details and the traps behind them: [guidelines/messenger.md](guidelines/messenger.md).
+Full details and the traps behind them: [guidelines/messenger.com/messenger.md](guidelines/messenger.com/messenger.md).
 
 ## Console and network
 

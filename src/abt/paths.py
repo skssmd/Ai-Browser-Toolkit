@@ -129,3 +129,29 @@ def first_run_marker(
         return None
     kind, home, env = _resolved(kind, home, env)
     return _state_root(kind, home, env) / ".first-run-shown"
+
+
+def guidelines_home(
+    kind: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Where pulled and locally written playbooks live.
+
+    Per-user rather than beside the install: an installed copy may sit in a
+    directory the user cannot write, and a playbook someone wrote is theirs,
+    not the package's. Survives upgrades for the same reason.
+    """
+    kind, home, env = _resolved(kind, home, env)
+    return _data_root(kind, home, env) / "guidelines"
+
+
+def config_file(
+    kind: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    kind, home, env = _resolved(kind, home, env)
+    return _data_root(kind, home, env) / "config.json"

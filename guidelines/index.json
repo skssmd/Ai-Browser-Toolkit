@@ -1,0 +1,33 @@
+{
+  "docs.google.com": {
+    "version": 1,
+    "files": [
+      "docs.md",
+      "sheets.md"
+    ]
+  },
+  "fojik.com": {
+    "version": 1,
+    "files": [
+      "fojik-mlwbd.md"
+    ]
+  },
+  "kayoanime.com": {
+    "version": 1,
+    "files": [
+      "kayoanime.md"
+    ]
+  },
+  "messenger.com": {
+    "version": 1,
+    "files": [
+      "messenger.md"
+    ]
+  },
+  "script.google.com": {
+    "version": 1,
+    "files": [
+      "forms-apps-script.md"
+    ]
+  }
+}
