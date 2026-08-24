@@ -26,9 +26,94 @@ from . import paths
 # Everything an agent needs to take a first useful step, printed with --help
 # and on a bare `abt`. An agent that runs the tool and gets "Missing command"
 # learns nothing; this is the one place it is guaranteed to look.
-AGENT_EPILOG = (
-    'First three commands, in this order:\n\n\x08\n  abt up             start the server (no-op if already up)\n  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n  abt goto <url>     drive it\n\nThe server runs without a browser on purpose: it answers in a second,\nwhile Chrome on a persistent profile can take two minutes. browser_dead\nor \'no browser is running\' means you skipped `abt browser start`.\n\nEvery op, reachable as `abt exec \'{"op": ...}\'` and the named ones\ndirectly. `abt ops` prints their exact parameters.\n\n\x08\n  navigate  goto back forward reload current_url\n  read      find find_full get_text get_html run_js screenshot\n  inspect   read_console read_network\n  interact  click input press select hover scroll wait_for\n  tabs      tab_new tab_switch tab_close tab_list\n  control   diff status shutdown browser_start browser_stop browser_restart\n\nWhich read op: if you do not know the page, `get_text` tells you what is\non it. `find` is for when you already know what you want -- guessing\nselectors to discover structure is the slow way to learn what one\n`get_text` returns. `screenshot` only when *layout* is the question,\nnot content; it returns a path to an image file.\n\nElements are addressed by exactly one of css, xpath, text or ref; `near`\nqualifies a selector that matches too much. Every match returns a ref you\nact on directly.\n\n\x08\n  abt status                            URL, tabs, live refs\n  abt find --text \'Sign in\'             then: abt click --ref el_3\n  abt exec -                            any op at all, JSON on stdin\n  abt guidelines show toolkit-workflow  the whole workflow: read it\n  abt guidelines search <domain>        a playbook for this site?\n  abt browser restart                   the way back from browser_dead\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool. Every error also\ncarries a `hint` saying what to do next.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n\x08\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
+#
+# The header below, then the WHOLE workflow document -- not a summary of it.
+# A condensed version was tried, and what it dropped was the part that
+# mattered: it listed the read ops by name without saying which one answers
+# which question, and an agent that had read all of it still guessed selectors
+# eleven times to learn what a single `get_text` would have told it. Roughly
+# 5k tokens, deliberately: an agent that has to work it out for itself spends
+# more than that in wasted ops on one task.
+_EPILOG_HEADER = (
+    "First three commands, in this order:\n\n\x08\n"
+    "  abt up             start the server (no-op if already up)\n"
+    "  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n"
+    "  abt goto <url>     drive it\n\n"
+    "The server runs without a browser on purpose: it answers in a second,\n"
+    "while Chrome on a persistent profile can take two minutes. browser_dead\n"
+    "or 'no browser is running' means you skipped `abt browser start`.\n\n"
+    "Named subcommands cover the common ops; `abt exec` reaches any of them,\n"
+    "and `abt ops` prints their exact parameters. On PowerShell, pipe JSON\n"
+    "rather than quoting it inline:\n\n\x08\n"
+    "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n\n"
+    "Never run `abt serve` from a tool call. It is the command loop: it never\n"
+    "returns, and whatever launched it hangs. Use `abt up`.\n\n"
+    "A site may also have a playbook of its own:\n"
+    "`abt guidelines search <domain>`.\n\n"
+    "================ the workflow, in full ================\n\n"
 )
+
+# Fallback for an install whose packaged guidelines cannot be read. Short, but
+# it names the document rather than pretending there is nothing more to know.
+_EPILOG_WITHOUT_WORKFLOW = (
+    "The full workflow could not be read from this install. Fetch it with\n"
+    "`abt guidelines show toolkit-workflow` and read it before driving a\n"
+    "site -- it is where refs, diffs and the read ops are explained.\n"
+)
+
+
+# Windows consoles default to cp1252, which cannot encode the arrows and
+# em-dashes the documents are written with. `--help` is printed by click, not
+# by us, so there is no exception to catch at the point of printing: the text
+# has to be safe before it is handed over. An arrow that becomes `->` still
+# reads; one that raises UnicodeEncodeError takes down the command an agent
+# runs first.
+_ASCII_FALLBACKS = {
+    "→": "->", "←": "<-", "—": "--", "–": "-",
+    "…": "...", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "•": "*", " ": " ",
+}
+
+
+def _console_safe(text: str) -> str:
+    """The same text, minus anything this console cannot encode."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return text
+    except (UnicodeEncodeError, LookupError):
+        pass
+    for glyph, plain in _ASCII_FALLBACKS.items():
+        text = text.replace(glyph, plain)
+    try:
+        text.encode(encoding)
+        return text
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(encoding, errors="replace").decode(encoding)
+
+
+def _agent_epilog() -> str:
+    """The header, then the packaged workflow document verbatim."""
+    try:
+        from . import guidelines
+
+        body = _console_safe(guidelines.read("toolkit-workflow"))
+    except Exception:
+        body = None
+    if not body:
+        return _EPILOG_HEADER + _EPILOG_WITHOUT_WORKFLOW
+    # \x08 tells click not to rewrap the paragraph that follows it, and it
+    # protects exactly one paragraph -- so it goes before each, not before
+    # each line. Per line it also works, but click then puts a blank line
+    # between every pair, which doubles a 390-line document for nothing.
+    # The document is pre-wrapped and full of tables and fenced code, none of
+    # which survives reflowing.
+    return _EPILOG_HEADER + "\n\n".join(
+        "\x08\n" + block for block in body.split("\n\n")
+    )
+
+
+AGENT_EPILOG = _agent_epilog()
 
 app = typer.Typer(
     add_completion=False,
