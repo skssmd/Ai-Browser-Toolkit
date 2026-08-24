@@ -117,8 +117,32 @@ def find_full(session: BrowserSession, cmd) -> dict:
 
 
 def screenshot(session: BrowserSession, cmd) -> dict:
-    if not cmd.has_target:
-        data = session.driver.get_screenshot_as_base64()
-    else:
-        data = resolve_one(session, cmd, state="visible").screenshot_as_base64
-    return {"format": "png", "base64": data}
+    """A frame of the page. Returns a path by default, base64 on request.
+
+    The server already writes a frame to the session log for every command,
+    so this op has nothing to save: it names the file that was written for
+    it, and the caller opens it like any other image.
+
+    Base64 was the only option here, and it made the op useless to exactly
+    the callers most likely to reach for it. An agent reading tool output as
+    text cannot see an inlined image, and the blob -- a viewport PNG is
+    100KB-1MB before base64 adds a third -- buries the rest of its context.
+    One observed session spent six minutes chewing through a single frame and
+    ended with the agent trying to save the image itself.
+
+    The path is filled in by the server, which is what owns the recorder; a
+    target only sets where the frame is annotated, since the recorded frame
+    is the whole viewport.
+    """
+    if cmd.base64:
+        if not cmd.has_target:
+            data = session.driver.get_screenshot_as_base64()
+        else:
+            data = resolve_one(session, cmd, state="visible").screenshot_as_base64
+        return {"format": "png", "base64": data}
+    if cmd.has_target:
+        # Resolved for its side effect: it scrolls the element into view and
+        # sets last_target, so the recorded frame both shows the element and
+        # carries a box saying where in the frame it is.
+        resolve_one(session, cmd, state="visible")
+    return {"format": "jpeg"}

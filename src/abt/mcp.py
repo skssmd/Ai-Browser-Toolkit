@@ -229,8 +229,13 @@ TOOLS: list[dict] = [
     },
     {
         "name": "browser_screenshot",
-        "description": "Capture the viewport, or one element. Returns base64 PNG; writes no file.",
-        "inputSchema": _schema({**_TARGET}),
+        "description": (
+            "Capture the page. Returns the PATH of the written image -- open "
+            "that. A target scrolls the element into view and marks where it "
+            "sits. base64=true inlines the image instead: only ask for that if "
+            "you can render images, it is hundreds of thousands of characters."
+        ),
+        "inputSchema": _schema({**_TARGET, "base64": {"type": "boolean"}}),
     },
     {
         "name": "browser_tabs",
@@ -384,7 +389,7 @@ def to_op(tool: str, args: dict) -> Any:
         return {"op": "run_js", **_one_of(args, "script", "args")}
 
     if tool == "browser_screenshot":
-        return {"op": "screenshot", **target}
+        return {"op": "screenshot", **target, **_one_of(args, "base64")}
 
     if tool == "browser_batch":
         return {

@@ -78,10 +78,42 @@ def create_app(
                 OpError("browser_dead", f"{type(exc).__name__}: {exc}"), op_index
             )
         if recorder is not None:
-            _record(data, response, now_ms() - started)
+            event = _record(data, response, now_ms() - started)
+            _attach_shot(data, response, event)
         return response
 
-    def _record(data: Any, response: dict, elapsed: float) -> None:
+    def _attach_shot(data: Any, response: dict, event: dict | None) -> None:
+        """Point a `screenshot` reply at the frame just written for it.
+
+        The recorder is the thing that writes frames, and it lives out here
+        rather than in the op, so this is where the filename becomes known.
+        A screenshot with nowhere to point says so and names the reason --
+        silently returning a frameless success would leave a caller waiting
+        for an image that is never coming.
+        """
+        op = data.get("op") if isinstance(data, dict) else None
+        if op != "screenshot" or not response.get("ok"):
+            return
+        result = response.get("result")
+        if not isinstance(result, dict) or "base64" in result:
+            return
+        name = (event or {}).get("shot")
+        if not name:
+            result["path"] = None
+            result["note"] = (
+                "no frame was written: screenshots are off (`--no-shots`), the "
+                "session's frame budget is spent, or the browser refused to be "
+                "captured. Ask for `base64: true` if your client renders images "
+                "inline."
+            )
+            return
+        result["path"] = str((recorder.shots_dir / name).resolve())
+        result["url"] = f"/logs/{recorder.session_id}/shots/{name}"
+        if event.get("shot_box"):
+            # Where the targeted element sits in the frame, as fractions.
+            result["box"] = event["shot_box"]
+
+    def _record(data: Any, response: dict, elapsed: float) -> dict | None:
         """Logging must never be able to fail a command."""
         tab_id = url = None
         try:
@@ -101,9 +133,9 @@ def create_app(
             except Exception:
                 shot = None
         try:
-            recorder.record(data, response, tab_id, url, elapsed, shot=shot)
+            return recorder.record(data, response, tab_id, url, elapsed, shot=shot)
         except Exception:
-            pass
+            return None
 
     def execute(items: list[Any], continue_on_error: bool) -> list[dict]:
         with lock:

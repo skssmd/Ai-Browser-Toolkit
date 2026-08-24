@@ -502,6 +502,34 @@ def find(
 
 
 @app.command()
+def screenshot(
+    ref: Optional[str] = typer.Option(
+        None, "--ref", help="Scroll this element into view and mark it in the frame."
+    ),
+    css: Optional[str] = typer.Option(None, "--css"),
+    base64: bool = typer.Option(
+        False,
+        "--base64",
+        help="Inline the image instead of writing one. Only for clients that "
+        "render images; it is hundreds of thousands of characters.",
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Capture the page and print the path to the image file.
+
+    A command of its own because there was none: the only way to reach this
+    was `abt exec '{"op":"screenshot"}'`, which printed the whole image as
+    base64 into the terminal. Open the path it prints -- that is a real file.
+    """
+    payload: dict = {"op": "screenshot"}
+    if ref or css:
+        payload.update(_target(ref, css))
+    if base64:
+        payload["base64"] = True
+    _call(port, "/command", payload)
+
+
+@app.command()
 def click(
     ref: Optional[str] = typer.Option(None, "--ref", help="A ref from find."),
     css: Optional[str] = typer.Option(None, "--css"),

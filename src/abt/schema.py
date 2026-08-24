@@ -173,7 +173,16 @@ class FindFull(ShadowSearch):
 
 
 class Screenshot(OptionalTarget):
+    """A frame of the page, returned as a file path.
+
+    `base64: true` inlines the image instead. Only ask for that from a client
+    that renders images inline -- a base64 PNG is hundreds of thousands of
+    characters, and a caller that reads its tool output as text gets its
+    context filled with an image it still cannot see.
+    """
+
     op: Literal["screenshot"]
+    base64: bool = False
 
 
 # --- interaction --------------------------------------------------------------
