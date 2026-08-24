@@ -292,6 +292,25 @@ def _miss(session, by, selector, cmd, state, waited) -> OpError:
     )
 
 
+# What each engine says when the selector itself will not parse. Chrome phrases
+# it "'>' is not a valid selector"; Selenium wraps that as "invalid selector".
+# Matched on text because both engines raise the same exception class for this
+# as for an element that merely is not there.
+_BAD_SELECTOR_MARKERS = (
+    "is not a valid selector",
+    "invalid selector",
+    "syntaxerror",
+    "failed to execute 'queryselector",
+    "unexpected token",
+)
+
+
+def _is_bad_selector(exc: Exception) -> bool:
+    """Is this the selector's fault rather than the page's?"""
+    text = f"{getattr(exc, 'msg', '') or ''} {exc}".lower()
+    return any(marker in text for marker in _BAD_SELECTOR_MARKERS)
+
+
 def resolve_many(
     session: BrowserSession,
     cmd,
@@ -323,7 +342,25 @@ def resolve_many(
                 continue
             try:
                 elements = session.driver.find_elements(by, selector)
-            except EngineError:
+            except EngineError as exc:
+                # A frame that cannot be searched must not fail the search --
+                # that is what this catch is for. A selector that is not valid
+                # CSS is a different thing entirely, and swallowing it reported
+                # "count: 0" for `find css='>'`. The workflow document tells
+                # the reader that count 0 means the element is not there and
+                # not to widen the search, so the toolkit was stating
+                # something false about the page with full confidence.
+                if _is_bad_selector(exc):
+                    raise OpError(
+                        "invalid_op",
+                        f"{selector!r} is not a valid selector: {exc}",
+                        hint=(
+                            "This is a syntax error in your selector, NOT an "
+                            "empty page. Fix the selector and search again -- "
+                            "unlike a count of 0, this says nothing about "
+                            "what the page contains."
+                        ),
+                    ) from exc
                 elements = []
             if visible_only:
                 elements = [e for e in elements if _is_displayed(e)]
