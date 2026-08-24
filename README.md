@@ -938,6 +938,53 @@ the orientation goes, because it is paid for once rather than re-sent with the
 schemas on every turn. `browser_guidelines` reads the rest: the whole
 workflow document, or a fuzzy search for a site's playbook.
 
+## Benchmark
+
+Four MiniWoB++ tasks, driven end to end by **Claude Haiku 4.5** through the
+`abt` CLI. The agent is given the task in plain English and the port — nothing
+else. It reads `abt --help`, works out the page for itself, and the page scores
+it.
+
+| task | ops | tokens | reward |
+|---|---|---|---|
+| `book-flight` | 15 | 44,663 | 1.00 |
+| `email-inbox-forward-nl` | 16 | 54,260 | 1.00 |
+| `terminal` | 8 | 38,445 | 1.00 |
+| `click-checkboxes-soft` | 7 | 36,799 | 0.60 |
+| **total** | **46** | **174,167** | **0.90 avg** |
+
+`book-flight` and `terminal` are two of the harder tasks in the suite: one needs
+two autocompletes, a datepicker and a comparison across four results; the other
+is a simulated shell. `terminal` took eight operations.
+
+**Scoring is not ours.** Every reward above is MiniWoB's own
+`WOB_REWARD_GLOBAL`, read from the page after the agent stopped — not the
+agent's account of how it went. The 0.60 is a real partial: the agent picked
+*assassinate* as a word similar to *initiate*, which the task disagreed with.
+That is a reasoning miss, not a toolkit one, and it stays in the table.
+
+**Read these honestly:**
+
+* **n=1 per task.** MiniWoB generates a fresh instance each run, so these are
+  single samples, not averages over seeds. Treat them as a demonstration that
+  the tasks are solvable at this cost, not as a score.
+* **The episode clock is neutralized.** MiniWoB ends an episode after ten
+  seconds and scales a successful reward by elapsed time. An agent CLI takes
+  30–60s just to start, so under stock rules every out-of-process agent scores
+  0.00 on every task regardless of what it does — the run would measure process
+  startup. The runner patches `endEpisode` to drop the timeout and the
+  time-scaling. Correctness is untouched: the task's own scoring code decides,
+  and we never patch it. **These numbers are therefore not comparable to
+  published MiniWoB scores**, which run the stock clock.
+* **Tokens are the whole agent session** — reading `--help`, reasoning, and
+  every command — not just traffic to the toolkit.
+* **Ops are counted by the server**, from its own session log, not reported by
+  the agent.
+
+The harness is in [`benchmarks/browsergym/`](benchmarks/browsergym/README.md),
+including a resumable sweep runner for seed-controlled runs across all 125
+tasks.
+
 ## Tests
 
 ```bash
