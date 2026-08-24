@@ -321,6 +321,38 @@ Statuses and URLs, not bodies. A cross-origin response without
 `Timing-Allow-Origin` reports `status: null` and `opaque: true`; the browser
 genuinely will not say, so neither does this.
 
+## A field that suggests is a field that must be chosen from
+
+**If typing into a field makes suggestions appear in the diff, typing is not
+finished — you have to pick one.**
+
+This is the most expensive silent failure on the web, because every signal
+says you succeeded. `input` returns `ok`, and the value it reports is exactly
+the value you asked for. The form disagrees: many of these fields validate the
+raw text against the suggestion list and accept nothing else, so `ACV` is
+rejected where `Arcata, CA (ACV)` is accepted. Nothing announces the
+rejection. A red outline appears, the submit quietly does nothing, and the
+next thing you do is retype the value that was never the problem.
+
+The diff is what tells you, and it tells you immediately:
+
+```
+abt input --css '#flight-from' --value 'ACV'
+```
+```json
+"text": {"added": ["ACV", "Arcata, CA (ACV)", "Eureka/Arcata, CA (ACV)",
+                   "2 results are available, use up and down arrow keys..."]}
+```
+
+Suggestions in `text.added` after typing means the field is a chooser. Click
+the one you want — it is in `actionable` with a ref — or press `Down` then
+`Enter`. Then check that the field holds the *full* suggestion text, not what
+you typed.
+
+Two suggestions that both contain your text is the case worth slowing down
+for: above, `Arcata, CA (ACV)` and `Eureka/Arcata, CA (ACV)` both match, and
+only one is right. Read them before clicking rather than taking the first.
+
 ## Typing into dates
 
 `input` on `<input type="date|time|month|week|datetime-local">` sets the value

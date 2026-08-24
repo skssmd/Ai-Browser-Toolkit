@@ -239,6 +239,24 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     navigated = page_key(url_before) != page_key(session.driver.current_url)
     if navigated:
         session.settle()
+    else:
+        # The same problem one scale down, and it used to go unhandled: an
+        # interaction that stays on the page can still start something that
+        # renders later, and snapshotting the instant the handler returns
+        # reports the page as it was before its own effect.
+        #
+        # The case that showed it: typing an airport code into an autocomplete.
+        # `input` returned ok with an empty diff, while the suggestion menu --
+        # which the form requires you to pick from, and which silently rejects
+        # anything you merely typed -- opened 300ms later. A `diff` asked for
+        # afterwards showed it perfectly. So the content was never the problem;
+        # the moment of the snapshot was.
+        #
+        # Bounded much tighter than a navigation's budget because every
+        # interactive op pays this one. Settling stops as soon as the DOM is
+        # still, so a page that does nothing costs the quiet window and not the
+        # cap.
+        session.settle(timeout=session.interaction_settle)
 
     after = session.snapshot()
     session.set_baseline(after)

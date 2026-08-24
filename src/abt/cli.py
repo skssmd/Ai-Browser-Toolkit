@@ -332,6 +332,13 @@ def serve(
         help="Seconds of network silence that count as idle. Raise it for an app "
         "that pauses between chained requests; the gap looks like being finished.",
     ),
+    interaction_settle: float = typer.Option(
+        1.0,
+        "--interaction-settle",
+        help="Seconds to wait for a click or a keystroke to finish rendering what "
+        "it started, before diffing. Covers the menu that opens 300ms after you "
+        "type. Set 0 to snapshot immediately, as before.",
+    ),
     no_frames: bool = typer.Option(
         False,
         "--no-frames/--frames",
@@ -407,6 +414,7 @@ def serve(
         diff_max_tokens=diff_max_tokens,
         settle_timeout=settle_timeout,
         settle_network_grace=settle_network_grace,
+        interaction_settle=interaction_settle,
         frames_enabled=not no_frames,
         max_frames=max_frames,
         max_frame_depth=max_frame_depth,
