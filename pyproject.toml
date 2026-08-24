@@ -72,7 +72,7 @@ Playbooks = "https://github.com/skssmd/ABT-Playbooks"
 dev = ["pytest>=8.0", "pyyaml>=6.0"]
 
 [project.scripts]
-abt = "abt.cli:app"
+abt = "abt.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abt"]

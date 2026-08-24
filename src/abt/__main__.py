@@ -5,6 +5,6 @@ absolute shebang pointing at whatever interpreter path existed when the wheel
 was installed, which on a build runner is not a path that exists anywhere else.
 """
 
-from .cli import app
+from .cli import main
 
-app()
+main()

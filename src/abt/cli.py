@@ -115,6 +115,63 @@ def _agent_epilog() -> str:
 
 AGENT_EPILOG = _agent_epilog()
 
+
+def main() -> None:
+    """Entry point. Like calling `app()`, except a malformed call teaches.
+
+    Click answers a bad flag with a usage line and "Try --help for help",
+    which spends the caller another command on something that could have been
+    said now. An agent mostly does not spend it -- the observed pattern is the
+    same wrong call repeated, because nothing in the reply says what the right
+    one is. `abt click --text Prev` was the recurring example, and it was a
+    fair guess: the op takes `text`, and only the CLI did not.
+
+    Done here rather than by patching click, because Typer intercepts these
+    before click's own handler and formats them itself; patches to
+    `UsageError.show` never ran, and the difference was invisible in piped
+    output because rich drops its panel when there is no terminal.
+    """
+    # Typer 0.27 vendors its own copy of click at typer._click, so the
+    # exceptions it raises are NOT click.exceptions.* -- different classes with
+    # the same names. Catching the stdlib ones silently matches nothing, which
+    # is exactly what happened here: several attempts at this looked like they
+    # had no effect at all. Both sets are caught, so this survives either
+    # arrangement.
+    errors: tuple = ()
+    for module in ("typer._click.exceptions", "click.exceptions"):
+        try:
+            errors += (__import__(module, fromlist=["x"]),)
+        except Exception:
+            pass
+
+    usage = tuple(m.UsageError for m in errors)
+    exits = tuple(m.Exit for m in errors if hasattr(m, "Exit"))
+    aborts = tuple(m.Abort for m in errors if hasattr(m, "Abort"))
+    clicks = tuple(m.ClickException for m in errors)
+
+    try:
+        app(standalone_mode=False)
+    except usage as exc:
+        # `no_args_is_help` raises a UsageError subclass that is already the
+        # help -- printing the help for it repeats a 450-line document.
+        bare_help = type(exc).__name__ == "NoArgsIsHelpError" or not exc.format_message()
+        if bare_help:
+            print(_console_safe(exc.ctx.get_help()) if exc.ctx else "", file=sys.stderr)
+            sys.exit(exc.exit_code)
+        if getattr(exc, "ctx", None) is not None:
+            print(_console_safe(exc.ctx.get_help()), file=sys.stderr)
+            print(file=sys.stderr)
+        print(f"Error: {exc.format_message()}", file=sys.stderr)
+        sys.exit(exc.exit_code)
+    except exits as exc:
+        sys.exit(getattr(exc, "exit_code", 0))
+    except aborts:
+        print("Aborted.", file=sys.stderr)
+        sys.exit(1)
+    except clicks as exc:
+        exc.show()
+        sys.exit(exc.exit_code)
+
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
@@ -572,7 +629,16 @@ def goto(url: str, port: int = _port_option()) -> None:
 
 @app.command()
 def find(
-    selector: str = typer.Argument(..., help="CSS selector."),
+    selector: Optional[str] = typer.Argument(
+        None, help="CSS selector. Or use --text / --xpath instead."
+    ),
+    text: Optional[str] = typer.Option(
+        None, "--text", help="Exact visible text, instead of a CSS selector."
+    ),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    near: Optional[str] = typer.Option(
+        None, "--near", help="Qualify a selector that matches too much."
+    ),
     full: bool = typer.Option(
         False, "--full", help="Include inner content instead of tag shells only."
     ),
@@ -580,18 +646,20 @@ def find(
     visible_only: bool = typer.Option(False, "--visible-only"),
     port: int = _port_option(),
 ) -> None:
-    """Search the page and return matching elements."""
-    _call(
-        port,
-        "/command",
-        {
-            "op": "find",
-            "css": selector,
-            "mode": "full" if full else "shell",
-            "limit": limit,
-            "visible_only": visible_only,
-        },
-    )
+    """Search the page and return matching elements.
+
+    The positional argument is a CSS selector, kept because it is the common
+    case and shortest to type. `--text` and `--xpath` are the same targeting
+    the ops accept.
+    """
+    payload = {
+        "op": "find",
+        "mode": "full" if full else "shell",
+        "limit": limit,
+        "visible_only": visible_only,
+        **_target(css=selector, text=text, xpath=xpath, near=near),
+    }
+    _call(port, "/command", payload)
 
 
 @app.command()
@@ -600,6 +668,8 @@ def screenshot(
         None, "--ref", help="Scroll this element into view and mark it in the frame."
     ),
     css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
     base64: bool = typer.Option(
         False,
         "--base64",
@@ -615,8 +685,7 @@ def screenshot(
     base64 into the terminal. Open the path it prints -- that is a real file.
     """
     payload: dict = {"op": "screenshot"}
-    if ref or css:
-        payload.update(_target(ref, css))
+    payload.update(_target(ref, css, xpath, text, required=False))
     if base64:
         payload["base64"] = True
     _call(port, "/command", payload)
@@ -626,6 +695,12 @@ def screenshot(
 def click(
     ref: Optional[str] = typer.Option(None, "--ref", help="A ref from find."),
     css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    near: Optional[str] = typer.Option(
+        None, "--near", help="Qualify a selector that matches too much."
+    ),
+    index: int = typer.Option(0, "--index", help="Nth match when several fit."),
     force: bool = typer.Option(
         False, "--force", help="Fall back to a JS click if an overlay intercepts."
     ),
@@ -644,7 +719,7 @@ def click(
     port: int = _port_option(),
 ) -> None:
     """Click an element."""
-    payload = {"op": "click", **_target(ref, css)}
+    payload = {"op": "click", **_target(ref, css, xpath, text, near, index)}
     if force:
         payload["force"] = True
     if new_tab:
@@ -662,14 +737,29 @@ def input_(
     value: str = typer.Argument(..., help="Text to type."),
     ref: Optional[str] = typer.Option(None, "--ref"),
     css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    near: Optional[str] = typer.Option(
+        None, "--near", help="Qualify a selector that matches too much."
+    ),
+    index: int = typer.Option(0, "--index", help="Nth match when several fit."),
     keep: bool = typer.Option(False, "--keep", help="Append instead of clearing."),
     port: int = _port_option(),
 ) -> None:
-    """Type into a field."""
+    """Type into a field.
+
+    If suggestions appear in the diff afterwards, the field is a chooser and
+    typing alone will not satisfy it -- click one of them.
+    """
     _call(
         port,
         "/command",
-        {"op": "input", "value": value, "clear": not keep, **_target(ref, css)},
+        {
+            "op": "input",
+            "value": value,
+            "clear": not keep,
+            **_target(ref, css, xpath, text, near, index),
+        },
     )
 
 
@@ -913,11 +1003,45 @@ def messenger_jobs(
     _call(port, f"/messenger/jobs{suffix}", method="GET")
 
 
-def _target(ref: Optional[str], css: Optional[str]) -> dict:
-    if (ref is None) == (css is None):
-        typer.secho("supply exactly one of --ref or --css", fg="red", err=True)
+def _target(
+    ref: Optional[str] = None,
+    css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    text: Optional[str] = None,
+    near: Optional[str] = None,
+    index: int = 0,
+    required: bool = True,
+) -> dict:
+    """The ops' targeting vocabulary, as flags.
+
+    It used to be `--ref` or `--css` and nothing else, while the ops beneath
+    accept ref, css, xpath, text, index and near. The gap was not academic:
+    the help text's own example is `abt find --text 'Sign in'`, which the CLI
+    then rejected as an unknown option -- so the tool documented a flag it
+    refused, and an agent following its instructions was told it was wrong.
+    """
+    chosen = {
+        name: value
+        for name, value in (("ref", ref), ("css", css), ("xpath", xpath), ("text", text))
+        if value is not None
+    }
+    if len(chosen) > 1:
+        typer.secho(
+            f"supply only one of --ref/--css/--xpath/--text, got {', '.join(chosen)}",
+            fg="red",
+            err=True,
+        )
         raise typer.Exit(2)
-    return {"ref": ref} if ref else {"css": css}
+    if not chosen:
+        if not required:
+            return {}
+        typer.secho("supply one of --ref/--css/--xpath/--text", fg="red", err=True)
+        raise typer.Exit(2)
+    if near is not None:
+        chosen["near"] = near
+    if index:
+        chosen["index"] = index
+    return chosen
 
 
 def _load(raw: str) -> Any:

@@ -17,7 +17,7 @@ abt find --text "Sign in"
 abt click --ref el_3
 abt input --css "#email" --value "someone@example.com"
 abt ops                               # every op and its exact parameters
-abt exec '{"op":"scroll","to":"bottom"}'           # any op, raw
+abt exec '{"op":"scroll","y":4000}'             # any op, raw
 abt exec-batch '[{"op":"click","text":"Edit"},{"op":"get_text","css":"h1"}]'
 abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
