@@ -1,0 +1,31 @@
+{
+  "benchmark": "miniwob",
+  "task": "login-user-popup",
+  "episodes": [
+    {
+      "task_id": "miniwob.login-user-popup",
+      "seed": 9001,
+      "success": false,
+      "reward": 0.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "agent:opencode",
+          "ops": null,
+          "error": null,
+          "reward": 0.0
+        }
+      ]
+    }
+  ],
+  "n_episodes": 1,
+  "score": 0.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "agent",
+  "agent": "opencode",
+  "agent_mcp": true,
+  "agent_json": true,
+  "freeze_timers": true
+}

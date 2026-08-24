@@ -1,0 +1,26 @@
+{
+  "benchmark": "miniwob",
+  "task": "click-button",
+  "episodes": [
+    {
+      "task_id": "miniwob.click-button",
+      "seed": 1000,
+      "success": true,
+      "reward": 1.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "agent:opencode",
+          "ops": null,
+          "error": null,
+          "reward": 1.0
+        }
+      ]
+    }
+  ],
+  "n_episodes": 1,
+  "score": 1.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate"
+}
