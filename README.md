@@ -1,30 +1,61 @@
-# aibrowsertoolkit
+# AI Browser Toolkit
 
-An HTTP server that lets an AI agent drive a real browser — **Chrome or Edge** — by
-sending JSON. The server process is the loop: it opens the chosen browser with a persistent
-profile, stays up waiting for commands, and only stops when you send `shutdown`.
+**Give your coding agent a real browser.** `abt` drives an actual Chrome or Edge
+window — the one with your logins already in it — and hands back what changed
+after every action, in a form a model can act on directly.
 
-> **Agents: read [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md)
-> before driving anything.** Not "if your site looks tricky", not "if there is a
-> playbook for it" — always. Most sites have no playbook, and that file is the
-> whole answer for them. Then, only if one exists, add the site playbook from
-> [`guidelines/`](guidelines/README.md).
+Built for agent harnesses: **Claude Code, Codex, OpenCode, Cursor, Gemini CLI,
+Copilot**, or anything you write yourself. Three ways in, same browser behind
+all of them:
+
+| | Use it when |
+|---|---|
+| **CLI** — `abt goto`, `abt find`, `abt click` | The agent already has a shell. Nothing to configure. |
+| **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
+| **HTTP** — `POST /command` on :8765 | You are writing the integration yourself. |
+
+Why not a headless scraper: it keeps **one long-lived browser on a persistent
+profile**. Log into Gmail, your CRM, your ticket system once, by hand — every
+agent session after that is already signed in, and the window outlives your
+editor.
+
+```
+abt up  ──starts──>  server :8765  ──owns──>  Chrome/Edge (your profile)
+                          ^
+   abt CLI  /  abt mcp  /  your HTTP client
+```
+
+> **Agents: read the workflow before driving anything** — `abt guidelines show
+> toolkit-workflow`, or [`guidelines/toolkit-workflow.md`](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/toolkit-workflow.md)
+> in this repo. Not "if your site looks tricky", not "if there is a playbook for
+> it" — always. Most sites have no playbook, and that file is the whole answer
+> for them.
 >
-> Skipping it costs you the things that are hard to guess: that `find` hands
-> back refs you act on directly, that a click already reports what changed so
-> you need not re-read the page, and that ops can be sent in batches.
-
-
-```
-abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome/Edge (persistent profile)
-                             ^
-   abt / curl / your agent ──┘   POST /command  |  POST /commands
-```
+> Skipping it costs the things that are hard to guess: that `find` hands back
+> refs you act on directly, that a click already reports what changed so you
+> need not re-read the page, and that ops can be sent in batches.
 
 ## Install
 
-Needs **Python 3.11+** and **Google Chrome** or **Microsoft Edge** installed. The matching
-chromedriver/msedgedriver is resolved automatically by Selenium Manager — nothing to download by hand.
+Needs **Python 3.11+** and **Google Chrome** or **Microsoft Edge** installed.
+Drivers are resolved automatically — nothing to download by hand.
+
+```bash
+pip install ai-browser-toolkit
+abt doctor        # what browsers are installed, and where
+```
+
+Also on **winget** (`winget install skssmd.AIBrowserToolkit`), **Scoop**,
+**Homebrew** (`brew install skssmd/tap/abt`) and the **AUR**.
+
+Point an MCP client at it:
+
+```json
+{"mcpServers": {"browser": {"command": "abt", "args": ["mcp"]}}}
+```
+
+<details>
+<summary>From a source checkout instead</summary>
 
 ```bash
 git clone https://github.com/skssmd/Ai-Browser-Toolkit
@@ -33,18 +64,15 @@ cd Ai-Browser-Toolkit
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 # .venv/bin/python -m pip install -e ".[dev]"       # macOS / Linux
-```
-
-Check it worked:
-
-```bash
-.venv/Scripts/python -m pytest -q     # 485 tests, needs Chrome
+.venv/Scripts/python -m pytest -q                   # 485 tests, needs Chrome
 ```
 
 The `abt` command lands in the venv. Either activate it
 (`.venv\Scripts\activate` / `source .venv/bin/activate`) so `abt` is on your
 PATH, or call it explicitly as `.venv/Scripts/python -m abt.cli …` everywhere
 below.
+
+</details>
 
 ## Run
 
@@ -262,7 +290,7 @@ returns only what arrived since your last read of that thread — matched by
 content, not position, because Messenger trims the top of a long thread as it
 grows.
 
-Full details and the traps behind them: [guidelines/messenger.com/messenger.md](guidelines/messenger.com/messenger.md).
+Full details and the traps behind them: [guidelines/messenger.com/messenger.md](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/messenger.com/messenger.md).
 
 ## Console and network
 
@@ -615,7 +643,7 @@ needed to turn something you can read into something you can act on.
 **The limit:** `mode: "closed"` makes `.shadowRoot` null. No JavaScript can read
 such a root or prove it exists, so nothing here can either. "Not found" means
 nothing reachable has it — see the search ladder in
-[`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md).
+[`guidelines/toolkit-workflow.md`](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/toolkit-workflow.md).
 
 ### The manual check
 
