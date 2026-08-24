@@ -877,9 +877,15 @@ guessed parameter name — `label` on a `select`, `diff` on a `get_text`, a
 the JSON never meets a shell, which on Windows is its own source of quoting
 failures.
 
-Thirteen tools rather than one per op, since every schema sits in the model's
+Seventeen tools rather than one per op, since every schema sits in the model's
 context for the whole session. `browser_batch` sends a whole sequence in one
 call, and `browser_command` passes through any raw op the named tools miss.
+
+The server also answers `initialize` with MCP `instructions` — how the pieces
+fit together, which most clients place in the system prompt once. That is where
+the orientation goes, because it is paid for once rather than re-sent with the
+schemas on every turn. `browser_guidelines` reads the rest: the whole
+workflow document, or a fuzzy search for a site's playbook.
 
 ## Tests
 

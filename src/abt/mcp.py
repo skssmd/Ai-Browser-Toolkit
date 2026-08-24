@@ -36,6 +36,48 @@ import httpx
 PROTOCOL_VERSION = "2025-06-18"
 DEFAULT_API = "http://127.0.0.1:8765"
 
+# Sent once, in the initialize reply, and clients put it in the system prompt.
+# That is the cheap slot: per-tool descriptions are re-sent every turn, so
+# anything that is true of the *toolkit* rather than of one tool belongs here
+# and is paid for once. Without it a model knows what each tool does and still
+# does not know that the browser is a separate step from the server, or that
+# the reply it already holds contains the page.
+INSTRUCTIONS = """\
+Browser automation against one long-lived Chrome. The server is a separate
+process that outlives this session; it owns the browser and this connection
+owns nothing.
+
+Start here:
+
+  browser_session {"action":"start"}   -- the server runs WITHOUT a browser on
+  purpose, and nothing starts one for you. Every page tool fails with
+  browser_dead until you do this. It can take up to two minutes on a profile
+  that has logins in it. browser_session {"action":"status"} says what is up.
+
+Then read what you are given. Every tool that changes the page returns a
+dom_diff: the text that appeared, and dom_diff.actionable listing new controls
+with refs. Re-reading the page to see what happened is the most common and most
+expensive mistake made with this toolkit -- the answer is already in the reply.
+
+Addressing an element: exactly ONE of ref, css, xpath or text. Refs come from
+browser_find and from a diff's actionable list, and they die on navigation.
+
+browser_find searches the document, every frame and (with shadow=true) open
+shadow roots. count=0 is an answer, not a bad selector -- the control does not
+exist yet, so click whatever creates it. Do not fall back to browser_run_js to
+scan the DOM.
+
+browser_batch runs a sequence you already know in one round trip. Prefer it
+over one call per step.
+
+Site playbooks: before driving an unfamiliar site call browser_guidelines with
+that domain. Some sites have a written procedure, and it is shorter than
+discovering the page. browser_guidelines {"name":"toolkit-workflow"} is the
+full workflow document.
+
+Every failure carries a `hint` saying what to do next. Read it before retrying.
+"""
+
 _TARGET = {
     "ref": {"type": "string", "description": "Ref from a find, or from a diff's actionable list."},
     "css": {"type": "string"},
@@ -222,6 +264,19 @@ TOOLS: list[dict] = [
         "inputSchema": _schema({"command": {"type": "object"}}, ["command"]),
     },
     {
+        "name": "browser_guidelines",
+        "description": (
+            "The toolkit's own docs. domain=<host> asks whether a written "
+            "playbook exists for a site -- fuzzy, so 'sheets' finds "
+            'docs.google.com. name="toolkit-workflow" returns the full '
+            "workflow. Neither argument lists what is installed."
+        ),
+        "inputSchema": _schema({
+            "domain": {"type": "string", "description": "Site to look up. Fuzzy."},
+            "name": {"type": "string", "description": "Playbook to read in full."},
+        }),
+    },
+    {
         "name": "browser_session",
         "description": (
             "Start, stop or restart the browser, or ask whether one is running. "
@@ -244,6 +299,22 @@ TOOLS: list[dict] = [
         ),
     },
 ]
+
+
+def _version() -> str:
+    """The installed version, or a placeholder from a source tree.
+
+    Hardcoding it here meant every release since 0.1.0 announced itself as
+    0.1.0 to every MCP client.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from . import paths
+
+    try:
+        return version(paths.DIST_NAME)
+    except PackageNotFoundError:
+        return "0"
 
 
 def _one_of(args: dict, *names: str) -> dict:
@@ -336,19 +407,40 @@ class Bridge:
 
     def call(self, tool: str, args: dict) -> tuple[str, bool]:
         """Returns (text, is_error). Never raises -- an agent needs a message."""
-        try:
-            payload = to_op(tool, args)
-        except KeyError:
-            return f"no such tool: {tool}", True
+        # Playbooks are reads, not ops: they live behind GET /guidelines, and
+        # the server never serves an untrusted one. Routed here rather than in
+        # to_op because to_op's whole output shape is "an op".
+        if tool == "browser_guidelines":
+            if args.get("name"):
+                request = ("GET", f"/guidelines/{args['name']}", None)
+            elif args.get("domain"):
+                # /search, not /lookup: lookup is exact-domain only, and an
+                # agent that has just landed somewhere has a hostname it is
+                # guessing at. No match comes back as an empty list.
+                request = ("GET", "/guidelines/search", {"q": args["domain"]})
+            else:
+                request = ("GET", "/guidelines", None)
+        else:
+            try:
+                payload = to_op(tool, args)
+            except KeyError:
+                return f"no such tool: {tool}", True
+            endpoint = "/commands" if tool == "browser_batch" else "/command"
+            request = ("POST", endpoint, payload)
 
-        endpoint = "/commands" if tool == "browser_batch" else "/command"
+        method, path, body = request
         try:
-            response = self.client.post(f"{self.api}{endpoint}", json=payload)
+            if method == "GET":
+                response = self.client.get(f"{self.api}{path}", params=body)
+            else:
+                response = self.client.post(f"{self.api}{path}", json=body)
         except httpx.RequestError as exc:
             return (
                 f"cannot reach the toolkit at {self.api} ({exc}). It is a separate, "
                 "long-lived process that owns the browser -- start it with "
-                "`abt serve --browser chrome` and wait for GET /status to answer.",
+                "`abt up` and wait for GET /status to answer. Never run "
+                "`abt serve` from a tool call: it is a command loop that never "
+                "returns, and whatever launched it hangs.",
                 True,
             )
 
@@ -385,7 +477,11 @@ class Server:
             return self._ok(request_id, {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "aibrowsertoolkit", "version": "0.1.0"},
+                "serverInfo": {"name": "aibrowsertoolkit", "version": _version()},
+                # Where the orientation goes. Clients that honour it put this
+                # in the system prompt once; the rest ignore it and lose
+                # nothing, because every tool still describes itself.
+                "instructions": INSTRUCTIONS,
             })
 
         if method == "tools/list":

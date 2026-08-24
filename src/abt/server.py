@@ -353,8 +353,26 @@ def create_app(
 
         found = await run_in_threadpool(g.lookup, domain)
         if found is None:
-            return fail(OpError("element_not_found", f"no playbook for {domain}"))
+            return fail(
+                OpError(
+                    "element_not_found",
+                    f"no playbook for {domain}",
+                    hint=(
+                        "This is an exact-domain lookup. For anything else -- a "
+                        "product name, a subdomain, a guess -- use "
+                        "GET /guidelines/search?q=, which is fuzzy. A site with "
+                        "no playbook is normal: drive it directly."
+                    ),
+                )
+            )
         return ok(found)
+
+    @app.get("/guidelines/search")
+    async def guidelines_search(q: str):
+        """Fuzzy, and never an error: no match is an answer, not a failure."""
+        from . import guidelines as g
+
+        return ok(await run_in_threadpool(g.search, q))
 
     @app.get("/guidelines/{name:path}")
     async def guidelines_read(name: str):
@@ -366,7 +384,18 @@ def create_app(
             # --pending` is the reviewing path, and it warns.
             return ok({"name": name, "markdown": g.read(name)})
         except KeyError:
-            return fail(OpError("element_not_found", f"no playbook named {name}"))
+            return fail(
+                OpError(
+                    "element_not_found",
+                    f"no playbook named {name}",
+                    hint=(
+                        "GET /guidelines lists what is installed and readable. "
+                        "A playbook that was pulled but not trusted is not "
+                        "served here at all -- `abt guidelines trust <domain>` "
+                        "after a person has read it."
+                    ),
+                )
+            )
 
     # --- browser lifecycle ----------------------------------------------------
 
