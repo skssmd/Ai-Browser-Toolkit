@@ -333,6 +333,20 @@ Use the field's own format — `YYYY-MM-DD`, `HH:MM`, `YYYY-MM`, `YYYY-Www`,
 `YYYY-MM-DDTHH:MM` — and anything the field rejects raises `not_interactable`
 instead of quietly emptying itself.
 
+**A readonly date field is a different animal.** Most date fields on the web
+are plain text inputs marked `readonly` and driven by a JavaScript calendar.
+Nothing can be typed into one, and `input` says so: *"is readonly, so nothing
+can be typed into it"*. Click it instead, and the calendar's controls arrive
+in `dom_diff.actionable` with refs.
+
+Then read the calendar before you start clicking it. **It opens on today**, so
+a date in another year is dozens or hundreds of clicks on the previous-month
+arrow — and clicking that arrow is the trap, not the solution. Look first for
+the month and year `<select>`s that most calendars put in their header:
+`select` the year, `select` the month, then click the day. Three ops instead
+of a hundred and fifteen. If there are no selects, the widget usually accepts
+a year click in its title, and only then is the arrow the answer.
+
 ## Errors
 
 A closed set of `error.type` values to branch on: `invalid_op`,

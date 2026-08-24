@@ -47,6 +47,25 @@ def _is_shutdown(item: Any) -> bool:
     return isinstance(item, dict) and item.get("op") == "shutdown"
 
 
+def _unmapped(exc: Exception) -> OpError:
+    """Give an exception nobody translated the least wrong type available.
+
+    Everything used to land on `browser_dead`, which is the most expensive
+    wrong answer the toolkit can give: its hint tells the caller to restart
+    the browser, so an agent stops working on the page and starts working on
+    the toolkit. A timeout in particular says nothing about the browser being
+    dead -- it is the ordinary way a wait ends.
+
+    Ops should translate their own failures; this is the net under them, and
+    a `browser_dead` reaching here should be read as a missing translation.
+    """
+    name = type(exc).__name__
+    detail = f"{name}: {exc}"
+    if "Timeout" in name:
+        return OpError("timeout", detail)
+    return OpError("browser_dead", detail)
+
+
 def create_app(
     session: BrowserSession,
     request_stop: Callable[[], None] | None = None,
@@ -74,9 +93,7 @@ def create_app(
         except OpError as exc:
             response = fail(exc, op_index)
         except Exception as exc:  # an unmapped Selenium surprise
-            response = fail(
-                OpError("browser_dead", f"{type(exc).__name__}: {exc}"), op_index
-            )
+            response = fail(_unmapped(exc), op_index)
         if recorder is not None:
             event = _record(data, response, now_ms() - started)
             _attach_shot(data, response, event)
