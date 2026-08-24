@@ -1,0 +1,26 @@
+{
+  "cmd": [
+    "C:\\Users\\Dipto.SHAHARIARDIPTO\\AppData\\Roaming\\npm\\claude.CMD",
+    "-p",
+    "You are completing a web task using ai-browser-toolkit (abt),\nwhich drives a real browser already open on the task page.\n\nGOAL: Enter \"Cheree\" into the text field and press Submit.\n\nThese are SHORT tasks -- usually solvable in 2-3 calls if you lean on these\nfour things:\n\n1. **Look with css.** `find {\"css\":\"input[type=text]\"}` is exact; searching\n   by visible text matches ancestors and surprises. Css first, text last.\n2. **Read the actionables you already got.** Every result carries a dom_diff;\n   controls that just appeared are listed in `dom_diff.actionable` with fresh\n   refs. Act on those instead of running find again -- most of your next\n   target is already in your hand.\n3. **Batch.** Once you know the targets (e.g. two fields + Submit), send all\n   ops in ONE call: a JSON array of raw ops\n   (`[{\"op\":\"input\",\"css\":\"#u\",\"value\":\"x\"},{\"op\":\"click\",\"css\":\"#subbtn\"}]`).\n   A form is one round trip, not six.\n4. **get_text for content.** When the goal needs values written on the page,\n   `get_text` returns the rendered text (popups/tabs included via tab_list +\n   tab_switch). Don't fall back to run_js DOM scans.\n5. **Screenshot on ambiguity.** When two controls share a label, or a dialog\n   suddenly covers the form, take a screenshot before clicking -- layout\n   tells you which button is which when text cannot.\n\nTwo traps: a stale_ref means \"take a fresh ref from your last diff\" --\nnever goto/reload the task page to fix it (that resets the goal). Forms\nlike these expect the final Submit/OK press -- press it. If a surprise\ndialog interrupts, READ it: dialogs offering \"Exit / Leave / Home\" usually\nmean FAILURE -- dismissing via Cancel/No is the safe move. And a successful\nsubmit makes these pages freeze or blank -- but only trust that when your\nsubmit actually landed where you aimed; verify the click's target, then\nstop poking the page.\n\nIf you drop to the CLI instead, EVERY command needs -p 8766 (the default\nport belongs to an unrelated server):\n\n  py -m abt status -p 8766\n  py -m abt find \"input[type=text]\" -p 8766\n  py -m abt click --ref el_3 -p 8766\n  py -m abt input \"21\" --ref el_5 -p 8766\n  '{\"op\":\"press\",\"key\":\"Enter\"}' | py -m abt exec - -p 8766\n\nAccomplish the GOAL on the page that is already open, then STOP and reply\nwith just: DONE\n\n\nabt is also connected to you over MCP as server \"abt\" -- prefer its typed\ntools over shelling out; they run the same operations with validated\nparameters.\n",
+    "--max-turns",
+    "40",
+    "--output-format",
+    "json",
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "C:\\Users\\DIPTO~1.SHA\\AppData\\Local\\Temp\\abt-bench-os_ewvvf\\mcp.json",
+    "--allowedTools",
+    "Bash(py:*)",
+    "mcp__abt"
+  ],
+  "returncode": 0,
+  "duration_s": 10.4,
+  "timed_out": false,
+  "output": "I don't see a specific task description yet \u2014 could you tell me what web task you'd like me to complete with ai-browser-toolkit (abt)? For example, what site/app to interact with and what the goal is.\n",
+  "input_tokens": null,
+  "output_tokens": null,
+  "cost_usd": null
+}

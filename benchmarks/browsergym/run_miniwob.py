@@ -160,15 +160,6 @@ Accomplish the GOAL on the page that is already open, then STOP and reply
 with just: DONE
 """
 
-MCP_HINT = """
-
-abt is also connected to you over MCP as server "abt" (tools named
-abt_browser_*): prefer those typed tools over shelling out -- same operations,
-validated parameters, no quoting problems. The batch tool there accepts a
-raw ops array exactly like the CLI example above.
-"""
-
-
 # MiniWoB pages end themselves EPISODE_MAX_TIME (often 10 s) after load, and
 # some scale reward down by elapsed time. An out-of-process CLI agent boots in
 # ~30-60 s and can never act inside that window, so the runner neutralizes the
@@ -189,6 +180,35 @@ abt is also connected to you over MCP as server "abt" -- prefer its typed
 tools over shelling out; they run the same operations with validated
 parameters.
 """
+
+
+def _usage_of(output: str) -> dict:
+    """Tokens and cost, when the agent CLI reported them.
+
+    claude --output-format json ends with a single result object; opencode
+    reports nothing comparable today. Absent numbers stay None rather than
+    zero, so a missing measurement can never read as a free episode.
+    """
+    blank = {"input_tokens": None, "output_tokens": None, "cost_usd": None}
+    text = output.strip()
+    start = text.rfind("{")
+    if start < 0:
+        return blank
+    try:
+        obj = json.loads(text[start:])
+    except ValueError:
+        try:
+            obj = json.loads(text)
+        except ValueError:
+            return blank
+    if not isinstance(obj, dict):
+        return blank
+    usage = obj.get("usage") or {}
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cost_usd": obj.get("total_cost_usd"),
+    }
 
 
 def _pretty_event(line: str) -> str | None:
@@ -222,18 +242,32 @@ def _pretty_event(line: str) -> str | None:
 
 def run_agent_session(
     cmd: list[str], timeout_s: float, transcript_dir: Path, name: str,
-    *, stream: bool = True,
+    *, stream: bool = True, cwd: str | None = None,
 ) -> dict:
     """Run one agent CLI session, teeing its output live to the console
     and keeping the FULL transcript (not a tail) next to the results."""
+    import shutil
     import subprocess
     import time
 
     transcript_dir.mkdir(parents=True, exist_ok=True)
+    # Both agent CLIs are npm shims, which on Windows means `claude.cmd`.
+    # CreateProcess does not consult PATHEXT, so an unresolved bare name is a
+    # FileNotFoundError that reads like the agent is not installed.
+    exe = shutil.which(cmd[0])
+    if exe is None:
+        raise SystemExit(f"{cmd[0]!r} is not on PATH -- install it or pass --agent")
+    cmd = [exe, *cmd[1:]]
     started = time.time()
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1,
+        # DEVNULL, not inherited. An agent CLI treats a non-tty stdin as piped
+        # input and waits on it, then runs with whatever it read -- which for
+        # an inherited, already-closed stdin is nothing at all. That is how an
+        # episode ends with the agent asking what the task is while its prompt
+        # sits complete in argv.
+        stdin=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace", bufsize=1, cwd=cwd,
     )
     lines: list[str] = []
     assert proc.stdout is not None
@@ -255,38 +289,62 @@ def run_agent_session(
         "timed_out": "[killed after" in lines[-1] if lines else False,
         "output": "".join(lines),
     }
+    out.update(_usage_of("".join(lines)))
     (transcript_dir / f"{name}.json").write_text(json.dumps(out, indent=2))
     return out
 
 
 def build_agent_command(
-    which: str, goal: str, server: str, mcp: bool = False
-) -> list[str]:
+    which: str, goal: str, server: str, mcp: bool = False, model: str | None = None
+) -> tuple[list[str], str]:
+    """Returns (argv, cwd).
+
+    The cwd matters as much as the argv. An agent CLI reads project
+    instructions from the directory it starts in, and starting one in this
+    repository hands it CLAUDE.md and AGENTS.md -- pages of guidance about
+    driving abt, written for contributors, none of it part of the benchmark.
+    A measured episode has to be the prompt and nothing else, so every agent
+    runs in an empty throwaway directory.
+    """
+    workdir = Path(tempfile.mkdtemp(prefix="abt-bench-"))
     port = urlparse(server).port or 8765
     prompt = AGENT_PROMPT.format(goal=goal.strip(), port=port)
     if mcp:
         prompt += MCP_HINT
     if which == "claude":
-        cmd = [
-            "claude", "-p", prompt,
-            "--allowedTools", "Bash(py:*)",
-            "--max-turns", "40",
-        ]
+        # ONE --allowedTools. It is variadic, so a second occurrence replaced
+        # the first rather than adding to it -- the MCP run was silently
+        # dropping Bash, and `mcp__abt:*` is not a pattern the CLI recognises
+        # anyway (the "every tool on this server" form is the bare server
+        # name). A denied tool in -p mode looks exactly like an agent that
+        # could not do the task, which is the worst possible benchmark bug.
+        allowed = ["Bash(py:*)"]
+        # --output-format json makes the CLI end with one object carrying
+        # the reply AND its usage. Tokens per successful task is the metric
+        # this benchmark exists to report, and self-reported effort is not it.
+        cmd = ["claude", "-p", prompt, "--max-turns", "40",
+               "--output-format", "json"]
+        # Which model played the episode is part of the result, not a detail:
+        # a score means nothing without it. Recorded in the results json too.
+        if model:
+            cmd += ["--model", model]
         if mcp:
-            cfg_dir = Path(tempfile.mkdtemp(prefix="abt-mcp-"))
-            (cfg_dir / "mcp.json").write_text(json.dumps({"mcpServers": {
+            (workdir / "mcp.json").write_text(json.dumps({"mcpServers": {
                 "abt": {"type": "stdio", "command": "py",
                         "args": ["-m", "abt", "mcp", "--api", server]},
             }}))
-            cmd += ["--strict-mcp-config", "--mcp-config", str(cfg_dir / "mcp.json"),
-                    "--allowedTools", "mcp__abt:*"]
-        return cmd
+            cmd += ["--strict-mcp-config", "--mcp-config", str(workdir / "mcp.json")]
+            allowed.append("mcp__abt")
+        cmd += ["--allowedTools", *allowed]
+        return cmd, str(workdir)
     if which == "opencode":
         # json events so the runner can pretty-print tool calls/results and
         # keep the full transcript; the default format collapses results
         cmd = ["opencode", "run", "--format", "json"]
+        if model:
+            cmd += ["--model", model]
         if mcp:
-            cfg_dir = Path(tempfile.mkdtemp(prefix="abt-mcp-"))
+            cfg_dir = workdir
             (cfg_dir / "opencode.json").write_text(json.dumps({
                 "$schema": "https://opencode.ai/config.json",
                 "mcp": {"abt": {
@@ -297,7 +355,7 @@ def build_agent_command(
             }))
             cmd += ["--dir", str(cfg_dir)]
         cmd.append(prompt)
-        return cmd
+        return cmd, str(workdir)
     raise SystemExit(f"unknown agent {which!r}; expected claude|opencode")
 
 
@@ -341,6 +399,9 @@ def main() -> int:
     ap.add_argument("--policy", choices=["scripted", "llm", "agent"], default="scripted")
     ap.add_argument("--agent", choices=["claude", "opencode"], default="opencode",
                     help="which agent CLI plays the policy when --policy agent")
+    ap.add_argument("--agent-model", default=None,
+                    help="model id passed to the agent CLI, e.g. "
+                         "claude-haiku-4-5-20251001")
     ap.add_argument("--agent-timeout", type=float, default=240.0,
                     help="wall-clock budget for one agent session, seconds")
     ap.add_argument("--quiet-agent", action="store_true",
@@ -400,13 +461,20 @@ def main() -> int:
             steps = []
             reward, terminated, truncated = 0.0, False, False
             if args.policy == "agent":
-                cmd = build_agent_command(args.agent, obs.get("goal") or "",
-                                          args.server, mcp=args.agent_mcp)
+                cmd, agent_cwd = build_agent_command(
+                    args.agent, obs.get("goal") or "",
+                    args.server, mcp=args.agent_mcp, model=args.agent_model)
                 print(f"[ep {ep}] agent session: {args.agent} ...")
+                ops_before, errs_before = client.op_tally()
                 session = run_agent_session(
                     cmd, args.agent_timeout,
                     Path(args.out).parent / "agent-transcripts", f"ep{seed}",
-                    stream=not args.quiet_agent,
+                    stream=not args.quiet_agent, cwd=agent_cwd,
+                )
+                ops_after, errs_after = client.op_tally()
+                agent_ops = (ops_after - ops_before) if ops_before >= 0 else None
+                agent_op_errors = (
+                    (errs_after - errs_before) if errs_before >= 0 else None
                 )
                 obs, reward, terminated, truncated, info = env.step("noop(500)")
                 steps.append({
@@ -438,11 +506,23 @@ def main() -> int:
                     if err or terminated or truncated or reward != 0.0:
                         break
             success = float(reward) == 1.0
-            results.append(
-                {"task_id": task_cls.get_task_id(), "seed": seed,
-                 "success": success, "reward": float(reward),
-                 "steps": len(steps), "log": steps}
-            )
+            record = {"task_id": task_cls.get_task_id(), "seed": seed,
+                      "success": success, "reward": float(reward),
+                      "steps": len(steps), "log": steps}
+            if args.policy == "agent":
+                # The cost side of the result. Pass rate alone cannot separate
+                # a toolkit that solves a task in three ops from one that
+                # flails through thirty and gets there anyway.
+                record.update({
+                    "duration_s": session["duration_s"],
+                    "agent_timed_out": session["timed_out"],
+                    "ops": agent_ops,
+                    "op_errors": agent_op_errors,
+                    "input_tokens": session.get("input_tokens"),
+                    "output_tokens": session.get("output_tokens"),
+                    "cost_usd": session.get("cost_usd"),
+                })
+            results.append(record)
             print(f"[ep {ep}] success={success}")
     finally:
         env.close()
@@ -459,6 +539,7 @@ def main() -> int:
         "policy": args.policy,
         "agent": args.agent if args.policy == "agent" else None,
         "agent_mcp": args.agent_mcp if args.policy == "agent" else None,
+        "agent_model": args.agent_model if args.policy == "agent" else None,
         "freeze_timers": not args.no_freeze_timers,
     }
     dest = Path(args.out)

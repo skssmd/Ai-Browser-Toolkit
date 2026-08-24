@@ -62,6 +62,27 @@ class AbtClient:
             body["headless"] = headless
         return self.command(body)
 
+    def op_tally(self) -> tuple[int, int]:
+        """(ops recorded, ops that failed) in the server's current session.
+
+        The server logs every op it executes, whoever sent it. Sampling this
+        either side of an agent session gives the ops that agent actually
+        spent -- counted by the server rather than self-reported by the agent,
+        which is the only version worth putting in a results table.
+        """
+        try:
+            raw = urllib.request.urlopen(self.base_url + "/logs", timeout=10)
+            index = json.loads(raw.read()).get("result") or {}
+            current = index.get("current")
+            for entry in index.get("sessions") or []:
+                if entry.get("session_id") == current:
+                    return int(entry.get("events", 0)), int(entry.get("errors", 0))
+        except Exception:
+            pass
+        # Metrics must never fail an episode: an unreadable log is a missing
+        # number, not a failed run.
+        return -1, -1
+
 
 def inject_cdp_port(port: int) -> None:
     """Make BrowserGym launch its chromium with a CDP endpoint.

@@ -1,0 +1,2 @@
+{"task": "click-button", "seed": 9001, "started": "2026-08-24T10:02:54.244694+00:00", "wall_s": 19.6, "status": "ok", "success": false, "reward": 0.0, "ops": 0, "op_errors": 0, "duration_s": 10.9, "agent_timed_out": false, "input_tokens": null, "output_tokens": null, "cost_usd": null}
+{"task": "enter-text", "seed": 9001, "started": "2026-08-24T10:03:13.888806+00:00", "wall_s": 18.8, "status": "ok", "success": false, "reward": 0.0, "ops": 0, "op_errors": 0, "duration_s": 10.4, "agent_timed_out": false, "input_tokens": null, "output_tokens": null, "cost_usd": null}

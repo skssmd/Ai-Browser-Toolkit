@@ -1,0 +1,18 @@
+{
+  "benchmark": "miniwob",
+  "created": "2026-08-24T10:02:14.753709+00:00",
+  "agent": "claude",
+  "model": "claude-haiku-4-5-20251001",
+  "mcp": true,
+  "freeze_timers": true,
+  "agent_timeout": 300.0,
+  "server": "http://127.0.0.1:8766",
+  "tasks": [
+    "click-button",
+    "enter-text"
+  ],
+  "seeds": [
+    9001
+  ],
+  "episodes": 2
+}

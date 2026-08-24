@@ -1,0 +1,38 @@
+{
+  "benchmark": "miniwob",
+  "task": "click-button",
+  "episodes": [
+    {
+      "task_id": "miniwob.click-button",
+      "seed": 9001,
+      "success": false,
+      "reward": 0.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "agent:claude",
+          "ops": null,
+          "error": null,
+          "reward": 0.0
+        }
+      ],
+      "duration_s": 10.9,
+      "agent_timed_out": false,
+      "ops": 0,
+      "op_errors": 0,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 0.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "agent",
+  "agent": "claude",
+  "agent_mcp": true,
+  "agent_model": "claude-haiku-4-5-20251001",
+  "freeze_timers": true
+}

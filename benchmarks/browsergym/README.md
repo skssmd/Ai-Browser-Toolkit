@@ -118,5 +118,22 @@ and the fixed seeds documented next to the results.
   anything unmapped rather than approximating.
 * Known deviation from stock AgentLab runs: actions execute through our
   server instead of BrowserGym's executor, and `noop()` steps advance the
-  episode clock. Task timing budgets (MiniWoB `episode_max_time`) are
-  unaffected at current step counts; WebArena has none.
+  episode clock. WebArena has no timing budget.
+* **The MiniWoB clock is neutralized, and every agent-policy number here
+  depends on that.** `core.js` sets `EPISODE_MAX_TIME = 10000`, ends the
+  episode at ten seconds with reward -1, and most tasks call
+  `core.endEpisode(r, r > 0)` -- that second argument scales a *successful*
+  reward by `max(0, 1 - dt/10000)`. An agent CLI is a separate process that
+  takes 30-60 s just to start, so under the stock clock every agent scores
+  0.0 on every task regardless of what it does: the run measures process
+  startup, not the toolkit. The runner therefore patches `endEpisode` to
+  swallow `reason === 'timed out'` and to force `time_proportional=false`
+  (`FREEZE_TIMERS_JS`, on by default, `--no-freeze-timers` restores stock).
+  Correctness is untouched -- the task's own `r` is computed by task code we
+  never patch, and BrowserGym's `validate()` still grades it.
+* What that means for reading these numbers: they are **correctness with the
+  clock neutralized**, and they are NOT comparable to published MiniWoB
+  scores, which run the stock clock and reward acting fast. Every results
+  json records `freeze_timers` so a reader can tell which regime produced
+  it. Scripted-policy runs are in-process and fast enough that the flag does
+  not matter to them; agent-policy runs are meaningless without it.
