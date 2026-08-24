@@ -339,13 +339,21 @@ Nothing can be typed into one, and `input` says so: *"is readonly, so nothing
 can be typed into it"*. Click it instead, and the calendar's controls arrive
 in `dom_diff.actionable` with refs.
 
-Then read the calendar before you start clicking it. **It opens on today**, so
-a date in another year is dozens or hundreds of clicks on the previous-month
-arrow — and clicking that arrow is the trap, not the solution. Look first for
-the month and year `<select>`s that most calendars put in their header:
-`select` the year, `select` the month, then click the day. Three ops instead
-of a hundred and fifteen. If there are no selects, the widget usually accepts
-a year click in its title, and only then is the arrow the answer.
+Then **read the calendar's header before clicking anything in it**. It tells
+you which month is showing, and that decides which of three routes is right:
+
+1. **Already the month you want.** Common, because a form that expects a date
+   in a range often opens the calendar inside that range. Click the day.
+2. **A month or two away.** Click the previous/next arrow that many times.
+3. **Years away.** Look for month and year `<select>`s in the header and use
+   them. If there are none — and many calendars ship without them, jQuery UI
+   among them by default — the arrows are the only route, one click per
+   month. At that point check whether the field will take a value directly
+   through `run_js` instead.
+
+The mistake is clicking the arrow before reading the header, because the
+number of clicks needed is the one thing the header tells you and guessing
+it costs a click each time you guess low.
 
 ## Errors
 

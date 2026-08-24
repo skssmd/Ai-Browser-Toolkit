@@ -545,10 +545,10 @@ def input(session: BrowserSession, cmd) -> dict:
                 hint=(
                     "A readonly field is written by a widget, not the "
                     "keyboard: click it and act on the controls that arrive "
-                    "in dom_diff.actionable. If it opens a calendar, note "
-                    "that calendars open on today -- reach a distant date "
-                    "through its month and year selects, not by clicking the "
-                    "previous-month arrow."
+                    "in dom_diff.actionable. If it opens a calendar, read the "
+                    "header to see which month is showing before clicking an "
+                    "arrow -- it may already be the right one, and it is the "
+                    "only thing that tells you how far you have to go."
                 ),
             ) from exc
         raise OpError(
