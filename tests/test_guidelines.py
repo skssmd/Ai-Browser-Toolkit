@@ -461,7 +461,11 @@ def test_the_epilog_leads_with_the_start_sequence():
     assert "abt up" in epilog
     assert "abt browser start" in epilog
     assert "SEPARATE step" in epilog
-    assert epilog.index("abt up") < epilog.index("abt goto")
+    # `abt goto` was the third step until the browsing subcommands were
+    # collapsed into exec; the ordering assertion is what matters, not the
+    # spelling of the command being ordered.
+    assert epilog.index("abt up") < epilog.index("abt browser start")
+    assert epilog.index("abt browser start") < epilog.index('"op":"goto"')
 
 
 # -- errors teach ---------------------------------------------------------
