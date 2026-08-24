@@ -10,7 +10,7 @@ all of them:
 
 | | Use it when |
 |---|---|
-| **CLI** — `abt goto`, `abt find`, `abt click` | The agent already has a shell. Nothing to configure. |
+| **CLI** — `abt exec`, `abt exec-batch` | The agent already has a shell. Nothing to configure. |
 | **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
 | **HTTP** — `POST /command` on :8765 | You are writing the integration yourself. |
 

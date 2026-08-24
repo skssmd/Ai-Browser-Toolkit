@@ -1,14 +1,19 @@
 """The CLI, MCP and HTTP must offer the same vocabulary.
 
-They drifted, and the drift was invisible until an agent hit it. The ops
-accept ref/css/xpath/text/index/near; the CLI accepted ref and css, so
-`abt click --text Prev` was rejected -- while the workflow document's own
-opening example, `abt find --text "Sign in"`, was a command the CLI refused.
-Twenty-four of thirty-two ops had no subcommand at all, including `get_text`,
-which the same document tells the reader to reach for first.
+The CLI once carried a subcommand per op, and it drifted: the ops accept
+ref/css/xpath/text/index/near while `click` accepted two of them, `find`
+wanted a positional where everything else wanted `--css`, and `input` wanted
+a positional where `select` wanted `--value`. Each gap was a rejected call an
+agent had guessed correctly. The workflow document's own opening example,
+`abt find --text "Sign in"`, was a command the CLI refused.
 
-None of that is visible by reading one file. These tests make the three
-surfaces answer for each other.
+So the CLI no longer spells the ops at all. Subcommands are lifecycle --
+start the server, start the browser, read what was recorded -- and every page
+action goes through `exec`/`exec-batch`, which take the op verbatim. There is
+no translation left to drift, and batching stops being the road less
+travelled: it is the same command with a list.
+
+These tests hold that line.
 """
 
 from __future__ import annotations
@@ -18,30 +23,13 @@ import typer.main as typer_main
 from abt import cli, mcp
 from abt.schema import OP_NAMES
 
-# Ops reached through a grouped subcommand rather than one of their own:
-# `abt browser start`, `abt tabs new`. Listed rather than inferred, so adding
-# an op cannot quietly join them.
-GROUPED = {
-    "browser_start": "browser start",
-    "browser_stop": "browser stop",
-    "browser_restart": "browser restart",
-    "browser_status": "browser status",
-    "tab_new": "tabs new",
-    "tab_switch": "tabs switch",
-    "tab_close": "tabs close",
-    "tab_list": "tabs list",
-}
-
-# Where the subcommand's name is not the op's name.
-ALIASES = {
-    "get_text": "get-text",
-    "get_html": "get-html",
-    "run_js": "run-js",
-    "wait_for": "wait-for",
-    "current_url": "current-url",
-    "read_console": "console",
-    "read_network": "network",
-    "find_full": "find",  # `find --full`
+# Subcommands that are allowed to exist. Anything else means an op has grown
+# a bespoke spelling again.
+LIFECYCLE = {
+    "serve", "up", "shutdown", "browser", "autostart",   # run the thing
+    "status", "doctor", "logs", "ops", "guidelines", "mcp",  # look at the thing
+    "messenger",                                          # a site shortcut
+    "exec", "exec-batch",                                 # every page action
 }
 
 
@@ -49,30 +37,25 @@ def cli_commands() -> set[str]:
     return set(typer_main.get_command(cli.app).commands)
 
 
-def test_every_op_has_a_named_cli_command():
-    commands = cli_commands()
-    missing = [
-        op
-        for op in OP_NAMES
-        if op not in GROUPED
-        and ALIASES.get(op, op) not in commands
-        # `shutdown` and `diff` and `status` are their own commands already.
-    ]
-    assert missing == [], (
-        f"ops with no `abt` subcommand: {missing}. `abt exec` reaching them is "
-        f"not enough -- the documentation names ops, and a reader following it "
-        f"gets 'No such command'."
+def test_the_cli_does_not_respell_the_ops():
+    extra = cli_commands() - LIFECYCLE
+    assert extra == set(), (
+        f"subcommands that are not lifecycle: {sorted(extra)}. Page actions go "
+        f"through `exec`/`exec-batch` so there is one spelling of each op, the "
+        f"one `abt ops` prints. A subcommand is a second spelling that can "
+        f"disagree with it -- which is how `abt click --text` came to be "
+        f"rejected while the click op accepted `text`."
     )
 
 
-def test_target_flags_match_the_ops_targeting():
-    """Every command that targets an element offers the ops' full vocabulary."""
-    group = typer_main.get_command(cli.app)
-    expected = {"--ref", "--css", "--xpath", "--text"}
-    for name in ("click", "input", "get-text", "get-html", "press", "hover"):
-        command = group.commands[name]
-        flags = {opt for param in command.params for opt in param.opts}
-        assert expected <= flags, f"`abt {name}` is missing {expected - flags}"
+def test_exec_is_present_to_carry_them():
+    assert {"exec", "exec-batch"} <= cli_commands()
+
+
+def test_help_teaches_batching():
+    """The reason MCP callers batch and CLI callers did not: nobody said to."""
+    assert "exec-batch" in cli._EPILOG_HEADER
+    assert "ONE call" in cli._EPILOG_HEADER or "ONE round trip" in cli._EPILOG_HEADER
 
 
 def test_mcp_tools_lower_to_real_ops():

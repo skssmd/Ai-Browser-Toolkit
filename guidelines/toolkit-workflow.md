@@ -10,22 +10,30 @@ do not write WebDriver code; you run small commands and read JSON back. The
 browser stays up between commands, so tabs, logins and focus persist.
 
 ```bash
+# lifecycle -- these are the only subcommands
 abt status                            # a server up? usually yes. URL, tabs, refs
 abt up                                # start one if not; returns immediately
-abt goto https://example.com
-abt find --text "Sign in"
-abt click --ref el_3
-abt input --css "#email" --value "someone@example.com"
+abt browser start                     # a SEPARATE step from starting the server
 abt ops                               # every op and its exact parameters
-abt exec '{"op":"scroll","y":4000}'             # any op, raw
-abt exec-batch '[{"op":"click","text":"Edit"},{"op":"get_text","css":"h1"}]'
 abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
+
+# every page action -- one op
+abt exec '{"op":"goto","url":"https://example.com"}'
+abt exec '{"op":"find","text":"Sign in"}'
+abt exec '{"op":"click","ref":"el_3"}'
+
+# ...or a sequence you already know, in ONE round trip
+abt exec-batch '[{"op":"input","css":"#email","value":"me@example.com"},
+                 {"op":"input","css":"#password","value":"hunter2"},
+                 {"op":"click","css":"#submit"}]' 
 ```
 
-`abt exec` reaches **every** op, including those with no named subcommand — so
-the op tables below are the real vocabulary. `abt --help` lists subcommands;
-`abt <command> --help` lists flags. On PowerShell, pipe JSON rather than
+**`abt exec` and `abt exec-batch` are how you drive the page.** The
+subcommands are lifecycle only — start the server, start the browser, look
+at what is recorded. Every op in the tables below goes through `exec`,
+spelled exactly as the table spells it, so there is no second vocabulary to
+learn and nothing that can disagree with `abt ops`. On PowerShell, pipe JSON rather than
 quoting it inline: `'{"op":"press","key":"Enter"}' | abt exec -`.
 
 **Never run `abt serve` from a tool call.** That is the command loop itself: it
@@ -337,7 +345,7 @@ next thing you do is retype the value that was never the problem.
 The diff is what tells you, and it tells you immediately:
 
 ```
-abt input --css '#flight-from' --value 'ACV'
+abt exec '{"op":"input","css":"#flight-from","value":"ACV"}'
 ```
 ```json
 "text": {"added": ["ACV", "Arcata, CA (ACV)", "Eureka/Arcata, CA (ACV)",

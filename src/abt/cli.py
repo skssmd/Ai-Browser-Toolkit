@@ -1,8 +1,20 @@
 """`abt` -- the command line for driving a real browser.
 
-`serve` runs the server; every other subcommand talks to it. `exec` and
-`exec-batch` reach any op, so the CLI covers the whole vocabulary and not just
-the subcommands with names.
+The subcommands are lifecycle: start the server, start the browser, look at
+what was recorded. Every page action goes through `exec` and `exec-batch`,
+which take an op exactly as `abt ops` prints it.
+
+There used to be a subcommand per op, and keeping two spellings in step by
+hand did not work: the ops accept ref/css/xpath/text/index/near while `click`
+accepted two of them, `find` wanted a positional where its neighbours wanted
+`--css`, and this document's own example -- `abt find --text "Sign in"` --
+was a command the CLI rejected. Every one of those gaps was a correct guess
+answered with an error.
+
+One surface also makes batching the obvious thing rather than the clever
+thing. `exec-batch` is the same command with a list, so a form is one round
+trip instead of six -- which is what MCP callers had been doing all along,
+because MCP says so and the CLI never did.
 
 Underneath it is HTTP, and that surface is supported: anything `abt` does,
 curl can do too. Reach for it when you are already making HTTP calls and want
@@ -36,15 +48,27 @@ from . import paths
 # more than that in wasted ops on one task.
 _EPILOG_HEADER = (
     "First three commands, in this order:\n\n\x08\n"
-    "  abt up             start the server (no-op if already up)\n"
-    "  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n"
-    "  abt goto <url>     drive it\n\n"
+    "  abt up                              start the server (no-op if up)\n"
+    "  abt browser start                   open the browser -- a SEPARATE\n"
+    "                                      step, up to 2 min\n"
+    "  abt exec '{\"op\":\"goto\",\"url\":...}'   drive it\n\n"
     "The server runs without a browser on purpose: it answers in a second,\n"
     "while Chrome on a persistent profile can take two minutes. browser_dead\n"
     "or 'no browser is running' means you skipped `abt browser start`.\n\n"
-    "Named subcommands cover the common ops; `abt exec` reaches any of them,\n"
-    "and `abt ops` prints their exact parameters. On PowerShell, pipe JSON\n"
-    "rather than quoting it inline:\n\n\x08\n"
+    "The subcommands here are lifecycle only -- start things, look at things.\n"
+    "EVERY page action goes through `exec` and `exec-batch`, which take the\n"
+    "ops verbatim. `abt ops` prints every op and its exact parameters.\n\n\x08\n"
+    "  abt exec '{\"op\":\"find\",\"css\":\"input\"}'\n"
+    "  abt exec '{\"op\":\"click\",\"ref\":\"el_3\"}'\n\n"
+    "**Send a sequence you already know in ONE call.** A form is one round\n"
+    "trip, not six -- and it is the single biggest thing you can do to work\n"
+    "faster with this tool:\n\n\x08\n"
+    "  abt exec-batch '[{\"op\":\"input\",\"css\":\"#user\",\"value\":\"me\"},\n"
+    "                   {\"op\":\"input\",\"css\":\"#pass\",\"value\":\"pw\"},\n"
+    "                   {\"op\":\"click\",\"css\":\"#submit\"}]'\n\n"
+    "It stops at the first failure and tells you which one, so a batch is\n"
+    "never a blind leap. On PowerShell, pipe JSON rather than quoting it\n"
+    "inline:\n\n\x08\n"
     "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n\n"
     "Never run `abt serve` from a tool call. It is the command loop: it never\n"
     "returns, and whatever launched it hangs. Use `abt up`.\n\n"
@@ -600,17 +624,32 @@ def exec_(
 
 @app.command("exec-batch")
 def exec_batch(
-    file: Optional[Path] = typer.Argument(
-        None, help="File holding a JSON array of commands. Omit to read stdin."
+    commands_in: Optional[str] = typer.Argument(
+        None,
+        metavar="[COMMANDS]",
+        help="A JSON array, a file holding one, or `-` for stdin. Omit to read "
+        "stdin as well.",
     ),
     continue_on_error: bool = typer.Option(
         False, "--continue-on-error", help="Run every command even if one fails."
     ),
     port: int = _port_option(),
 ) -> None:
-    """Send a list of commands, run in order."""
-    raw = file.read_text(encoding="utf-8") if file else sys.stdin.read()
-    commands = _load(raw)
+    """Send a list of commands, run in order.
+
+    This is the fast path. A sequence you already know is one round trip
+    rather than one per step, and it stops at the first failure and says
+    which, so batching is never a blind leap.
+
+    It took a Path and nothing else, so `exec-batch -` -- the spelling `exec`
+    uses, and the one PowerShell needs since it mangles inline JSON -- tried
+    to open a file named "-" and died with a traceback. Inline JSON was not
+    accepted either, though `exec` takes it. The two now agree.
+    """
+    # `-` when nothing was given, so omitting the argument and passing `-`
+    # both mean stdin, and _load handles inline JSON and a path identically
+    # to how `exec` handles them.
+    commands = _load(commands_in if commands_in is not None else "-")
     if not isinstance(commands, list):
         typer.secho("expected a JSON array of commands", fg="red", err=True)
         raise typer.Exit(2)
@@ -621,164 +660,16 @@ def exec_batch(
     )
 
 
-@app.command()
-def goto(url: str, port: int = _port_option()) -> None:
-    """Load a URL in the active tab."""
-    _call(port, "/command", {"op": "goto", "url": url})
 
 
-@app.command()
-def find(
-    selector: Optional[str] = typer.Argument(
-        None, help="CSS selector. Or use --css / --text / --xpath."
-    ),
-    css: Optional[str] = typer.Option(
-        None,
-        "--css",
-        help="Same as the positional argument. Accepted because every other "
-        "command spells it this way.",
-    ),
-    text: Optional[str] = typer.Option(
-        None, "--text", help="Exact visible text, instead of a CSS selector."
-    ),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    near: Optional[str] = typer.Option(
-        None, "--near", help="Qualify a selector that matches too much."
-    ),
-    full: bool = typer.Option(
-        False, "--full", help="Include inner content instead of tag shells only."
-    ),
-    limit: int = typer.Option(100, "--limit"),
-    visible_only: bool = typer.Option(False, "--visible-only"),
-    port: int = _port_option(),
-) -> None:
-    """Search the page and return matching elements.
-
-    The positional argument is a CSS selector, kept because it is the common
-    case and shortest to type. `--text` and `--xpath` are the same targeting
-    the ops accept.
-    """
-    payload = {
-        "op": "find",
-        "mode": "full" if full else "shell",
-        "limit": limit,
-        "visible_only": visible_only,
-        **_target(css=selector or css, text=text, xpath=xpath, near=near),
-    }
-    _call(port, "/command", payload)
 
 
-@app.command()
-def screenshot(
-    ref: Optional[str] = typer.Option(
-        None, "--ref", help="Scroll this element into view and mark it in the frame."
-    ),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    base64: bool = typer.Option(
-        False,
-        "--base64",
-        help="Inline the image instead of writing one. Only for clients that "
-        "render images; it is hundreds of thousands of characters.",
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Capture the page and print the path to the image file.
-
-    A command of its own because there was none: the only way to reach this
-    was `abt exec '{"op":"screenshot"}'`, which printed the whole image as
-    base64 into the terminal. Open the path it prints -- that is a real file.
-    """
-    payload: dict = {"op": "screenshot"}
-    payload.update(_target(ref, css, xpath, text, required=False))
-    if base64:
-        payload["base64"] = True
-    _call(port, "/command", payload)
 
 
-@app.command()
-def click(
-    ref: Optional[str] = typer.Option(None, "--ref", help="A ref from find."),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    near: Optional[str] = typer.Option(
-        None, "--near", help="Qualify a selector that matches too much."
-    ),
-    index: int = typer.Option(0, "--index", help="Nth match when several fit."),
-    force: bool = typer.Option(
-        False, "--force", help="Fall back to a JS click if an overlay intercepts."
-    ),
-    new_tab: bool = typer.Option(
-        False, "--new-tab", help="Open the target's href in a new tab instead."
-    ),
-    background: bool = typer.Option(
-        False, "--background", help="With --new-tab, stay on the current page."
-    ),
-    elements: bool = typer.Option(
-        False, "--elements", help="Add the element diff to the text diff."
-    ),
-    removed: bool = typer.Option(
-        False, "--removed", help="List the text that left the screen, not just count it."
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Click an element."""
-    payload = {"op": "click", **_target(ref, css, xpath, text, near, index)}
-    if force:
-        payload["force"] = True
-    if new_tab:
-        payload["new_tab"] = True
-        payload["activate"] = not background
-    if elements:
-        payload["element_diff"] = True
-    if removed:
-        payload["include_removed"] = True
-    _call(port, "/command", payload)
 
 
-@app.command("input")
-def input_(
-    value: Optional[str] = typer.Argument(None, help="Text to type. Or --value."),
-    value_opt: Optional[str] = typer.Option(
-        None,
-        "--value",
-        help="Same as the positional argument. Accepted because `select` and "
-        "the ops themselves spell it this way.",
-    ),
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    near: Optional[str] = typer.Option(
-        None, "--near", help="Qualify a selector that matches too much."
-    ),
-    index: int = typer.Option(0, "--index", help="Nth match when several fit."),
-    keep: bool = typer.Option(False, "--keep", help="Append instead of clearing."),
-    port: int = _port_option(),
-) -> None:
-    """Type into a field.
-
-    If suggestions appear in the diff afterwards, the field is a chooser and
-    typing alone will not satisfy it -- click one of them.
-    """
-    _call(
-        port,
-        "/command",
-        {
-            "op": "input",
-            "value": value if value is not None else value_opt,
-            "clear": not keep,
-            **_target(ref, css, xpath, text, near, index),
-        },
-    )
 
 
-@app.command()
-def tabs(port: int = _port_option()) -> None:
-    """List open tabs."""
-    _call(port, "/command", {"op": "tab_list"})
 
 
 @app.command()
@@ -842,33 +733,6 @@ def ops(port: int = _port_option()) -> None:
     _call(port, "/ops", method="GET")
 
 
-@app.command()
-def diff(
-    reset: bool = typer.Option(
-        False, "--reset", help="Set the baseline to the current page instead."
-    ),
-    text_only: bool = typer.Option(
-        False, "--text-only", help="Skip the element diff and return text alone."
-    ),
-    added_only: bool = typer.Option(
-        False, "--added-only", help="Count removed text instead of listing it."
-    ),
-    max_tokens: int = typer.Option(
-        1000, "--max-tokens", help="Element diff budget, in tokens."
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Diff the current page against the last known state."""
-    payload = {"op": "diff"}
-    if reset:
-        payload["reset"] = True
-    if text_only:
-        payload["element_diff"] = False
-    if added_only:
-        payload["include_removed"] = False
-    if max_tokens != 1000:
-        payload["max_tokens"] = max_tokens
-    _call(port, "/command", payload)
 
 
 @app.command()
@@ -1028,237 +892,36 @@ def messenger_jobs(
 # added to the server that this CLI has not caught up with.
 
 
-@app.command("get-text")
-def get_text(
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    port: int = _port_option(),
-) -> None:
-    """Rendered text, including open shadow roots. No target means the page.
-
-    This is how you learn a page you have not seen. Prefer it to guessing
-    selectors with `find`.
-    """
-    _call(port, "/command", {"op": "get_text", **_target(ref, css, xpath, text, required=False)})
 
 
-@app.command("get-html")
-def get_html(
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    port: int = _port_option(),
-) -> None:
-    """Markup rather than text. Larger than get-text; reach for it second."""
-    _call(port, "/command", {"op": "get_html", **_target(ref, css, xpath, text, required=False)})
 
 
-@app.command("run-js")
-def run_js(
-    script: str = typer.Argument(..., help="Body. Use `return` to send a value back."),
-    port: int = _port_option(),
-) -> None:
-    """Run JavaScript and return its value.
-
-    The escape hatch, not the tool. To locate something use `find` and act on
-    the ref it gives you.
-    """
-    _call(port, "/command", {"op": "run_js", "script": script})
 
 
-@app.command()
-def press(
-    key: str = typer.Argument(..., help="A character, a named key (Enter, Tab), or ctrl+v."),
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    port: int = _port_option(),
-) -> None:
-    """Send one key. One per call -- 'Down Down' is not a key."""
-    _call(port, "/command", {"op": "press", "key": key,
-                             **_target(ref, css, xpath, text, required=False)})
 
 
-@app.command()
-def select(
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    by_text: Optional[str] = typer.Option(None, "--by-text", help="Option's visible label."),
-    value: Optional[str] = typer.Option(None, "--value", help="Option's value attribute."),
-    option_index: Optional[int] = typer.Option(None, "--option-index"),
-    port: int = _port_option(),
-) -> None:
-    """Pick an option in a real <select>.
-
-    A custom dropdown is not one: click the control, then click the option
-    that appears in the diff.
-    """
-    payload: dict = {"op": "select", **_target(ref, css, xpath, text)}
-    if by_text is not None:
-        payload["by_text"] = by_text
-    if value is not None:
-        payload["value"] = value
-    if option_index is not None:
-        payload["option_index"] = option_index
-    _call(port, "/command", payload)
 
 
-@app.command()
-def hover(
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    port: int = _port_option(),
-) -> None:
-    """Hover an element. Menus that open on hover show up in the diff."""
-    _call(port, "/command", {"op": "hover", **_target(ref, css, xpath, text)})
 
 
-@app.command()
-def scroll(
-    y: Optional[int] = typer.Option(None, "--y", help="Absolute page offset in pixels."),
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    port: int = _port_option(),
-) -> None:
-    """Scroll to a pixel offset, or bring an element into view.
-
-    Takes `--y` or a target, not both. There is no "bottom" -- pass a `--y`
-    larger than the page.
-    """
-    payload: dict = {"op": "scroll", **_target(ref, css, xpath, text, required=y is None)}
-    if y is not None:
-        payload["y"] = y
-    _call(port, "/command", payload)
 
 
-@app.command("wait-for")
-def wait_for(
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    xpath: Optional[str] = typer.Option(None, "--xpath"),
-    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
-    state: str = typer.Option("visible", "--state", help="present, visible, clickable, absent."),
-    timeout: Optional[float] = typer.Option(None, "--timeout", help="Seconds, up to 300."),
-    port: int = _port_option(),
-) -> None:
-    """Wait for an element to reach a state."""
-    payload: dict = {"op": "wait_for", "state": state, **_target(ref, css, xpath, text)}
-    if timeout is not None:
-        payload["timeout"] = timeout
-    _call(port, "/command", payload)
 
 
-@app.command()
-def back(port: int = _port_option()) -> None:
-    """Go back one entry in history."""
-    _call(port, "/command", {"op": "back"})
 
 
-@app.command()
-def forward(port: int = _port_option()) -> None:
-    """Go forward one entry in history."""
-    _call(port, "/command", {"op": "forward"})
 
 
-@app.command()
-def reload(port: int = _port_option()) -> None:
-    """Reload the current page."""
-    _call(port, "/command", {"op": "reload"})
 
 
-@app.command("current-url")
-def current_url(port: int = _port_option()) -> None:
-    """The active tab's URL, without a full status."""
-    _call(port, "/command", {"op": "current_url"})
 
 
-@app.command()
-def console(
-    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex filter."),
-    port: int = _port_option(),
-) -> None:
-    """Console messages, captured from document start."""
-    payload: dict = {"op": "read_console"}
-    if pattern:
-        payload["pattern"] = pattern
-    _call(port, "/command", payload)
 
 
-@app.command()
-def network(
-    failures_only: bool = typer.Option(False, "--failures-only"),
-    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex filter."),
-    port: int = _port_option(),
-) -> None:
-    """Network requests the page made."""
-    payload: dict = {"op": "read_network", "failures_only": failures_only}
-    if pattern:
-        payload["pattern"] = pattern
-    _call(port, "/command", payload)
 
 
-@app.command()
-def alert(
-    action: str = typer.Argument("accept", help="accept, dismiss, or text."),
-    text: Optional[str] = typer.Option(None, "--text", help="Type into a prompt first."),
-    port: int = _port_option(),
-) -> None:
-    """Answer a native alert, confirm or prompt."""
-    payload: dict = {"op": "alert", "action": action}
-    if text is not None:
-        payload["text"] = text
-    _call(port, "/command", payload)
 
 
-def _target(
-    ref: Optional[str] = None,
-    css: Optional[str] = None,
-    xpath: Optional[str] = None,
-    text: Optional[str] = None,
-    near: Optional[str] = None,
-    index: int = 0,
-    required: bool = True,
-) -> dict:
-    """The ops' targeting vocabulary, as flags.
-
-    It used to be `--ref` or `--css` and nothing else, while the ops beneath
-    accept ref, css, xpath, text, index and near. The gap was not academic:
-    the help text's own example is `abt find --text 'Sign in'`, which the CLI
-    then rejected as an unknown option -- so the tool documented a flag it
-    refused, and an agent following its instructions was told it was wrong.
-    """
-    chosen = {
-        name: value
-        for name, value in (("ref", ref), ("css", css), ("xpath", xpath), ("text", text))
-        if value is not None
-    }
-    if len(chosen) > 1:
-        typer.secho(
-            f"supply only one of --ref/--css/--xpath/--text, got {', '.join(chosen)}",
-            fg="red",
-            err=True,
-        )
-        raise typer.Exit(2)
-    if not chosen:
-        if not required:
-            return {}
-        typer.secho("supply one of --ref/--css/--xpath/--text", fg="red", err=True)
-        raise typer.Exit(2)
-    if near is not None:
-        chosen["near"] = near
-    if index:
-        chosen["index"] = index
-    return chosen
 
 
 def _load(raw: str) -> Any:
