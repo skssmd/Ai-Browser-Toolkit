@@ -630,7 +630,13 @@ def goto(url: str, port: int = _port_option()) -> None:
 @app.command()
 def find(
     selector: Optional[str] = typer.Argument(
-        None, help="CSS selector. Or use --text / --xpath instead."
+        None, help="CSS selector. Or use --css / --text / --xpath."
+    ),
+    css: Optional[str] = typer.Option(
+        None,
+        "--css",
+        help="Same as the positional argument. Accepted because every other "
+        "command spells it this way.",
     ),
     text: Optional[str] = typer.Option(
         None, "--text", help="Exact visible text, instead of a CSS selector."
@@ -657,7 +663,7 @@ def find(
         "mode": "full" if full else "shell",
         "limit": limit,
         "visible_only": visible_only,
-        **_target(css=selector, text=text, xpath=xpath, near=near),
+        **_target(css=selector or css, text=text, xpath=xpath, near=near),
     }
     _call(port, "/command", payload)
 
@@ -734,7 +740,13 @@ def click(
 
 @app.command("input")
 def input_(
-    value: str = typer.Argument(..., help="Text to type."),
+    value: Optional[str] = typer.Argument(None, help="Text to type. Or --value."),
+    value_opt: Optional[str] = typer.Option(
+        None,
+        "--value",
+        help="Same as the positional argument. Accepted because `select` and "
+        "the ops themselves spell it this way.",
+    ),
     ref: Optional[str] = typer.Option(None, "--ref"),
     css: Optional[str] = typer.Option(None, "--css"),
     xpath: Optional[str] = typer.Option(None, "--xpath"),
@@ -756,7 +768,7 @@ def input_(
         "/command",
         {
             "op": "input",
-            "value": value,
+            "value": value if value is not None else value_opt,
             "clear": not keep,
             **_target(ref, css, xpath, text, near, index),
         },
