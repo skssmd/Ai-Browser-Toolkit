@@ -1003,6 +1003,211 @@ def messenger_jobs(
     _call(port, f"/messenger/jobs{suffix}", method="GET")
 
 
+# --- the rest of the op vocabulary, as named commands -------------------------
+#
+# `abt exec` has always reached every op, and for a long time that was the
+# argument for not writing these. It was wrong in a way that only shows up in
+# use: the workflow document tells the reader to use `get_text`, and `abt
+# get-text` did not exist -- so following the instructions produced "No such
+# command", and the reader had to already know about `exec` to recover. A
+# vocabulary you can only reach by knowing a second thing is not reachable.
+#
+# So every op has a subcommand. `exec` stays, for raw JSON and for anything
+# added to the server that this CLI has not caught up with.
+
+
+@app.command("get-text")
+def get_text(
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    port: int = _port_option(),
+) -> None:
+    """Rendered text, including open shadow roots. No target means the page.
+
+    This is how you learn a page you have not seen. Prefer it to guessing
+    selectors with `find`.
+    """
+    _call(port, "/command", {"op": "get_text", **_target(ref, css, xpath, text, required=False)})
+
+
+@app.command("get-html")
+def get_html(
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    port: int = _port_option(),
+) -> None:
+    """Markup rather than text. Larger than get-text; reach for it second."""
+    _call(port, "/command", {"op": "get_html", **_target(ref, css, xpath, text, required=False)})
+
+
+@app.command("run-js")
+def run_js(
+    script: str = typer.Argument(..., help="Body. Use `return` to send a value back."),
+    port: int = _port_option(),
+) -> None:
+    """Run JavaScript and return its value.
+
+    The escape hatch, not the tool. To locate something use `find` and act on
+    the ref it gives you.
+    """
+    _call(port, "/command", {"op": "run_js", "script": script})
+
+
+@app.command()
+def press(
+    key: str = typer.Argument(..., help="A character, a named key (Enter, Tab), or ctrl+v."),
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    port: int = _port_option(),
+) -> None:
+    """Send one key. One per call -- 'Down Down' is not a key."""
+    _call(port, "/command", {"op": "press", "key": key,
+                             **_target(ref, css, xpath, text, required=False)})
+
+
+@app.command()
+def select(
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    by_text: Optional[str] = typer.Option(None, "--by-text", help="Option's visible label."),
+    value: Optional[str] = typer.Option(None, "--value", help="Option's value attribute."),
+    option_index: Optional[int] = typer.Option(None, "--option-index"),
+    port: int = _port_option(),
+) -> None:
+    """Pick an option in a real <select>.
+
+    A custom dropdown is not one: click the control, then click the option
+    that appears in the diff.
+    """
+    payload: dict = {"op": "select", **_target(ref, css, xpath, text)}
+    if by_text is not None:
+        payload["by_text"] = by_text
+    if value is not None:
+        payload["value"] = value
+    if option_index is not None:
+        payload["option_index"] = option_index
+    _call(port, "/command", payload)
+
+
+@app.command()
+def hover(
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    port: int = _port_option(),
+) -> None:
+    """Hover an element. Menus that open on hover show up in the diff."""
+    _call(port, "/command", {"op": "hover", **_target(ref, css, xpath, text)})
+
+
+@app.command()
+def scroll(
+    y: Optional[int] = typer.Option(None, "--y", help="Absolute page offset in pixels."),
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    port: int = _port_option(),
+) -> None:
+    """Scroll to a pixel offset, or bring an element into view.
+
+    Takes `--y` or a target, not both. There is no "bottom" -- pass a `--y`
+    larger than the page.
+    """
+    payload: dict = {"op": "scroll", **_target(ref, css, xpath, text, required=y is None)}
+    if y is not None:
+        payload["y"] = y
+    _call(port, "/command", payload)
+
+
+@app.command("wait-for")
+def wait_for(
+    ref: Optional[str] = typer.Option(None, "--ref"),
+    css: Optional[str] = typer.Option(None, "--css"),
+    xpath: Optional[str] = typer.Option(None, "--xpath"),
+    text: Optional[str] = typer.Option(None, "--text", help="Exact visible text."),
+    state: str = typer.Option("visible", "--state", help="present, visible, clickable, absent."),
+    timeout: Optional[float] = typer.Option(None, "--timeout", help="Seconds, up to 300."),
+    port: int = _port_option(),
+) -> None:
+    """Wait for an element to reach a state."""
+    payload: dict = {"op": "wait_for", "state": state, **_target(ref, css, xpath, text)}
+    if timeout is not None:
+        payload["timeout"] = timeout
+    _call(port, "/command", payload)
+
+
+@app.command()
+def back(port: int = _port_option()) -> None:
+    """Go back one entry in history."""
+    _call(port, "/command", {"op": "back"})
+
+
+@app.command()
+def forward(port: int = _port_option()) -> None:
+    """Go forward one entry in history."""
+    _call(port, "/command", {"op": "forward"})
+
+
+@app.command()
+def reload(port: int = _port_option()) -> None:
+    """Reload the current page."""
+    _call(port, "/command", {"op": "reload"})
+
+
+@app.command("current-url")
+def current_url(port: int = _port_option()) -> None:
+    """The active tab's URL, without a full status."""
+    _call(port, "/command", {"op": "current_url"})
+
+
+@app.command()
+def console(
+    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex filter."),
+    port: int = _port_option(),
+) -> None:
+    """Console messages, captured from document start."""
+    payload: dict = {"op": "read_console"}
+    if pattern:
+        payload["pattern"] = pattern
+    _call(port, "/command", payload)
+
+
+@app.command()
+def network(
+    failures_only: bool = typer.Option(False, "--failures-only"),
+    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex filter."),
+    port: int = _port_option(),
+) -> None:
+    """Network requests the page made."""
+    payload: dict = {"op": "read_network", "failures_only": failures_only}
+    if pattern:
+        payload["pattern"] = pattern
+    _call(port, "/command", payload)
+
+
+@app.command()
+def alert(
+    action: str = typer.Argument("accept", help="accept, dismiss, or text."),
+    text: Optional[str] = typer.Option(None, "--text", help="Type into a prompt first."),
+    port: int = _port_option(),
+) -> None:
+    """Answer a native alert, confirm or prompt."""
+    payload: dict = {"op": "alert", "action": action}
+    if text is not None:
+        payload["text"] = text
+    _call(port, "/command", payload)
+
+
 def _target(
     ref: Optional[str] = None,
     css: Optional[str] = None,
