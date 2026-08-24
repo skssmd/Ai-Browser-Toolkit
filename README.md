@@ -745,8 +745,8 @@ cleaner answer of the two when the target is a link. Add `"activate": false` to
 open it in the background. The two flags are mutually exclusive.
 
 ```bash
-abt click --css "a.result" --force
-abt click --css "a.result" --new-tab --background
+abt exec '{"op":"click","css":"a.result","force":true}'
+abt exec '{"op":"click","css":"a.result","new_tab":true,"activate":false}'
 ```
 
 `GET /ops` lists them live; `GET /status` reports the current URL, open tabs, and
@@ -858,21 +858,44 @@ nothing to capture or nothing to point at.
 
 `abt` is a thin client over the same API; anything it does, curl can do.
 
+**Subcommands are lifecycle. Every page action goes through `exec`.** There is
+one spelling of each op — the one `abt ops` prints — so nothing can drift out
+of step with the server.
+
 ```bash
-abt goto https://example.com
-abt find "a.product" --limit 20
-abt find "a.product" --full
-abt click --ref el_0
-abt input "hello" --css "#search"
-abt exec '{"op":"select","css":"#size","by_text":"Large"}'
-abt exec-batch steps.json --continue-on-error
-abt tabs
-abt status
-abt diff
-abt diff --reset
+# lifecycle
+abt up                      # start a server if none is running
+abt browser start           # a separate step; up to 2 min on a real profile
+abt status                  # URL, tabs, live refs
+abt ops                     # every op and its exact parameters
 abt logs
 abt shutdown
 ```
+
+```bash
+# one page action
+abt exec '{"op":"goto","url":"https://example.com"}'
+abt exec '{"op":"find","css":"a.product","limit":20}'
+abt exec '{"op":"click","ref":"el_0"}'
+```
+
+**A sequence you already know is one round trip, not six.** This is the
+biggest single thing you can do to work faster with the toolkit:
+
+```bash
+abt exec-batch '[{"op":"input","css":"#search","value":"hello"},
+                 {"op":"click","css":"#go"}]'
+
+abt exec-batch steps.json --continue-on-error
+'[{"op":"press","key":"Enter"}]' | abt exec-batch -    # PowerShell-safe
+```
+
+It stops at the first failure and names it, so batching is never a blind leap.
+
+The CLI once had a subcommand per op. Keeping two spellings in step by hand
+did not work — the ops take `ref/css/xpath/text/index/near` while `click` took
+two of them, and this README's own examples were commands the CLI rejected. It
+also billed a process per op, which quietly taught serial work.
 
 The Messenger endpoints have their own group:
 
