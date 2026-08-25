@@ -39,7 +39,11 @@ RUNNER = HERE / "run_miniwob.py"
 # Haiku only, by decision: one model across the whole suite. Mixing models
 # inside a sweep produces an average that describes no configuration that
 # actually exists.
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# The inline loop against OpenRouter's free stealth model: no agent CLI to
+# keep logged in, no per-episode process startup, and it batches -- 2.0 ops a
+# turn against the CLI agent's 1.0 on the same task.
+DEFAULT_MODEL = "stealth/ox-alpha"
+DEFAULT_PROVIDER = "openrouter"
 DEFAULT_SEEDS = [9001, 9002, 9003]
 
 
@@ -82,6 +86,8 @@ def cmd_plan(args) -> int:
     plan = {
         "benchmark": "miniwob",
         "created": datetime.now(timezone.utc).isoformat(),
+        "policy": args.policy,
+        "provider": args.provider,
         "agent": args.agent,
         "model": args.model,
         "mcp": not args.no_mcp,
@@ -120,18 +126,23 @@ def run_one(plan: dict, out: Path, task: str, seed: int, budget: float) -> dict:
     """One episode in its own process. Never raises."""
     scratch = out / "raw" / f"{task}-{seed}.json"
     scratch.parent.mkdir(parents=True, exist_ok=True)
+    policy = plan.get("policy", "agent")
     cmd = [
         sys.executable, str(RUNNER),
         "--task", task, "--seed", str(seed), "--episodes", "1",
-        "--policy", "agent", "--agent", plan["agent"],
+        "--policy", policy,
         "--agent-model", plan["model"],
-        "--agent-timeout", str(plan["agent_timeout"]),
         "--server", plan["server"],
-        "--quiet-agent",
         "--out", str(scratch),
     ]
-    if plan["mcp"]:
-        cmd.append("--agent-mcp")
+    if policy == "loop":
+        cmd += ["--provider", plan.get("provider", DEFAULT_PROVIDER)]
+    else:
+        cmd += ["--agent", plan["agent"],
+                "--agent-timeout", str(plan["agent_timeout"]),
+                "--quiet-agent"]
+        if plan["mcp"]:
+            cmd.append("--agent-mcp")
 
     started = time.time()
     row = {
@@ -176,6 +187,9 @@ def run_one(plan: dict, out: Path, task: str, seed: int, budget: float) -> dict:
         "agent_timed_out": episode.get("agent_timed_out"),
         "input_tokens": episode.get("input_tokens"),
         "output_tokens": episode.get("output_tokens"),
+        "cache_read_tokens": episode.get("cache_read_tokens"),
+        "turns": episode.get("turns"),
+        "ops_per_turn": episode.get("ops_per_turn"),
         "cost_usd": episode.get("cost_usd"),
     })
     return row
@@ -246,6 +260,8 @@ def cmd_report(args) -> int:
         "",
         f"- mean ops per graded episode: {_fmt(mean(r.get('ops') for r in graded), '.1f')}",
         f"- mean ops per PASS: {_fmt(mean(r.get('ops') for r in passed), '.1f')}",
+        f"- mean ops per turn: {_fmt(mean(r.get('ops_per_turn') for r in graded), '.2f')}"
+        "  (1.00 means the model never batched)",
         f"- mean duration per PASS: {_fmt(mean(r.get('duration_s') for r in passed), '.0f')}s",
         f"- total cost: ${_fmt(sum(r.get('cost_usd') or 0 for r in rows), '.2f')}",
         "",
@@ -282,6 +298,10 @@ def main() -> int:
     p.add_argument("--tasks", help="comma-separated subdomains; default all 125")
     p.add_argument("--limit", type=int, help="first N tasks (smoke runs)")
     p.add_argument("--seeds", help=f"comma-separated; default {DEFAULT_SEEDS}")
+    p.add_argument("--policy", default="loop", choices=["loop", "agent"],
+                   help="loop is the inline model->ops loop; agent spawns a CLI.")
+    p.add_argument("--provider", default=DEFAULT_PROVIDER,
+                   choices=["openrouter", "anthropic"])
     p.add_argument("--agent", default="claude", choices=["claude", "opencode"])
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--no-mcp", action="store_true")

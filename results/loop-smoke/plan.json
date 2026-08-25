@@ -1,0 +1,20 @@
+{
+  "benchmark": "miniwob",
+  "created": "2026-08-25T11:44:04.266969+00:00",
+  "policy": "loop",
+  "provider": "openrouter",
+  "agent": "claude",
+  "model": "stealth/ox-alpha",
+  "mcp": true,
+  "freeze_timers": true,
+  "agent_timeout": 300.0,
+  "server": "http://127.0.0.1:8766",
+  "tasks": [
+    "click-button",
+    "enter-text"
+  ],
+  "seeds": [
+    9001
+  ],
+  "episodes": 2
+}

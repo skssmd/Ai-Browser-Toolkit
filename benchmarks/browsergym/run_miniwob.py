@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 import tempfile
@@ -396,7 +397,13 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--max-steps", type=int, default=15)
     ap.add_argument("--wait-ms", type=int, default=300)
-    ap.add_argument("--policy", choices=["scripted", "llm", "agent"], default="scripted")
+    ap.add_argument("--policy", choices=["scripted", "llm", "agent", "loop"],
+                    default="scripted",
+                    help="loop: an inline model->ops loop, no agent CLI. The one "
+                         "that can run unattended.")
+    ap.add_argument("--provider", default="openrouter",
+                    choices=["openrouter", "anthropic"],
+                    help="Which API the loop policy talks to.")
     ap.add_argument("--agent", choices=["claude", "opencode"], default="opencode",
                     help="which agent CLI plays the policy when --policy agent")
     ap.add_argument("--agent-model", default=None,
@@ -432,8 +439,8 @@ def main() -> int:
     client = AbtClient(args.server)
     if args.policy == "llm":
         make_policy = lambda: llm_policy  # noqa: E731
-    elif args.policy == "agent":
-        make_policy = None  # one agent session per episode; handled below
+    elif args.policy in ("agent", "loop"):
+        make_policy = None  # handled inline below, one session per episode
     elif args.task in POLICIES:
         make_policy = POLICIES[args.task]
     else:
@@ -460,7 +467,39 @@ def main() -> int:
 
             steps = []
             reward, terminated, truncated = 0.0, False, False
-            if args.policy == "agent":
+            if args.policy == "loop":
+                # No subprocess and no agent CLI: the model talks to the same
+                # HTTP surface the CLI does, through one tool that takes a list
+                # of ops. This is the policy a sweep can actually run.
+                import loop_policy
+
+                ops_before, errs_before = client.op_tally()
+                started = time.time()
+                session = loop_policy.run_episode(
+                    goal=obs.get("goal") or "",
+                    server=args.server,
+                    model=args.agent_model,
+                    max_turns=args.max_steps if args.max_steps > 5 else 30,
+                    provider=args.provider,
+                )
+                session["duration_s"] = round(time.time() - started, 1)
+                session["timed_out"] = session.get("hit_turn_limit", False)
+                ops_after, errs_after = client.op_tally()
+                agent_ops = (ops_after - ops_before) if ops_before >= 0 else None
+                agent_op_errors = (
+                    (errs_after - errs_before) if errs_before >= 0 else None
+                )
+                obs, reward, terminated, truncated, info = env.step("noop(500)")
+                steps.append({
+                    "step": 0, "action": f"loop:{session['model']}",
+                    "ops": session.get("ops_sent"), "error": None,
+                    "reward": float(reward),
+                })
+                print(f"[ep {ep}] {session['turns']} turns, "
+                      f"{session['ops_sent']} ops "
+                      f"({session['ops_per_turn']}/turn), "
+                      f"{session['duration_s']}s -> reward={reward}")
+            elif args.policy == "agent":
                 cmd, agent_cwd = build_agent_command(
                     args.agent, obs.get("goal") or "",
                     args.server, mcp=args.agent_mcp, model=args.agent_model)
@@ -509,7 +548,21 @@ def main() -> int:
             record = {"task_id": task_cls.get_task_id(), "seed": seed,
                       "success": success, "reward": float(reward),
                       "steps": len(steps), "log": steps}
-            if args.policy == "agent":
+            if args.policy == "loop":
+                usage = session.get("usage") or {}
+                record.update({
+                    "duration_s": session["duration_s"],
+                    "agent_timed_out": session["timed_out"],
+                    "ops": agent_ops,
+                    "op_errors": agent_op_errors,
+                    "turns": session["turns"],
+                    "ops_per_turn": session["ops_per_turn"],
+                    "input_tokens": usage.get("input"),
+                    "output_tokens": usage.get("output"),
+                    "cache_read_tokens": usage.get("cache_read"),
+                    "cost_usd": None,  # free preview model; no price to report
+                })
+            elif args.policy == "agent":
                 # The cost side of the result. Pass rate alone cannot separate
                 # a toolkit that solves a task in three ops from one that
                 # flails through thirty and gets there anyway.
@@ -539,7 +592,8 @@ def main() -> int:
         "policy": args.policy,
         "agent": args.agent if args.policy == "agent" else None,
         "agent_mcp": args.agent_mcp if args.policy == "agent" else None,
-        "agent_model": args.agent_model if args.policy == "agent" else None,
+        "agent_model": args.agent_model,
+        "provider": args.provider if args.policy == "loop" else None,
         "freeze_timers": not args.no_freeze_timers,
     }
     dest = Path(args.out)
