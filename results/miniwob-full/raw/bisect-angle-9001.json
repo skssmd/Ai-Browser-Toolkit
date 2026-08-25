@@ -1,0 +1,42 @@
+{
+  "benchmark": "miniwob",
+  "task": "bisect-angle",
+  "episodes": [
+    {
+      "task_id": "miniwob.bisect-angle",
+      "seed": 9001,
+      "success": false,
+      "reward": 0.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "loop:stealth/ox-alpha",
+          "ops": 4,
+          "error": null,
+          "reward": 0.0
+        }
+      ],
+      "duration_s": 86.7,
+      "agent_timed_out": false,
+      "ops": 4,
+      "op_errors": 0,
+      "turns": 4,
+      "ops_per_turn": 1.33,
+      "input_tokens": 16712,
+      "output_tokens": 3155,
+      "cache_read_tokens": 13056,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 0.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "loop",
+  "agent": null,
+  "agent_mcp": null,
+  "agent_model": "stealth/ox-alpha",
+  "provider": "openrouter",
+  "freeze_timers": true
+}

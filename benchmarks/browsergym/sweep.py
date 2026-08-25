@@ -107,10 +107,10 @@ def cmd_plan(args) -> int:
 def load_done(out: Path) -> set[tuple[str, int]]:
     """Which (task, seed) pairs already have a row."""
     done: set[tuple[str, int]] = set()
-    path = episodes_path(out)
-    if not path.exists():
-        return done
-    for line in path.read_text(encoding="utf-8").splitlines():
+    lines: list[str] = []
+    for path in sorted(Path(out).glob("episodes*.jsonl")):
+        lines += path.read_text(encoding="utf-8").splitlines()
+    for line in lines:
         line = line.strip()
         if not line:
             continue
@@ -195,6 +195,29 @@ def run_one(plan: dict, out: Path, task: str, seed: int, budget: float) -> dict:
     return row
 
 
+def shard_of(episodes: list, spec: str | None) -> list:
+    """The slice of the plan this worker owns.
+
+    Round-robin rather than contiguous blocks: the tasks are alphabetical and
+    difficulty clusters by name (four `choose-date*`, three `book-flight*`), so
+    contiguous blocks hand one worker every hard variant and leave another
+    idle. Interleaving spreads them.
+
+    Every worker reads the same plan and computes its own slice, so no worker
+    needs to know about the others and a dead worker's slice is simply not run
+    rather than silently reassigned.
+    """
+    if not spec:
+        return episodes
+    try:
+        index, total = (int(part) for part in spec.split("/", 1))
+    except ValueError:
+        raise SystemExit(f"--shard wants i/n, e.g. 1/4; got {spec!r}")
+    if not 1 <= index <= total:
+        raise SystemExit(f"--shard {spec}: i must be between 1 and n")
+    return [ep for n, ep in enumerate(episodes) if n % total == index - 1]
+
+
 def cmd_run(args) -> int:
     out = Path(args.out)
     plan = json.loads(plan_path(out).read_text(encoding="utf-8"))
@@ -202,6 +225,10 @@ def cmd_run(args) -> int:
 
     todo = [(t, s) for t in plan["tasks"] for s in plan["seeds"]
             if (t, s) not in done]
+    if args.shard:
+        before = len(todo)
+        todo = shard_of(todo, args.shard)
+        print(f"shard {args.shard}: {len(todo)} of {before} remaining episodes")
     print(f"{len(done)} episodes already recorded, {len(todo)} to run")
     if args.max_episodes:
         todo = todo[: args.max_episodes]
@@ -211,7 +238,14 @@ def cmd_run(args) -> int:
     # only to catch a process that has stopped making progress entirely.
     budget = plan["agent_timeout"] + 240
 
-    sink = episodes_path(out)
+    # One file per worker. Concurrent appends to a single file can interleave
+    # a partial line under load, and a torn line is a lost episode; `report`
+    # reads every episodes*.jsonl, so they recombine on the way out.
+    sink = (
+        out / f"episodes-{args.shard.replace('/', 'of')}.jsonl"
+        if args.shard
+        else episodes_path(out)
+    )
     for index, (task, seed) in enumerate(todo, 1):
         print(f"[{index}/{len(todo)}] {task} seed={seed} ...", flush=True)
         row = run_one(plan, out, task, seed, budget)
@@ -231,8 +265,13 @@ def _fmt(value, spec="", dash="-"):
 def cmd_report(args) -> int:
     out = Path(args.out)
     plan = json.loads(plan_path(out).read_text(encoding="utf-8"))
-    rows = [json.loads(line) for line in
-            episodes_path(out).read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = []
+    for path in sorted(out.glob("episodes*.jsonl")):
+        rows += [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
     by_task: dict[str, list[dict]] = {}
     for row in rows:
@@ -313,6 +352,9 @@ def main() -> int:
     p = sub.add_parser("run", help="execute the plan; resumable")
     p.add_argument("--out", required=True)
     p.add_argument("--max-episodes", type=int, help="stop after N this pass")
+    p.add_argument("--shard", help="this worker's slice, as i/n (e.g. 1/4). Run "
+                                   "one process per shard, each with its own "
+                                   "--server port and browser profile.")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="render results as markdown")
