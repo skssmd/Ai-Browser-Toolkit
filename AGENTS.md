@@ -161,7 +161,10 @@ guessing entirely. Point your client at it:
 {"command": "abt", "args": ["mcp"]}
 ```
 
-It forwards to the same server, so start `abt serve` first.
+It forwards to the same server, so start one first with `abt up` (never `abt
+serve` from a tool call — it is a command loop that never returns). The tools
+carry their own schemas, `browser_guidelines` reads this document and any site
+playbook, and the connection opens with instructions covering the rest.
 
 ## Site playbooks
 

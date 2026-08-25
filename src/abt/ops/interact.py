@@ -528,6 +528,32 @@ def input(session: BrowserSession, cmd) -> dict:
             "not_interactable",
             f"could not type into {describe(cmd)}: {exc.msg or exc}",
         ) from exc
+    except Timeout as exc:
+        # A readonly field never becomes editable, so the engine waits out its
+        # whole budget and raises a timeout rather than saying so. Uncaught,
+        # that reached the server's catch-all and was reported as
+        # `browser_dead` -- the browser was fine, and an agent told its browser
+        # had died has no reason to look at the field. Watched one abandon the
+        # value it was given and start clicking through a datepicker instead.
+        detail = str(getattr(exc, "msg", None) or exc)
+        if "not editable" in detail or "readonly" in detail.lower():
+            raise OpError(
+                "not_interactable",
+                f"{describe(cmd)} is readonly, so nothing can be typed into it.",
+                # The type's own hint is about overlays, which would send the
+                # reader looking for a covering element that is not there.
+                hint=(
+                    "A readonly field is written by a widget, not the "
+                    "keyboard: click it and act on the controls that arrive "
+                    "in dom_diff.actionable. If it opens a calendar, read the "
+                    "header to see which month is showing before clicking an "
+                    "arrow -- it may already be the right one, and it is the "
+                    "only thing that tells you how far you have to go."
+                ),
+            ) from exc
+        raise OpError(
+            "timeout", f"typing into {describe(cmd)} timed out: {detail}"
+        ) from exc
     return {"target": describe(cmd), "value": _field_value(element)}
 
 

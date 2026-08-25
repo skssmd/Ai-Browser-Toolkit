@@ -101,6 +101,7 @@ class BrowserSession:
         diff_max_tokens: int = 1000,
         settle_timeout: float = 5.0,
         settle_network_grace: float = _SETTLE_NETWORK_GRACE,
+        interaction_settle: float = 1.0,
         frames_enabled: bool = True,
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
@@ -118,6 +119,10 @@ class BrowserSession:
         self.action_timeout = action_timeout
         self.settle_timeout = settle_timeout
         self.settle_network_grace = settle_network_grace
+        # A separate, much shorter budget for an interaction that stayed on the
+        # page. A navigation can afford five seconds; a click cannot, because
+        # every click pays it. See `_run_with_diff`.
+        self.interaction_settle = interaction_settle
         self.frames_enabled = frames_enabled
         self.max_frames = max_frames
         self.max_frame_depth = max_frame_depth

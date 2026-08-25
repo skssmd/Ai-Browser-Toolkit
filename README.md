@@ -1,30 +1,61 @@
-# aibrowsertoolkit
+# AI Browser Toolkit
 
-An HTTP server that lets an AI agent drive a real browser — **Chrome or Edge** — by
-sending JSON. The server process is the loop: it opens the chosen browser with a persistent
-profile, stays up waiting for commands, and only stops when you send `shutdown`.
+**Give your coding agent a real browser.** `abt` drives an actual Chrome or Edge
+window — the one with your logins already in it — and hands back what changed
+after every action, in a form a model can act on directly.
 
-> **Agents: read [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md)
-> before driving anything.** Not "if your site looks tricky", not "if there is a
-> playbook for it" — always. Most sites have no playbook, and that file is the
-> whole answer for them. Then, only if one exists, add the site playbook from
-> [`guidelines/`](guidelines/README.md).
+Built for agent harnesses: **Claude Code, Codex, OpenCode, Cursor, Gemini CLI,
+Copilot**, or anything you write yourself. Three ways in, same browser behind
+all of them:
+
+| | Use it when |
+|---|---|
+| **CLI** — `abt exec`, `abt exec-batch` | The agent already has a shell. Nothing to configure. |
+| **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
+| **HTTP** — `POST /command` on :8765 | You are writing the integration yourself. |
+
+Why not a headless scraper: it keeps **one long-lived browser on a persistent
+profile**. Log into Gmail, your CRM, your ticket system once, by hand — every
+agent session after that is already signed in, and the window outlives your
+editor.
+
+```
+abt up  ──starts──>  server :8765  ──owns──>  Chrome/Edge (your profile)
+                          ^
+   abt CLI  /  abt mcp  /  your HTTP client
+```
+
+> **Agents: read the workflow before driving anything** — `abt guidelines show
+> toolkit-workflow`, or [`guidelines/toolkit-workflow.md`](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/toolkit-workflow.md)
+> in this repo. Not "if your site looks tricky", not "if there is a playbook for
+> it" — always. Most sites have no playbook, and that file is the whole answer
+> for them.
 >
-> Skipping it costs you the things that are hard to guess: that `find` hands
-> back refs you act on directly, that a click already reports what changed so
-> you need not re-read the page, and that ops can be sent in batches.
-
-
-```
-abt serve  ──starts──>  FastAPI :8765  ──owns──>  Chrome/Edge (persistent profile)
-                             ^
-   abt / curl / your agent ──┘   POST /command  |  POST /commands
-```
+> Skipping it costs the things that are hard to guess: that `find` hands back
+> refs you act on directly, that a click already reports what changed so you
+> need not re-read the page, and that ops can be sent in batches.
 
 ## Install
 
-Needs **Python 3.11+** and **Google Chrome** or **Microsoft Edge** installed. The matching
-chromedriver/msedgedriver is resolved automatically by Selenium Manager — nothing to download by hand.
+Needs **Python 3.11+** and **Google Chrome** or **Microsoft Edge** installed.
+Drivers are resolved automatically — nothing to download by hand.
+
+```bash
+pip install ai-browser-toolkit
+abt doctor        # what browsers are installed, and where
+```
+
+Also on **winget** (`winget install skssmd.AIBrowserToolkit`), **Scoop**,
+**Homebrew** (`brew install skssmd/tap/abt`) and the **AUR**.
+
+Point an MCP client at it:
+
+```json
+{"mcpServers": {"browser": {"command": "abt", "args": ["mcp"]}}}
+```
+
+<details>
+<summary>From a source checkout instead</summary>
 
 ```bash
 git clone https://github.com/skssmd/Ai-Browser-Toolkit
@@ -33,18 +64,15 @@ cd Ai-Browser-Toolkit
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 # .venv/bin/python -m pip install -e ".[dev]"       # macOS / Linux
-```
-
-Check it worked:
-
-```bash
-.venv/Scripts/python -m pytest -q     # 485 tests, needs Chrome
+.venv/Scripts/python -m pytest -q                   # 485 tests, needs Chrome
 ```
 
 The `abt` command lands in the venv. Either activate it
 (`.venv\Scripts\activate` / `source .venv/bin/activate`) so `abt` is on your
 PATH, or call it explicitly as `.venv/Scripts/python -m abt.cli …` everywhere
 below.
+
+</details>
 
 ## Run
 
@@ -262,7 +290,7 @@ returns only what arrived since your last read of that thread — matched by
 content, not position, because Messenger trims the top of a long thread as it
 grows.
 
-Full details and the traps behind them: [guidelines/messenger.com/messenger.md](guidelines/messenger.com/messenger.md).
+Full details and the traps behind them: [guidelines/messenger.com/messenger.md](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/messenger.com/messenger.md).
 
 ## Console and network
 
@@ -615,7 +643,7 @@ needed to turn something you can read into something you can act on.
 **The limit:** `mode: "closed"` makes `.shadowRoot` null. No JavaScript can read
 such a root or prove it exists, so nothing here can either. "Not found" means
 nothing reachable has it — see the search ladder in
-[`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md).
+[`guidelines/toolkit-workflow.md`](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/toolkit-workflow.md).
 
 ### The manual check
 
@@ -717,8 +745,8 @@ cleaner answer of the two when the target is a link. Add `"activate": false` to
 open it in the background. The two flags are mutually exclusive.
 
 ```bash
-abt click --css "a.result" --force
-abt click --css "a.result" --new-tab --background
+abt exec '{"op":"click","css":"a.result","force":true}'
+abt exec '{"op":"click","css":"a.result","new_tab":true,"activate":false}'
 ```
 
 `GET /ops` lists them live; `GET /status` reports the current URL, open tabs, and
@@ -830,21 +858,44 @@ nothing to capture or nothing to point at.
 
 `abt` is a thin client over the same API; anything it does, curl can do.
 
+**Subcommands are lifecycle. Every page action goes through `exec`.** There is
+one spelling of each op — the one `abt ops` prints — so nothing can drift out
+of step with the server.
+
 ```bash
-abt goto https://example.com
-abt find "a.product" --limit 20
-abt find "a.product" --full
-abt click --ref el_0
-abt input "hello" --css "#search"
-abt exec '{"op":"select","css":"#size","by_text":"Large"}'
-abt exec-batch steps.json --continue-on-error
-abt tabs
-abt status
-abt diff
-abt diff --reset
+# lifecycle
+abt up                      # start a server if none is running
+abt browser start           # a separate step; up to 2 min on a real profile
+abt status                  # URL, tabs, live refs
+abt ops                     # every op and its exact parameters
 abt logs
 abt shutdown
 ```
+
+```bash
+# one page action
+abt exec '{"op":"goto","url":"https://example.com"}'
+abt exec '{"op":"find","css":"a.product","limit":20}'
+abt exec '{"op":"click","ref":"el_0"}'
+```
+
+**A sequence you already know is one round trip, not six.** This is the
+biggest single thing you can do to work faster with the toolkit:
+
+```bash
+abt exec-batch '[{"op":"input","css":"#search","value":"hello"},
+                 {"op":"click","css":"#go"}]'
+
+abt exec-batch steps.json --continue-on-error
+'[{"op":"press","key":"Enter"}]' | abt exec-batch -    # PowerShell-safe
+```
+
+It stops at the first failure and names it, so batching is never a blind leap.
+
+The CLI once had a subcommand per op. Keeping two spellings in step by hand
+did not work — the ops take `ref/css/xpath/text/index/near` while `click` took
+two of them, and this README's own examples were commands the CLI rejected. It
+also billed a process per op, which quietly taught serial work.
 
 The Messenger endpoints have their own group:
 
@@ -877,9 +928,62 @@ guessed parameter name — `label` on a `select`, `diff` on a `get_text`, a
 the JSON never meets a shell, which on Windows is its own source of quoting
 failures.
 
-Thirteen tools rather than one per op, since every schema sits in the model's
+Seventeen tools rather than one per op, since every schema sits in the model's
 context for the whole session. `browser_batch` sends a whole sequence in one
 call, and `browser_command` passes through any raw op the named tools miss.
+
+The server also answers `initialize` with MCP `instructions` — how the pieces
+fit together, which most clients place in the system prompt once. That is where
+the orientation goes, because it is paid for once rather than re-sent with the
+schemas on every turn. `browser_guidelines` reads the rest: the whole
+workflow document, or a fuzzy search for a site's playbook.
+
+## Benchmark
+
+Four MiniWoB++ tasks, driven end to end by **Claude Haiku 4.5** through the
+`abt` CLI. The agent is given the task in plain English and the port — nothing
+else. It reads `abt --help`, works out the page for itself, and the page scores
+it.
+
+| task | ops | tokens | reward |
+|---|---|---|---|
+| `book-flight` | 15 | 44,663 | 1.00 |
+| `email-inbox-forward-nl` | 16 | 54,260 | 1.00 |
+| `terminal` | 8 | 38,445 | 1.00 |
+| `click-checkboxes-soft` | 7 | 36,799 | 0.60 |
+| **total** | **46** | **174,167** | **0.90 avg** |
+
+`book-flight` and `terminal` are two of the harder tasks in the suite: one needs
+two autocompletes, a datepicker and a comparison across four results; the other
+is a simulated shell. `terminal` took eight operations.
+
+**Scoring is not ours.** Every reward above is MiniWoB's own
+`WOB_REWARD_GLOBAL`, read from the page after the agent stopped — not the
+agent's account of how it went. The 0.60 is a real partial: the agent picked
+*assassinate* as a word similar to *initiate*, which the task disagreed with.
+That is a reasoning miss, not a toolkit one, and it stays in the table.
+
+**Read these honestly:**
+
+* **n=1 per task.** MiniWoB generates a fresh instance each run, so these are
+  single samples, not averages over seeds. Treat them as a demonstration that
+  the tasks are solvable at this cost, not as a score.
+* **The episode clock is neutralized.** MiniWoB ends an episode after ten
+  seconds and scales a successful reward by elapsed time. An agent CLI takes
+  30–60s just to start, so under stock rules every out-of-process agent scores
+  0.00 on every task regardless of what it does — the run would measure process
+  startup. The runner patches `endEpisode` to drop the timeout and the
+  time-scaling. Correctness is untouched: the task's own scoring code decides,
+  and we never patch it. **These numbers are therefore not comparable to
+  published MiniWoB scores**, which run the stock clock.
+* **Tokens are the whole agent session** — reading `--help`, reasoning, and
+  every command — not just traffic to the toolkit.
+* **Ops are counted by the server**, from its own session log, not reported by
+  the agent.
+
+The harness is in [`benchmarks/browsergym/`](benchmarks/browsergym/README.md),
+including a resumable sweep runner for seed-controlled runs across all 125
+tasks.
 
 ## Tests
 

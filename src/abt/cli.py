@@ -1,8 +1,20 @@
 """`abt` -- the command line for driving a real browser.
 
-`serve` runs the server; every other subcommand talks to it. `exec` and
-`exec-batch` reach any op, so the CLI covers the whole vocabulary and not just
-the subcommands with names.
+The subcommands are lifecycle: start the server, start the browser, look at
+what was recorded. Every page action goes through `exec` and `exec-batch`,
+which take an op exactly as `abt ops` prints it.
+
+There used to be a subcommand per op, and keeping two spellings in step by
+hand did not work: the ops accept ref/css/xpath/text/index/near while `click`
+accepted two of them, `find` wanted a positional where its neighbours wanted
+`--css`, and this document's own example -- `abt find --text "Sign in"` --
+was a command the CLI rejected. Every one of those gaps was a correct guess
+answered with an error.
+
+One surface also makes batching the obvious thing rather than the clever
+thing. `exec-batch` is the same command with a list, so a form is one round
+trip instead of six -- which is what MCP callers had been doing all along,
+because MCP says so and the CLI never did.
 
 Underneath it is HTTP, and that surface is supported: anything `abt` does,
 curl can do too. Reach for it when you are already making HTTP calls and want
@@ -26,9 +38,163 @@ from . import paths
 # Everything an agent needs to take a first useful step, printed with --help
 # and on a bare `abt`. An agent that runs the tool and gets "Missing command"
 # learns nothing; this is the one place it is guaranteed to look.
-AGENT_EPILOG = (
-    'First three commands, in this order:\n\n\x08\n  abt up             start the server (no-op if already up)\n  abt browser start  open the browser -- a SEPARATE step, up to 2 min\n  abt goto <url>     drive it\n\nThe server runs without a browser on purpose: it answers in a second,\nwhile Chrome on a persistent profile can take two minutes. browser_dead\nor \'no browser is running\' means you skipped `abt browser start`.\n\nEvery op, reachable as `abt exec \'{"op": ...}\'` and the named ones\ndirectly. `abt ops` prints their exact parameters.\n\n\x08\n  navigate  goto back forward reload current_url\n  read      find find_full get_text get_html run_js screenshot\n  inspect   read_console read_network\n  interact  click input press select hover scroll wait_for\n  tabs      tab_new tab_switch tab_close tab_list\n  control   diff status shutdown browser_start browser_stop browser_restart\n\nElements are addressed by exactly one of css, xpath, text or ref; `near`\nqualifies a selector that matches too much. Every match returns a ref you\nact on directly.\n\n\x08\n  abt status                            URL, tabs, live refs\n  abt find --text \'Sign in\'             then: abt click --ref el_3\n  abt exec -                            any op at all, JSON on stdin\n  abt guidelines show toolkit-workflow  the whole workflow: read it\n  abt guidelines search <domain>        a playbook for this site?\n  abt browser restart                   the way back from browser_dead\n\nNever run `abt serve` from a tool call. It is the command loop: it never\nreturns, and whatever launched it hangs. Use `abt up`.\n\nRead the response you already have. Every command that changes the page\nreturns a diff of what changed. Re-reading the page to check is the most\ncommon and most expensive mistake made with this tool. Every error also\ncarries a `hint` saying what to do next.\n\nOn PowerShell, pipe JSON rather than quoting it inline:\n\n\x08\n  \'{"op":"press","key":"Enter"}\' | abt exec -\n'
+#
+# The header below, then the WHOLE workflow document -- not a summary of it.
+# A condensed version was tried, and what it dropped was the part that
+# mattered: it listed the read ops by name without saying which one answers
+# which question, and an agent that had read all of it still guessed selectors
+# eleven times to learn what a single `get_text` would have told it. Roughly
+# 5k tokens, deliberately: an agent that has to work it out for itself spends
+# more than that in wasted ops on one task.
+_EPILOG_HEADER = (
+    "First three commands, in this order:\n\n\x08\n"
+    "  abt up                              start the server (no-op if up)\n"
+    "  abt browser start                   open the browser -- a SEPARATE\n"
+    "                                      step, up to 2 min\n"
+    "  abt exec '{\"op\":\"goto\",\"url\":...}'   drive it\n\n"
+    "The server runs without a browser on purpose: it answers in a second,\n"
+    "while Chrome on a persistent profile can take two minutes. browser_dead\n"
+    "or 'no browser is running' means you skipped `abt browser start`.\n\n"
+    "The subcommands here are lifecycle only -- start things, look at things.\n"
+    "EVERY page action goes through `exec` and `exec-batch`, which take the\n"
+    "ops verbatim. `abt ops` prints every op and its exact parameters.\n\n\x08\n"
+    "  abt exec '{\"op\":\"find\",\"css\":\"input\"}'\n"
+    "  abt exec '{\"op\":\"click\",\"ref\":\"el_3\"}'\n\n"
+    "**Send a sequence you already know in ONE call.** A form is one round\n"
+    "trip, not six -- and it is the single biggest thing you can do to work\n"
+    "faster with this tool:\n\n\x08\n"
+    "  abt exec-batch '[{\"op\":\"input\",\"css\":\"#user\",\"value\":\"me\"},\n"
+    "                   {\"op\":\"input\",\"css\":\"#pass\",\"value\":\"pw\"},\n"
+    "                   {\"op\":\"click\",\"css\":\"#submit\"}]'\n\n"
+    "It stops at the first failure and tells you which one, so a batch is\n"
+    "never a blind leap. On PowerShell, pipe JSON rather than quoting it\n"
+    "inline:\n\n\x08\n"
+    "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n\n"
+    "Never run `abt serve` from a tool call. It is the command loop: it never\n"
+    "returns, and whatever launched it hangs. Use `abt up`.\n\n"
+    "A site may also have a playbook of its own:\n"
+    "`abt guidelines search <domain>`.\n\n"
+    "================ the workflow, in full ================\n\n"
 )
+
+# Fallback for an install whose packaged guidelines cannot be read. Short, but
+# it names the document rather than pretending there is nothing more to know.
+_EPILOG_WITHOUT_WORKFLOW = (
+    "The full workflow could not be read from this install. Fetch it with\n"
+    "`abt guidelines show toolkit-workflow` and read it before driving a\n"
+    "site -- it is where refs, diffs and the read ops are explained.\n"
+)
+
+
+# Windows consoles default to cp1252, which cannot encode the arrows and
+# em-dashes the documents are written with. `--help` is printed by click, not
+# by us, so there is no exception to catch at the point of printing: the text
+# has to be safe before it is handed over. An arrow that becomes `->` still
+# reads; one that raises UnicodeEncodeError takes down the command an agent
+# runs first.
+_ASCII_FALLBACKS = {
+    "→": "->", "←": "<-", "—": "--", "–": "-",
+    "…": "...", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "•": "*", " ": " ",
+}
+
+
+def _console_safe(text: str) -> str:
+    """The same text, minus anything this console cannot encode."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return text
+    except (UnicodeEncodeError, LookupError):
+        pass
+    for glyph, plain in _ASCII_FALLBACKS.items():
+        text = text.replace(glyph, plain)
+    try:
+        text.encode(encoding)
+        return text
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(encoding, errors="replace").decode(encoding)
+
+
+def _agent_epilog() -> str:
+    """The header, then the packaged workflow document verbatim."""
+    try:
+        from . import guidelines
+
+        body = _console_safe(guidelines.read("toolkit-workflow"))
+    except Exception:
+        body = None
+    if not body:
+        return _EPILOG_HEADER + _EPILOG_WITHOUT_WORKFLOW
+    # \x08 tells click not to rewrap the paragraph that follows it, and it
+    # protects exactly one paragraph -- so it goes before each, not before
+    # each line. Per line it also works, but click then puts a blank line
+    # between every pair, which doubles a 390-line document for nothing.
+    # The document is pre-wrapped and full of tables and fenced code, none of
+    # which survives reflowing.
+    return _EPILOG_HEADER + "\n\n".join(
+        "\x08\n" + block for block in body.split("\n\n")
+    )
+
+
+AGENT_EPILOG = _agent_epilog()
+
+
+def main() -> None:
+    """Entry point. Like calling `app()`, except a malformed call teaches.
+
+    Click answers a bad flag with a usage line and "Try --help for help",
+    which spends the caller another command on something that could have been
+    said now. An agent mostly does not spend it -- the observed pattern is the
+    same wrong call repeated, because nothing in the reply says what the right
+    one is. `abt click --text Prev` was the recurring example, and it was a
+    fair guess: the op takes `text`, and only the CLI did not.
+
+    Done here rather than by patching click, because Typer intercepts these
+    before click's own handler and formats them itself; patches to
+    `UsageError.show` never ran, and the difference was invisible in piped
+    output because rich drops its panel when there is no terminal.
+    """
+    # Typer 0.27 vendors its own copy of click at typer._click, so the
+    # exceptions it raises are NOT click.exceptions.* -- different classes with
+    # the same names. Catching the stdlib ones silently matches nothing, which
+    # is exactly what happened here: several attempts at this looked like they
+    # had no effect at all. Both sets are caught, so this survives either
+    # arrangement.
+    errors: tuple = ()
+    for module in ("typer._click.exceptions", "click.exceptions"):
+        try:
+            errors += (__import__(module, fromlist=["x"]),)
+        except Exception:
+            pass
+
+    usage = tuple(m.UsageError for m in errors)
+    exits = tuple(m.Exit for m in errors if hasattr(m, "Exit"))
+    aborts = tuple(m.Abort for m in errors if hasattr(m, "Abort"))
+    clicks = tuple(m.ClickException for m in errors)
+
+    try:
+        app(standalone_mode=False)
+    except usage as exc:
+        # `no_args_is_help` raises a UsageError subclass that is already the
+        # help -- printing the help for it repeats a 450-line document.
+        bare_help = type(exc).__name__ == "NoArgsIsHelpError" or not exc.format_message()
+        if bare_help:
+            print(_console_safe(exc.ctx.get_help()) if exc.ctx else "", file=sys.stderr)
+            sys.exit(exc.exit_code)
+        if getattr(exc, "ctx", None) is not None:
+            print(_console_safe(exc.ctx.get_help()), file=sys.stderr)
+            print(file=sys.stderr)
+        print(f"Error: {exc.format_message()}", file=sys.stderr)
+        sys.exit(exc.exit_code)
+    except exits as exc:
+        sys.exit(getattr(exc, "exit_code", 0))
+    except aborts:
+        print("Aborted.", file=sys.stderr)
+        sys.exit(1)
+    except clicks as exc:
+        exc.show()
+        sys.exit(exc.exit_code)
 
 app = typer.Typer(
     add_completion=False,
@@ -247,6 +413,13 @@ def serve(
         help="Seconds of network silence that count as idle. Raise it for an app "
         "that pauses between chained requests; the gap looks like being finished.",
     ),
+    interaction_settle: float = typer.Option(
+        1.0,
+        "--interaction-settle",
+        help="Seconds to wait for a click or a keystroke to finish rendering what "
+        "it started, before diffing. Covers the menu that opens 300ms after you "
+        "type. Set 0 to snapshot immediately, as before.",
+    ),
     no_frames: bool = typer.Option(
         False,
         "--no-frames/--frames",
@@ -322,6 +495,7 @@ def serve(
         diff_max_tokens=diff_max_tokens,
         settle_timeout=settle_timeout,
         settle_network_grace=settle_network_grace,
+        interaction_settle=interaction_settle,
         frames_enabled=not no_frames,
         max_frames=max_frames,
         max_frame_depth=max_frame_depth,
@@ -450,17 +624,32 @@ def exec_(
 
 @app.command("exec-batch")
 def exec_batch(
-    file: Optional[Path] = typer.Argument(
-        None, help="File holding a JSON array of commands. Omit to read stdin."
+    commands_in: Optional[str] = typer.Argument(
+        None,
+        metavar="[COMMANDS]",
+        help="A JSON array, a file holding one, or `-` for stdin. Omit to read "
+        "stdin as well.",
     ),
     continue_on_error: bool = typer.Option(
         False, "--continue-on-error", help="Run every command even if one fails."
     ),
     port: int = _port_option(),
 ) -> None:
-    """Send a list of commands, run in order."""
-    raw = file.read_text(encoding="utf-8") if file else sys.stdin.read()
-    commands = _load(raw)
+    """Send a list of commands, run in order.
+
+    This is the fast path. A sequence you already know is one round trip
+    rather than one per step, and it stops at the first failure and says
+    which, so batching is never a blind leap.
+
+    It took a Path and nothing else, so `exec-batch -` -- the spelling `exec`
+    uses, and the one PowerShell needs since it mangles inline JSON -- tried
+    to open a file named "-" and died with a traceback. Inline JSON was not
+    accepted either, though `exec` takes it. The two now agree.
+    """
+    # `-` when nothing was given, so omitting the argument and passing `-`
+    # both mean stdin, and _load handles inline JSON and a path identically
+    # to how `exec` handles them.
+    commands = _load(commands_in if commands_in is not None else "-")
     if not isinstance(commands, list):
         typer.secho("expected a JSON array of commands", fg="red", err=True)
         raise typer.Exit(2)
@@ -471,91 +660,16 @@ def exec_batch(
     )
 
 
-@app.command()
-def goto(url: str, port: int = _port_option()) -> None:
-    """Load a URL in the active tab."""
-    _call(port, "/command", {"op": "goto", "url": url})
 
 
-@app.command()
-def find(
-    selector: str = typer.Argument(..., help="CSS selector."),
-    full: bool = typer.Option(
-        False, "--full", help="Include inner content instead of tag shells only."
-    ),
-    limit: int = typer.Option(100, "--limit"),
-    visible_only: bool = typer.Option(False, "--visible-only"),
-    port: int = _port_option(),
-) -> None:
-    """Search the page and return matching elements."""
-    _call(
-        port,
-        "/command",
-        {
-            "op": "find",
-            "css": selector,
-            "mode": "full" if full else "shell",
-            "limit": limit,
-            "visible_only": visible_only,
-        },
-    )
 
 
-@app.command()
-def click(
-    ref: Optional[str] = typer.Option(None, "--ref", help="A ref from find."),
-    css: Optional[str] = typer.Option(None, "--css"),
-    force: bool = typer.Option(
-        False, "--force", help="Fall back to a JS click if an overlay intercepts."
-    ),
-    new_tab: bool = typer.Option(
-        False, "--new-tab", help="Open the target's href in a new tab instead."
-    ),
-    background: bool = typer.Option(
-        False, "--background", help="With --new-tab, stay on the current page."
-    ),
-    elements: bool = typer.Option(
-        False, "--elements", help="Add the element diff to the text diff."
-    ),
-    removed: bool = typer.Option(
-        False, "--removed", help="List the text that left the screen, not just count it."
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Click an element."""
-    payload = {"op": "click", **_target(ref, css)}
-    if force:
-        payload["force"] = True
-    if new_tab:
-        payload["new_tab"] = True
-        payload["activate"] = not background
-    if elements:
-        payload["element_diff"] = True
-    if removed:
-        payload["include_removed"] = True
-    _call(port, "/command", payload)
 
 
-@app.command("input")
-def input_(
-    value: str = typer.Argument(..., help="Text to type."),
-    ref: Optional[str] = typer.Option(None, "--ref"),
-    css: Optional[str] = typer.Option(None, "--css"),
-    keep: bool = typer.Option(False, "--keep", help="Append instead of clearing."),
-    port: int = _port_option(),
-) -> None:
-    """Type into a field."""
-    _call(
-        port,
-        "/command",
-        {"op": "input", "value": value, "clear": not keep, **_target(ref, css)},
-    )
 
 
-@app.command()
-def tabs(port: int = _port_option()) -> None:
-    """List open tabs."""
-    _call(port, "/command", {"op": "tab_list"})
+
+
 
 
 @app.command()
@@ -619,33 +733,6 @@ def ops(port: int = _port_option()) -> None:
     _call(port, "/ops", method="GET")
 
 
-@app.command()
-def diff(
-    reset: bool = typer.Option(
-        False, "--reset", help="Set the baseline to the current page instead."
-    ),
-    text_only: bool = typer.Option(
-        False, "--text-only", help="Skip the element diff and return text alone."
-    ),
-    added_only: bool = typer.Option(
-        False, "--added-only", help="Count removed text instead of listing it."
-    ),
-    max_tokens: int = typer.Option(
-        1000, "--max-tokens", help="Element diff budget, in tokens."
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Diff the current page against the last known state."""
-    payload = {"op": "diff"}
-    if reset:
-        payload["reset"] = True
-    if text_only:
-        payload["element_diff"] = False
-    if added_only:
-        payload["include_removed"] = False
-    if max_tokens != 1000:
-        payload["max_tokens"] = max_tokens
-    _call(port, "/command", payload)
 
 
 @app.command()
@@ -792,11 +879,49 @@ def messenger_jobs(
     _call(port, f"/messenger/jobs{suffix}", method="GET")
 
 
-def _target(ref: Optional[str], css: Optional[str]) -> dict:
-    if (ref is None) == (css is None):
-        typer.secho("supply exactly one of --ref or --css", fg="red", err=True)
-        raise typer.Exit(2)
-    return {"ref": ref} if ref else {"css": css}
+# --- the rest of the op vocabulary, as named commands -------------------------
+#
+# `abt exec` has always reached every op, and for a long time that was the
+# argument for not writing these. It was wrong in a way that only shows up in
+# use: the workflow document tells the reader to use `get_text`, and `abt
+# get-text` did not exist -- so following the instructions produced "No such
+# command", and the reader had to already know about `exec` to recover. A
+# vocabulary you can only reach by knowing a second thing is not reachable.
+#
+# So every op has a subcommand. `exec` stays, for raw JSON and for anything
+# added to the server that this CLI has not caught up with.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _load(raw: str) -> Any:

@@ -10,22 +10,30 @@ do not write WebDriver code; you run small commands and read JSON back. The
 browser stays up between commands, so tabs, logins and focus persist.
 
 ```bash
+# lifecycle -- these are the only subcommands
 abt status                            # a server up? usually yes. URL, tabs, refs
 abt up                                # start one if not; returns immediately
-abt goto https://example.com
-abt find --text "Sign in"
-abt click --ref el_3
-abt input --css "#email" --value "someone@example.com"
+abt browser start                     # a SEPARATE step from starting the server
 abt ops                               # every op and its exact parameters
-abt exec '{"op":"scroll","to":"bottom"}'           # any op, raw
-abt exec-batch '[{"op":"click","text":"Edit"},{"op":"get_text","css":"h1"}]'
 abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
+
+# every page action -- one op
+abt exec '{"op":"goto","url":"https://example.com"}'
+abt exec '{"op":"find","text":"Sign in"}'
+abt exec '{"op":"click","ref":"el_3"}'
+
+# ...or a sequence you already know, in ONE round trip
+abt exec-batch '[{"op":"input","css":"#email","value":"me@example.com"},
+                 {"op":"input","css":"#password","value":"hunter2"},
+                 {"op":"click","css":"#submit"}]' 
 ```
 
-`abt exec` reaches **every** op, including those with no named subcommand — so
-the op tables below are the real vocabulary. `abt --help` lists subcommands;
-`abt <command> --help` lists flags. On PowerShell, pipe JSON rather than
+**`abt exec` and `abt exec-batch` are how you drive the page.** The
+subcommands are lifecycle only — start the server, start the browser, look
+at what is recorded. Every op in the tables below goes through `exec`,
+spelled exactly as the table spells it, so there is no second vocabulary to
+learn and nothing that can disagree with `abt ops`. On PowerShell, pipe JSON rather than
 quoting it inline: `'{"op":"press","key":"Enter"}' | abt exec -`.
 
 **Never run `abt serve` from a tool call.** That is the command loop itself: it
@@ -321,6 +329,38 @@ Statuses and URLs, not bodies. A cross-origin response without
 `Timing-Allow-Origin` reports `status: null` and `opaque: true`; the browser
 genuinely will not say, so neither does this.
 
+## A field that suggests is a field that must be chosen from
+
+**If typing into a field makes suggestions appear in the diff, typing is not
+finished — you have to pick one.**
+
+This is the most expensive silent failure on the web, because every signal
+says you succeeded. `input` returns `ok`, and the value it reports is exactly
+the value you asked for. The form disagrees: many of these fields validate the
+raw text against the suggestion list and accept nothing else, so `ACV` is
+rejected where `Arcata, CA (ACV)` is accepted. Nothing announces the
+rejection. A red outline appears, the submit quietly does nothing, and the
+next thing you do is retype the value that was never the problem.
+
+The diff is what tells you, and it tells you immediately:
+
+```
+abt exec '{"op":"input","css":"#flight-from","value":"ACV"}'
+```
+```json
+"text": {"added": ["ACV", "Arcata, CA (ACV)", "Eureka/Arcata, CA (ACV)",
+                   "2 results are available, use up and down arrow keys..."]}
+```
+
+Suggestions in `text.added` after typing means the field is a chooser. Click
+the one you want — it is in `actionable` with a ref — or press `Down` then
+`Enter`. Then check that the field holds the *full* suggestion text, not what
+you typed.
+
+Two suggestions that both contain your text is the case worth slowing down
+for: above, `Arcata, CA (ACV)` and `Eureka/Arcata, CA (ACV)` both match, and
+only one is right. Read them before clicking rather than taking the first.
+
 ## Typing into dates
 
 `input` on `<input type="date|time|month|week|datetime-local">` sets the value
@@ -332,6 +372,28 @@ form submits silently wrong.
 Use the field's own format — `YYYY-MM-DD`, `HH:MM`, `YYYY-MM`, `YYYY-Www`,
 `YYYY-MM-DDTHH:MM` — and anything the field rejects raises `not_interactable`
 instead of quietly emptying itself.
+
+**A readonly date field is a different animal.** Most date fields on the web
+are plain text inputs marked `readonly` and driven by a JavaScript calendar.
+Nothing can be typed into one, and `input` says so: *"is readonly, so nothing
+can be typed into it"*. Click it instead, and the calendar's controls arrive
+in `dom_diff.actionable` with refs.
+
+Then **read the calendar's header before clicking anything in it**. It tells
+you which month is showing, and that decides which of three routes is right:
+
+1. **Already the month you want.** Common, because a form that expects a date
+   in a range often opens the calendar inside that range. Click the day.
+2. **A month or two away.** Click the previous/next arrow that many times.
+3. **Years away.** Look for month and year `<select>`s in the header and use
+   them. If there are none — and many calendars ship without them, jQuery UI
+   among them by default — the arrows are the only route, one click per
+   month. At that point check whether the field will take a value directly
+   through `run_js` instead.
+
+The mistake is clicking the arrow before reading the header, because the
+number of clicks needed is the one thing the header tells you and guessing
+it costs a click each time you guess low.
 
 ## Errors
 
