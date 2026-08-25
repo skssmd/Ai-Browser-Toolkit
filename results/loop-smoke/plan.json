@@ -1,6 +1,6 @@
 {
   "benchmark": "miniwob",
-  "created": "2026-08-25T11:44:04.266969+00:00",
+  "created": "2026-08-25T12:13:32.405612+00:00",
   "policy": "loop",
   "provider": "openrouter",
   "agent": "claude",

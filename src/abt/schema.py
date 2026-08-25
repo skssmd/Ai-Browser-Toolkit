@@ -435,6 +435,54 @@ OP_NAMES = sorted(
 )
 
 
+def op_signatures() -> dict[str, dict]:
+    """Every op with its parameters, their types and their defaults.
+
+    The names were all `/ops` and `abt ops` ever returned, while both claimed
+    to print "every op and its exact parameters". A caller that believed them
+    -- and the CLI's own help says it, so callers do -- had to guess parameter
+    names, and guessed `js` for `script`, `selector` and `pattern` for `css`,
+    `x`/`y` on a click. Five of those in one benchmark session, all of them
+    unnecessary: the models below have carried the answer the whole time.
+
+    Derived from the pydantic models rather than written down, so it cannot
+    drift from what the server will actually accept.
+    """
+    signatures: dict[str, dict] = {}
+    for model in COMMAND_MODELS:
+        name = get_args(model.model_fields["op"].annotation)[0]
+        params = {}
+        for field, info in model.model_fields.items():
+            if field == "op":
+                continue
+            entry: dict[str, Any] = {
+                "type": _type_name(info.annotation),
+                "required": info.is_required(),
+            }
+            default = info.default
+            # PydanticUndefined is not JSON-serialisable and means "no default".
+            if not info.is_required() and default is not None and repr(default) != "PydanticUndefined":
+                entry["default"] = default
+            if info.description:
+                entry["doc"] = info.description
+            params[field] = entry
+        signatures[name] = params
+    return signatures
+
+
+def _type_name(annotation: Any) -> str:
+    """A short, readable type for a parameter -- not a JSON Schema."""
+    text = str(annotation)
+    for noise in ("typing.", "<class '", "'>", "abt.schema."):
+        text = text.replace(noise, "")
+    text = text.replace("Optional[", "").replace("Union[", "")
+    text = text.replace(" | None", "").rstrip("]")
+    # Literals carry the allowed values, which is the useful part.
+    if "Literal[" in text:
+        return text[text.index("Literal[") :].replace("Literal[", "one of ")
+    return text.split(",")[0].strip() or "any"
+
+
 def parse_command(data: Any) -> Any:
     """Validate a raw dict into a command model, or raise OpError('invalid_op')."""
     if not isinstance(data, dict):

@@ -121,10 +121,14 @@ def _post(server: str, path: str, payload) -> dict:
 
 
 def ops_reference(server: str) -> str:
-    """The op vocabulary, straight from the server that will run it.
+    """The op vocabulary AND its parameters, from the server that will run it.
 
     Fetched rather than written down, so it cannot drift from the server the
-    episode is actually talking to -- the same reason `abt ops` exists.
+    episode is actually talking to. This used to return bare names while the
+    prompt introduced it as "with their exact parameters" -- so the model was
+    told the answer was there when it was not, and invented `js` for `script`
+    and `selector` for `css`. Five such failures in the first five episodes of
+    a sweep.
     """
     with urllib.request.urlopen(server.rstrip("/") + "/ops", timeout=30) as response:
         return json.dumps(json.load(response), separators=(",", ":"))
