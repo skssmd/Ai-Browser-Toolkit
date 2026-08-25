@@ -172,7 +172,7 @@ def _execute(server: str, ops: list, continue_on_error: bool) -> tuple[str, bool
     )
 
 
-def _run_anthropic(goal, server, model, max_turns, reference, client):
+def _run_anthropic(goal, server, model, max_turns, reference, client, max_tokens=8000):
     """The native Anthropic path: content blocks, tool_use, prefix caching."""
     import anthropic
 
@@ -195,7 +195,7 @@ def _run_anthropic(goal, server, model, max_turns, reference, client):
     while turns < max_turns:
         turns += 1
         response = client.messages.create(
-            model=model, max_tokens=8000, system=system,
+            model=model, max_tokens=max_tokens, system=system,
             tools=[TOOL], messages=messages,
         )
         cost.input += response.usage.input_tokens
@@ -250,11 +250,56 @@ def _openai_tool() -> dict:
     }
 
 
-def _run_openrouter(goal, server, model, max_turns, reference, client):
+def _openrouter_call(client, **kwargs):
+    """One completion, waiting out the shared free pool's rate limits.
+
+    A free stealth model is a shared upstream pool, and it returns 429 with
+    "temporarily rate-limited upstream" whenever the pool is busy -- routinely,
+    not exceptionally. Over a sweep of hundreds of episodes an unretried 429
+    is a lost episode, so this waits rather than failing. The SDK's own retries
+    are shorter than the pool's busy periods, hence the outer loop.
+    """
+    import time
+
+    delay = 8.0
+    for attempt in range(8):
+        problem = None
+        try:
+            response = client.chat.completions.create(**kwargs)
+            if response.choices:
+                return response
+            # OpenRouter can answer 200 with an error body shaped like a
+            # completion -- no choices, an `error` member instead. The SDK
+            # raises nothing, so an unguarded caller dies on choices[0].
+            problem = getattr(response, "error", None) or "no choices returned"
+        except Exception as exc:
+            problem = exc
+            text = f"{type(exc).__name__} {exc}".lower()
+            # Over hundreds of episodes a dropped connection is as routine as
+            # a busy pool, and an unretried one costs a whole episode.
+            transient = any(
+                marker in text
+                for marker in ("429", "rate", "connection", "timeout", "502",
+                               "503", "504", "overload")
+            )
+            if not transient:
+                raise
+        if attempt == 7:
+            raise RuntimeError(f"giving up after 8 attempts: {problem}")
+        print(f"  [upstream busy: {str(problem)[:90]} -- waiting {delay:.0f}s]",
+              flush=True)
+        time.sleep(delay)
+        delay = min(delay * 1.8, 120.0)
+    raise RuntimeError("unreachable")
+
+
+def _run_openrouter(goal, server, model, max_turns, reference, client, max_tokens=32000):
     from openai import OpenAI
 
     key = os.environ.get("OPENROUTER_API_KEY")
-    client = client or OpenAI(base_url=_OPENROUTER_BASE, api_key=key)
+    client = client or OpenAI(
+        base_url=_OPENROUTER_BASE, api_key=key, max_retries=5, timeout=300.0
+    )
     messages: list = [
         {"role": "system", "content": SYSTEM},
         {
@@ -269,8 +314,9 @@ def _run_openrouter(goal, server, model, max_turns, reference, client):
 
     while turns < max_turns:
         turns += 1
-        response = client.chat.completions.create(
-            model=model, max_tokens=8000, tools=[_openai_tool()], messages=messages,
+        response = _openrouter_call(
+            client, model=model, max_tokens=max_tokens,
+            tools=[_openai_tool()], messages=messages,
         )
         usage = response.usage
         if usage is not None:
@@ -323,6 +369,7 @@ def run_episode(
     max_turns: int = 30,
     provider: str = "anthropic",
     client=None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Drive one task to completion. Returns what it cost and what it did."""
     if provider not in BACKENDS:
@@ -330,8 +377,12 @@ def run_episode(
     model = model or DEFAULT_MODELS[provider]
     reference = ops_reference(server)
 
+    # A reasoning model spends output tokens thinking before it emits a tool
+    # call; too small a budget truncates it mid-thought and the turn produces
+    # nothing. Hence a far larger default on the OpenRouter path.
+    budget = max_tokens or (32000 if provider == "openrouter" else 8000)
     turns, ops_sent, op_failures, cost, reply = BACKENDS[provider](
-        goal, server, model, max_turns, reference, client
+        goal, server, model, max_turns, reference, client, budget
     )
     return {
         "provider": provider,
@@ -357,6 +408,9 @@ def main() -> int:
     ap.add_argument("--provider", default="anthropic", choices=sorted(BACKENDS))
     ap.add_argument("--model", default=None, help="Defaults per provider.")
     ap.add_argument("--max-turns", type=int, default=30)
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="Output budget per turn. Defaults 32000 on openrouter "
+                         "(reasoning models think before answering), 8000 on anthropic.")
     args = ap.parse_args()
 
     needed = {
@@ -367,7 +421,8 @@ def main() -> int:
         print(f"warning: none of {', '.join(needed)} is set", flush=True)
 
     print(json.dumps(run_episode(
-        args.goal, args.server, args.model, args.max_turns, args.provider
+        args.goal, args.server, args.model, args.max_turns, args.provider,
+        None, args.max_tokens,
     ), indent=2))
     return 0
 
