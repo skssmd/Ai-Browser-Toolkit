@@ -107,8 +107,8 @@ def test_a_plain_message_lands_in_the_thread(client, thread_url):
 
 
 def test_a_stale_draft_is_cleared_before_typing(client, thread_url):
-    client.post("/command", json={"op": "goto", "url": thread_url})
-    client.post("/command", json={"op": "input", "css": "#composer", "value": "junk"})
+    client.post("/command-list", json={"op": "goto", "url": thread_url})
+    client.post("/command-list", json={"op": "input", "css": "#composer", "value": "junk"})
     send(client, thread_url, message="clean")
     rows = client.get("/messenger/messages").json()["result"]["messages"]
     assert rows[-1]["text"] == "clean"
@@ -186,7 +186,7 @@ def test_threads_lists_the_sidebar(client, thread_url):
 
 
 def test_messages_are_parsed_into_sender_time_and_text(client, thread_url):
-    client.post("/command", json={"op": "goto", "url": thread_url})
+    client.post("/command-list", json={"op": "goto", "url": thread_url})
     rows = client.get("/messenger/messages").json()["result"]["messages"]
     assert len(rows) == 3
     assert rows[0] == {
@@ -247,7 +247,7 @@ def test_a_background_send_answers_before_it_finishes(client, thread_url):
 
 
 def test_a_background_send_leaves_the_original_tab_in_front(client, thread_url, base_url):
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
     body = client.post(
         "/messenger/sendmessage/async",
         json={"thread_url": thread_url, "message": "elsewhere", "allow_any_host": True},

@@ -12,7 +12,7 @@ from abt.errors import ERROR_TYPES, OpError
 
 @pytest.fixture
 def page(client, base_url):
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/inspect.html"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/inspect.html"})
     return client
 
 
@@ -22,7 +22,7 @@ def page(client, base_url):
 def test_a_date_input_gets_the_value_it_was_given(page):
     """The HR-form bug: send_keys made 2026-08-03 land as 60803-02-20."""
     body = page.post(
-        "/command", json={"op": "input", "css": "#d", "value": "2026-08-03"}
+        "/command-list", json={"op": "input", "css": "#d", "value": "2026-08-03"}
     ).json()
     assert body["ok"] is True, body
     assert body["result"]["value"] == "2026-08-03"
@@ -31,8 +31,8 @@ def test_a_date_input_gets_the_value_it_was_given(page):
 
 def test_the_page_is_told_the_date_changed(page):
     """Setting .value silently is useless -- the framework must see the event."""
-    page.post("/command", json={"op": "input", "css": "#d", "value": "2026-08-03"})
-    text = page.post("/command", json={"op": "get_text", "css": "#echo"}).json()
+    page.post("/command-list", json={"op": "input", "css": "#d", "value": "2026-08-03"})
+    text = page.post("/command-list", json={"op": "get_text", "css": "#echo"}).json()
     assert text["result"] == "d=2026-08-03"
 
 
@@ -41,13 +41,13 @@ def test_the_page_is_told_the_date_changed(page):
     [("#t", "14:30"), ("#m", "2026-08"), ("#dt", "2026-08-03T09:15")],
 )
 def test_every_segmented_type_round_trips(page, css, value):
-    body = page.post("/command", json={"op": "input", "css": css, "value": value}).json()
+    body = page.post("/command-list", json={"op": "input", "css": css, "value": value}).json()
     assert body["result"]["value"] == value
 
 
 def test_a_date_input_rejects_a_value_it_cannot_parse(page):
     body = page.post(
-        "/command", json={"op": "input", "css": "#d", "value": "03/08/2026"}
+        "/command-list", json={"op": "input", "css": "#d", "value": "03/08/2026"}
     ).json()
     assert body["ok"] is False
     assert body["error"]["type"] == "not_interactable"
@@ -56,7 +56,7 @@ def test_a_date_input_rejects_a_value_it_cannot_parse(page):
 
 def test_a_plain_text_input_is_still_typed_into(page):
     body = page.post(
-        "/command", json={"op": "input", "css": "#plain", "value": "typed"}
+        "/command-list", json={"op": "input", "css": "#plain", "value": "typed"}
     ).json()
     assert body["result"]["value"] == "typed"
     assert "set_directly" not in body["result"]
@@ -67,26 +67,26 @@ def test_a_plain_text_input_is_still_typed_into(page):
 
 def test_a_button_below_the_fold_is_scrolled_to_and_clicked(page):
     """This failed as not_interactable on hr.dataclans.com at y=1009."""
-    body = page.post("/command", json={"op": "click", "css": "#low"}).json()
+    body = page.post("/command-list", json={"op": "click", "css": "#low"}).json()
     assert body["ok"] is True, body
-    text = page.post("/command", json={"op": "get_text", "css": "#clicked"}).json()
+    text = page.post("/command-list", json={"op": "get_text", "css": "#clicked"}).json()
     assert text["result"] == "the low button was clicked"
 
 
 def test_a_ref_below_the_fold_is_also_scrolled_to(page):
-    found = page.post("/command", json={"op": "find", "css": "#low"}).json()
+    found = page.post("/command-list", json={"op": "find", "css": "#low"}).json()
     ref = found["result"]["matches"][0]["ref"]
-    assert page.post("/command", json={"op": "click", "ref": ref}).json()["ok"] is True
+    assert page.post("/command-list", json={"op": "click", "ref": ref}).json()["ok"] is True
 
 
 def test_present_does_not_scroll(page):
     """Asserting a thing exists should not move the page under you."""
     before = page.post(
-        "/command", json={"op": "run_js", "script": "return window.scrollY;"}
+        "/command-list", json={"op": "run_js", "script": "return window.scrollY;"}
     ).json()["result"]["value"]
-    page.post("/command", json={"op": "wait_for", "css": "#low", "state": "present"})
+    page.post("/command-list", json={"op": "wait_for", "css": "#low", "state": "present"})
     after = page.post(
-        "/command", json={"op": "run_js", "script": "return window.scrollY;"}
+        "/command-list", json={"op": "run_js", "script": "return window.scrollY;"}
     ).json()["result"]["value"]
     assert before == after
 
@@ -95,7 +95,7 @@ def test_present_does_not_scroll(page):
 
 
 def test_console_captures_what_the_page_logged_while_loading(page):
-    body = page.post("/command", json={"op": "read_console"}).json()
+    body = page.post("/command-list", json={"op": "read_console"}).json()
     assert body["result"]["available"] is True
     texts = [m["text"] for m in body["result"]["messages"]]
     assert "page loaded" in texts
@@ -103,26 +103,26 @@ def test_console_captures_what_the_page_logged_while_loading(page):
 
 
 def test_console_filters_by_level(page):
-    body = page.post("/command", json={"op": "read_console", "levels": ["error"]}).json()
+    body = page.post("/command-list", json={"op": "read_console", "levels": ["error"]}).json()
     levels = {m["level"] for m in body["result"]["messages"]}
     assert levels == {"error"}
 
 
 def test_console_filters_by_pattern(page):
-    body = page.post("/command", json={"op": "read_console", "pattern": "widget"}).json()
+    body = page.post("/command-list", json={"op": "read_console", "pattern": "widget"}).json()
     assert body["result"]["count"] == 1
     assert "widget" in body["result"]["messages"][0]["text"]
 
 
 def test_a_bad_console_pattern_is_a_typed_error(page):
-    body = page.post("/command", json={"op": "read_console", "pattern": "("}).json()
+    body = page.post("/command-list", json={"op": "read_console", "pattern": "("}).json()
     assert body["error"]["type"] == "invalid_op"
 
 
 def test_console_survives_a_reload(page):
     """Capture is installed at document start, not injected after the fact."""
-    page.post("/command", json={"op": "reload"})
-    body = page.post("/command", json={"op": "read_console"}).json()
+    page.post("/command-list", json={"op": "reload"})
+    body = page.post("/command-list", json={"op": "read_console"}).json()
     assert "page loaded" in [m["text"] for m in body["result"]["messages"]]
 
 
@@ -133,19 +133,19 @@ def test_console_works_in_a_tab_opened_after_startup(client, base_url):
     which is every `tab_new`, every new_tab click, and every background send.
     """
     client.post(
-        "/command", json={"op": "tab_new", "url": f"{base_url}/inspect.html"}
+        "/command-list", json={"op": "tab_new", "url": f"{base_url}/inspect.html"}
     )
-    body = client.post("/command", json={"op": "read_console"}).json()
+    body = client.post("/command-list", json={"op": "read_console"}).json()
     assert body["result"]["available"] is True
     assert "page loaded" in [m["text"] for m in body["result"]["messages"]]
 
 
 def test_console_works_after_switching_back_to_a_tab(client, base_url):
     first = client.get("/status").json()["result"]["active_tab"]
-    client.post("/command", json={"op": "tab_new", "url": f"{base_url}/cards.html"})
-    client.post("/command", json={"op": "tab_switch", "tab_id": first})
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/inspect.html"})
-    body = client.post("/command", json={"op": "read_console"}).json()
+    client.post("/command-list", json={"op": "tab_new", "url": f"{base_url}/cards.html"})
+    client.post("/command-list", json={"op": "tab_switch", "tab_id": first})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/inspect.html"})
+    body = client.post("/command-list", json={"op": "read_console"}).json()
     assert "page loaded" in [m["text"] for m in body["result"]["messages"]]
 
 
@@ -153,14 +153,14 @@ def test_console_works_after_switching_back_to_a_tab(client, base_url):
 
 
 def test_network_lists_requests_with_statuses(page):
-    body = page.post("/command", json={"op": "read_network"}).json()
+    body = page.post("/command-list", json={"op": "read_network"}).json()
     assert body["result"]["count"] > 0
     assert any(r["url"].endswith("cards.html") for r in body["result"]["requests"])
 
 
 def test_network_can_show_failures_only(page):
     """The R2 case: find the 404 without reading everything that worked."""
-    body = page.post("/command", json={"op": "read_network", "failures_only": True}).json()
+    body = page.post("/command-list", json={"op": "read_network", "failures_only": True}).json()
     urls = [r["url"] for r in body["result"]["requests"]]
     assert any("no-such-file-xyz" in u for u in urls)
     assert not any(u.endswith("cards.html") for u in urls)
@@ -168,14 +168,14 @@ def test_network_can_show_failures_only(page):
 
 def test_network_filters_by_url_pattern(page):
     body = page.post(
-        "/command", json={"op": "read_network", "pattern": "no-such-file"}
+        "/command-list", json={"op": "read_network", "pattern": "no-such-file"}
     ).json()
     assert body["result"]["count"] == 1
     assert body["result"]["requests"][0]["status"] == 404
 
 
 def test_network_min_status_selects_server_answers(page):
-    body = page.post("/command", json={"op": "read_network", "min_status": 400}).json()
+    body = page.post("/command-list", json={"op": "read_network", "min_status": 400}).json()
     assert all(r["status"] >= 400 for r in body["result"]["requests"])
 
 
@@ -240,7 +240,7 @@ def _native(client) -> bool:
 
 
 def _post(client, **payload):
-    return client.post("/command", json=payload).json()["result"]
+    return client.post("/command-list", json=payload).json()["result"]
 
 
 def test_a_cors_blocked_request_is_still_reported_as_a_failure(client, base_url, other_origin):

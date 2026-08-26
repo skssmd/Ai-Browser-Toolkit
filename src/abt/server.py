@@ -238,16 +238,12 @@ def create_app(
             payload["error"] = failed[0]["error"]
         return payload
 
-    # The name to learn. Registered first so it is what /openapi.json and any
-    # generated client lead with.
+    # The only way in. There were once two -- /command and /commands -- and
+    # keeping both taught the wrong lesson: a caller that met the singular
+    # first had no reason to look for the other and sent one op per round trip
+    # forever. One name, and it is the plural one, so the batching shape is
+    # the shape you learn first.
     app.post("/command-list")(_command_list)
-
-    # The old spellings, kept working and undocumented. Removing them would
-    # break every caller written against the two-endpoint shape -- including a
-    # benchmark that was mid-run when this landed -- and they cost nothing but
-    # a route entry.
-    app.post("/command")(_command_list)
-    app.post("/commands")(_command_list)
 
     # --- messenger ------------------------------------------------------------
 

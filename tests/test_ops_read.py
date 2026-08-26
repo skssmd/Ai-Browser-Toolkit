@@ -97,12 +97,41 @@ def test_get_html_missing_element_errors(clean_session):
     assert caught.value.type == "element_not_found"
 
 
-def test_screenshot_returns_png(clean_session):
+def test_screenshot_names_a_file_rather_than_inlining_one(clean_session):
+    """The default reply carries no image, on purpose.
+
+    An agent reading tool output as text cannot see an inlined image, and a
+    viewport frame is 100KB-1MB before base64 adds a third -- one observed
+    session spent six minutes chewing through a single frame and ended with
+    the agent trying to save the image itself. The server writes a frame for
+    every command anyway, so the op points at that file instead of carrying
+    its own copy. `path` is added by the server, which owns the recorder, so
+    it is absent at this layer.
+    """
     result = run(clean_session, op="screenshot")
+    assert result["format"] == "jpeg"
+    assert "base64" not in result
+
+
+def test_screenshot_still_inlines_when_asked(clean_session):
+    """base64 is opt-in now, and is still PNG when it is."""
+    result = run(clean_session, op="screenshot", base64=True)
     assert result["format"] == "png"
     assert base64.b64decode(result["base64"])[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_element_screenshot(clean_session):
-    result = run(clean_session, op="screenshot", css="#p1")
+    result = run(clean_session, op="screenshot", css="#p1", base64=True)
     assert base64.b64decode(result["base64"])[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_element_screenshot_without_base64_still_frames_the_element(clean_session):
+    """A target with no base64 is not a no-op.
+
+    Resolving it scrolls the element into view and sets last_target, so the
+    frame the server records shows the element and carries a box saying
+    where in the frame it is.
+    """
+    result = run(clean_session, op="screenshot", css="#p1")
+    assert result["format"] == "jpeg"
+    assert "base64" not in result

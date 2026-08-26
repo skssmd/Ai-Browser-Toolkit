@@ -18,8 +18,8 @@ def logged(clean_session, tmp_path):
 
 def test_commands_are_recorded(logged, base_url):
     client, recorder = logged
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/form.html"})
-    client.post("/command", json={"op": "find", "css": "#name"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/form.html"})
+    client.post("/command-list", json={"op": "find", "css": "#name"})
 
     events = client.get(f"/logs/{recorder.session_id}").json()["result"]["events"]
     assert [e["op"] for e in events] == ["goto", "find"]
@@ -30,7 +30,7 @@ def test_commands_are_recorded(logged, base_url):
 
 def test_failures_are_recorded_with_their_type(logged):
     client, recorder = logged
-    client.post("/command", json={"op": "click", "css": "#ghost"})
+    client.post("/command-list", json={"op": "click", "css": "#ghost"})
     event = client.get(f"/logs/{recorder.session_id}").json()["result"]["events"][0]
     assert event["ok"] is False
     assert event["error_type"] == "element_not_found"
@@ -38,7 +38,7 @@ def test_failures_are_recorded_with_their_type(logged):
 
 def test_each_event_carries_its_tab_and_site(logged, base_url):
     client, recorder = logged
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
     event = client.get(f"/logs/{recorder.session_id}").json()["result"]["events"][0]
     assert event["tab_id"].startswith("tab_")
     assert event["site"] == base_url.replace("http://", "")
@@ -46,7 +46,7 @@ def test_each_event_carries_its_tab_and_site(logged, base_url):
 
 def test_batch_records_every_command(logged, base_url):
     client, recorder = logged
-    client.post("/commands", json=[
+    client.post("/command-list", json=[
         {"op": "goto", "url": f"{base_url}/form.html"},
         {"op": "input", "css": "#name", "value": "x"},
         {"op": "click", "css": "#go"},
@@ -57,7 +57,7 @@ def test_batch_records_every_command(logged, base_url):
 
 def test_filter_by_op(logged, base_url):
     client, recorder = logged
-    client.post("/commands", json=[
+    client.post("/command-list", json=[
         {"op": "goto", "url": f"{base_url}/cards.html"},
         {"op": "find", "css": ".card"},
         {"op": "find", "css": "#p1"},
@@ -68,8 +68,8 @@ def test_filter_by_op(logged, base_url):
 
 def test_filter_errors_only(logged):
     client, recorder = logged
-    client.post("/command", json={"op": "current_url"})
-    client.post("/command", json={"op": "click", "css": "#ghost"})
+    client.post("/command-list", json={"op": "current_url"})
+    client.post("/command-list", json={"op": "click", "css": "#ghost"})
     result = client.get(f"/logs/{recorder.session_id}?errors_only=true").json()["result"]
     assert result["count"] == 1
     assert result["events"][0]["error_type"] == "element_not_found"
@@ -77,7 +77,7 @@ def test_filter_errors_only(logged):
 
 def test_filter_by_site_excludes_others(logged, base_url):
     client, recorder = logged
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
     host = base_url.replace("http://", "")
     assert client.get(f"/logs/{recorder.session_id}?site={host}").json()["result"]["count"] >= 1
     assert client.get(f"/logs/{recorder.session_id}?site=nope.test").json()["result"]["count"] == 0
@@ -85,7 +85,7 @@ def test_filter_by_site_excludes_others(logged, base_url):
 
 def test_sessions_index_lists_the_live_session(logged):
     client, recorder = logged
-    client.post("/command", json={"op": "current_url"})
+    client.post("/command-list", json={"op": "current_url"})
     body = client.get("/logs").json()["result"]
     assert body["recording"] is True
     assert body["current"] == recorder.session_id
@@ -94,7 +94,7 @@ def test_sessions_index_lists_the_live_session(logged):
 
 def test_sites_index_endpoint(logged, base_url):
     client, _ = logged
-    client.post("/command", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
     rows = client.get("/logs/sites").json()["result"]
     assert any(r["site"] == base_url.replace("http://", "") for r in rows)
 
@@ -114,7 +114,7 @@ def test_viewer_page_is_served(logged):
 
 def test_logging_off_still_serves_the_endpoints(clean_session):
     with TestClient(create_app(clean_session)) as client:
-        client.post("/command", json={"op": "current_url"})
+        client.post("/command-list", json={"op": "current_url"})
         body = client.get("/logs").json()["result"]
         assert body["recording"] is False
         assert body["sessions"] == []
@@ -128,5 +128,5 @@ def test_a_broken_recorder_never_fails_a_command(clean_session, tmp_path):
 
     recorder = Broken(tmp_path / "logs")
     with TestClient(create_app(clean_session, recorder=recorder)) as client:
-        body = client.post("/command", json={"op": "current_url"}).json()
+        body = client.post("/command-list", json={"op": "current_url"}).json()
         assert body["ok"] is True

@@ -377,7 +377,7 @@ def test_browser_route_reports_the_defaults(unstarted_client):
 
 def test_a_page_command_without_a_browser_says_how_to_recover(unstarted_client):
     body = unstarted_client.post(
-        "/command", json={"op": "goto", "url": "https://example.com"}
+        "/command-list", json={"op": "goto", "url": "https://example.com"}
     ).json()
     assert body["ok"] is False
     assert body["error"]["type"] == "browser_dead"

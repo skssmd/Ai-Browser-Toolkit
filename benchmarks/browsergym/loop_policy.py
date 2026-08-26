@@ -12,7 +12,7 @@ ops reference is sent once per episode as a cached system prefix, so after the
 first episode it costs a tenth of that.
 
 **One tool, taking a list.** Not one tool per op: the tool signature IS
-`POST /commands`, so sending three ops in a call is the ordinary shape rather
+`POST /command-list`, so sending three ops in a call is the ordinary shape rather
 than a thing the model has to remember to prefer. Watching agents drive the CLI,
 the single most common waste was a fixed pair -- type a command, press Enter --
 paid as two round trips. A tool that only accepts a list cannot express that
@@ -155,7 +155,7 @@ def _execute(server: str, ops: list, continue_on_error: bool) -> tuple[str, bool
     try:
         answer = _post(
             server,
-            "/commands",
+            "/command-list",
             {"commands": ops, "continue_on_error": bool(continue_on_error)},
         )
     except Exception as exc:
