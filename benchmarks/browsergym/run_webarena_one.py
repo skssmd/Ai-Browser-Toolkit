@@ -126,7 +126,11 @@ def main() -> int:
         f"{obs.get('goal') or ''}\n\n"
         f"You are on a self-contained store at {start_url}. Everything you need "
         f"is on this site. Do NOT navigate to any other domain -- there is no "
-        f"internet here, and the task is only about this site."
+        f"internet here, and the task is only about this site.\n\n"
+        f"If the task asks you to show, find or open something, LEAVE THE "
+        f"BROWSER ON that page when you finish -- do not navigate away to "
+        f"summarise. Where you end up is part of the answer. If it asks a "
+        f"question, state the answer plainly and briefly."
     )
     session = loop_policy.run_episode(
         goal=goal,
@@ -140,6 +144,26 @@ def main() -> int:
 
     wall = time.time() - started
     ops_after, errs_after = client.op_tally()
+
+    # Read BEFORE closing. The config is a temp file BrowserGym deletes on
+    # close, and the browser goes with it -- gathering afterwards silently
+    # produced None for both, which is the kind of empty field nobody notices
+    # until the judging pass has nothing to judge.
+    eval_types, reference = [], None
+    try:
+        config = json.loads(Path(env.unwrapped.task.config_file).read_text())
+        spec = config.get("eval") or {}
+        eval_types = spec.get("eval_types") or []
+        reference = spec.get("reference_answers") or spec.get("reference_url")
+    except Exception:
+        pass
+    try:
+        final_url = (
+            client.command({"op": "current_url"}).get("result") or {}
+        ).get("url")
+    except Exception:
+        final_url = None
+
     obs, reward, terminated, truncated, info = env.step("noop(500)")
     env.close()
 
@@ -171,8 +195,17 @@ def main() -> int:
         ),
         "model_s": round(wall, 1),
         "hit_turn_limit": session.get("hit_turn_limit"),
-        "goal": (obs.get("goal") or "")[:300],
-        "reply": (session.get("reply") or "")[:600],
+        "goal": (obs.get("goal") or "")[:600],
+        # Judging happens AFTER the sweep, not inside it: scoring is a pass
+        # over the record, so a judging mistake costs a re-read rather than
+        # eight hours of re-browsing. That only works if the record carries
+        # what a judge needs -- the reference answer and what kind of check
+        # WebArena wanted -- so it is captured here rather than looked up
+        # later against a task file that may have moved on.
+        "eval_types": eval_types,
+        "reference_answer": reference,
+        "final_url": final_url,
+        "reply": session.get("reply") or "",
     })
 
     dest = Path(args.out)
