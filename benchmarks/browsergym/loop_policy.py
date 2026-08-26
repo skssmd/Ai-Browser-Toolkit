@@ -250,10 +250,22 @@ class Trace:
 
     RULE = "-" * 52
 
-    def __init__(self, enabled: bool = True, port: int | None = None) -> None:
+    def __init__(self, enabled: bool = True, port: int | None = None,
+                 path: str | None = None) -> None:
         self.enabled = enabled
         self.lines: list[str] = []
         self.running = True
+        # Line-buffered on purpose: a task that hangs or is killed still
+        # leaves on disk everything it had said up to that point.
+        self.file = None
+        if path:
+            try:
+                parent = os.path.dirname(path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                self.file = open(path, "a", encoding="utf-8", buffering=1)
+            except Exception:
+                self.file = None
         self.server = LogServer(self, port) if port else None
         if port:
             print(f"[trace] watch it at http://127.0.0.1:{port}",
@@ -263,6 +275,8 @@ class Trace:
         self.lines.append(text)
         if self.enabled:
             print(text, file=sys.stderr, flush=True)
+        if self.file is not None:
+            self.file.write(text + "\n")
 
     def __getattribute__(self, name):
         """Never let watching break the thing being watched.
@@ -614,6 +628,7 @@ def run_episode(
     client=None,
     max_tokens: int | None = None,
     trace_port: int | None = None,
+    trace_path: str | None = None,
     quiet: bool = False,
 ) -> dict:
     """Drive one task to completion. Returns what it cost and what it did."""
@@ -626,7 +641,7 @@ def run_episode(
     # call; too small a budget truncates it mid-thought and the turn produces
     # nothing. Hence a far larger default on the OpenRouter path.
     budget = max_tokens or (32000 if provider == "openrouter" else 8000)
-    trace = Trace(enabled=not quiet, port=trace_port)
+    trace = Trace(enabled=not quiet, port=trace_port, path=trace_path)
     trace.say(f"goal: {goal}")
     trace.say(f"model: {model} via {provider}  |  toolkit: {server}")
     try:

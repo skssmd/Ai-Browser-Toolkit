@@ -21,6 +21,17 @@ from adapter import AbtClient, inject_cdp_port  # noqa: E402
 import loop_policy  # noqa: E402
 
 
+
+def trace_path_for(out: str) -> str:
+    """results/<sweep>/raw/<task>.json -> results/<sweep>/traces/<task>.log
+
+    Derived rather than passed as a flag: the sweep parent that launches this
+    process is already running and cannot learn a new argument.
+    """
+    raw = Path(out)
+    return str(raw.parent.parent / "traces" / (raw.stem + ".log"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task-id", required=True)
@@ -140,6 +151,7 @@ def main() -> int:
         provider=args.provider,
         quiet=False,
         trace_port=args.trace_port,
+        trace_path=trace_path_for(args.out),
     )
 
     wall = time.time() - started
