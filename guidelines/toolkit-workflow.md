@@ -18,15 +18,20 @@ abt ops                               # every op and its exact parameters
 abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
 
-# every page action -- one op
-abt command-list '{"op":"goto","url":"https://example.com"}'
-abt command-list '{"op":"find","text":"Sign in"}'
-abt command-list '{"op":"click","ref":"el_3"}'
+# every page action goes through command-list, and it takes a LIST.
+# Send everything you already know in one round trip:
+abt command-list '[{"op":"goto","url":"https://example.com/login"},
+                   {"op":"find","css":"input"}]'
 
-# ...or a sequence you already know, in ONE round trip
-abt command-list '[{"op":"input","css":"#email","value":"me@example.com"},
-                 {"op":"input","css":"#password","value":"hunter2"},
-                 {"op":"click","css":"#submit"}]' 
+# find gave you refs. Act on all of them in the NEXT single call --
+# this is the shape almost every task has, and the one most often
+# paid for as three round trips instead of one:
+abt command-list '[{"op":"input","ref":"el_0","value":"me@example.com"},
+                   {"op":"input","ref":"el_1","value":"hunter2"},
+                   {"op":"click","ref":"el_2"}]'
+
+# a lone op is just a list of one, and is the exception, not the habit
+abt command-list '{"op":"reload"}'
 ```
 
 **`abt command-list` is how you drive the page -- one command, taking an op or a list of them.** The
@@ -43,9 +48,18 @@ the server outside your job object so your call returns while it keeps running.
 The server usually *is* already running, holding tabs and logins that must not
 be thrown away, so check before starting anything.
 
-**Batch what you already know.** `abt command-list` runs a list in order and stops
-at the first error. Two round trips become one, and you stop guessing between
-them.
+**Batch what you already know — this is the single biggest thing you can do
+here.** `abt command-list` runs a list in order and stops at the first error,
+naming it, so a batch is never a blind leap. Measured on a real benchmark,
+agents sent one op per call 64% of the time and paid a full model round trip
+for each: typing a value and pressing Enter, billed twice, in a pair that was
+never in doubt.
+
+The rule is simple: **before you send, ask what else you already know.** You
+know the whole form once you have its refs. You know `press Enter` follows
+`input`. You know the click that follows the select. Those go in the same
+call. What you cannot know yet — which product the search returns — is where
+a batch legitimately ends.
 
 **The viewer.** `/viewer` in a browser tab replays every command and response as
 it happens — the best debugging tool here. Open it beside your work.

@@ -16,50 +16,17 @@ import json
 
 import pytest
 
+from abt import mcp
 from abt.mcp import TOOLS, Bridge, Server, to_op, serve
 
 
 # --- translation --------------------------------------------------------------
-
-
-def test_navigate_translates_to_goto():
-    assert to_op("browser_navigate", {"url": "https://example.com"}) == {
-        "op": "goto",
-        "url": "https://example.com",
-    }
-
-
-def test_navigate_history_actions():
-    assert to_op("browser_navigate", {"action": "back"}) == {"op": "back"}
-    assert to_op("browser_navigate", {"action": "reload"}) == {"op": "reload"}
-
-
-def test_find_defaults_to_shells_and_opts_into_full():
-    assert to_op("browser_find", {"css": ".card"})["op"] == "find"
-    assert to_op("browser_find", {"css": ".card", "full": True})["op"] == "find_full"
-
-
-def test_click_carries_only_the_target_that_was_given():
-    op = to_op("browser_click", {"ref": "el_7"})
-    assert op == {"op": "click", "ref": "el_7"}
-    assert "css" not in op and "text" not in op
-
-
-def test_read_switches_between_text_and_html():
-    assert to_op("browser_read", {"css": "h1"})["op"] == "get_text"
-    assert to_op("browser_read", {"css": "h1", "html": True})["op"] == "get_html"
-
-
-def test_inspect_routes_console_and_network():
-    assert to_op("browser_inspect", {"what": "console"})["op"] == "read_console"
-    net = to_op("browser_inspect", {"what": "network", "failures_only": True})
-    assert net == {"op": "read_network", "failures_only": True}
-
-
-def test_tabs_actions_map_to_their_ops():
-    assert to_op("browser_tabs", {"action": "list"})["op"] == "tab_list"
-    assert to_op("browser_tabs", {"action": "new", "url": "u"}) == {"op": "tab_new", "url": "u"}
-    assert to_op("browser_tabs", {"action": "close", "tab_id": "tab_1"})["op"] == "tab_close"
+#
+# There were sixteen tools and a test per translation. Thirteen of them were
+# one-per-op -- browser_click lowering to click, browser_read to get_text --
+# which is a second spelling of a vocabulary `abt ops` already publishes, and
+# it is the reason MCP kept teaching one-op-per-call after the CLI and HTTP
+# had stopped. The tools are gone; so are their tests.
 
 
 def test_command_list_becomes_a_commands_payload():
@@ -67,13 +34,38 @@ def test_command_list_becomes_a_commands_payload():
     assert payload == {"commands": [{"op": "reload"}], "continue_on_error": False}
 
 
-def test_absent_options_are_omitted_not_sent_as_null():
-    """A null would be rejected by the server's schema as surely as a typo."""
-    op = to_op("browser_input", {"css": "#a", "value": "x"})
-    assert op == {"op": "input", "css": "#a", "value": "x"}
+def test_command_list_carries_a_whole_sequence_untouched():
+    """Ops pass through verbatim -- there is no per-op translation left to
+    disagree with the server."""
+    ops = [
+        {"op": "input", "css": "#email", "value": "me@example.com"},
+        {"op": "input", "css": "#password", "value": "hunter2"},
+        {"op": "click", "css": "#submit"},
+    ]
+    payload = to_op("command_list", {"commands": ops})
+    assert payload["commands"] == ops
 
 
-# --- what the schemas prevent --------------------------------------------------
+def test_continue_on_error_is_a_real_boolean_not_a_passthrough():
+    assert to_op("command_list", {"commands": [{"op": "reload"}]})["continue_on_error"] is False
+    assert to_op(
+        "command_list", {"commands": [{"op": "reload"}], "continue_on_error": True}
+    )["continue_on_error"] is True
+
+
+def test_session_actions_are_the_only_other_translation():
+    assert to_op("browser_session", {"action": "start"}) == {"op": "browser_start"}
+    assert to_op("browser_session", {"action": "restart"}) == {"op": "browser_restart"}
+
+
+def test_a_tool_that_no_longer_exists_raises_rather_than_guessing():
+    """The per-op tools are gone. A client still calling one must be told,
+    not quietly handed something adjacent."""
+    with pytest.raises(KeyError):
+        to_op("browser_click", {"ref": "el_1"})
+
+
+# --- what the surface prevents -------------------------------------------------
 
 
 def tool(name):
@@ -88,21 +80,44 @@ def test_every_tool_refuses_unknown_parameters(name):
     assert tool(name)["inputSchema"]["additionalProperties"] is False
 
 
-def test_select_has_no_label_parameter():
-    """The exact guess that failed in the wild."""
-    assert "label" not in tool("browser_select")["inputSchema"]["properties"]
+def test_there_is_one_way_to_act_on_the_page():
+    """Thirteen per-op tools were thirteen ways to send one op each, and a
+    model that met browser_click first had no reason to look for the list."""
+    names = {t["name"] for t in TOOLS}
+    assert names == {"command_list", "browser_guidelines", "browser_session"}
 
 
-def test_read_has_no_diff_parameter():
-    """The other exact guess."""
-    assert "diff" not in tool("browser_read")["inputSchema"]["properties"]
+def test_the_page_tools_are_gone_not_renamed():
+    names = {t["name"] for t in TOOLS}
+    for gone in (
+        "browser_click", "browser_input", "browser_select", "browser_find",
+        "browser_navigate", "browser_read", "browser_press", "browser_tabs",
+        "browser_run_js", "browser_screenshot", "browser_diff",
+        "browser_inspect", "browser_wait_for",
+    ):
+        assert gone not in names
 
 
-def test_targeting_options_are_advertised_together():
-    for name in ("browser_click", "browser_input", "browser_select"):
-        props = tool(name)["inputSchema"]["properties"]
-        assert {"ref", "css", "xpath", "text"} <= set(props)
-        assert "exactly ONE" in tool(name)["description"]
+def test_the_schemas_stay_small_because_they_are_re_sent_every_turn():
+    """They were ~2,329 tokens a turn, charged whether used or not. That was
+    the whole of MCP's measured overhead against raw HTTP."""
+    import json
+
+    assert len(json.dumps(TOOLS)) < 4000
+
+
+def test_the_instructions_point_at_the_op_reference():
+    """With no per-op schemas, this is where parameter names come from -- and
+    a guessed name was the most common failed call in the wild."""
+    assert "/ops" in mcp.INSTRUCTIONS
+
+
+def test_the_instructions_show_a_batch_not_a_single_op():
+    """The example is the lesson. Leading with one op per call is what the
+    CLI documentation did, and agents copied it 64% of the time."""
+    assert "command_list" in mcp.INSTRUCTIONS
+    body = mcp.INSTRUCTIONS
+    assert body.count('{"op"') >= 3, "the worked example should send several ops"
 
 
 def test_the_one_command_says_it_takes_a_list():
@@ -177,7 +192,9 @@ def test_unknown_tool_is_an_error_message_not_a_crash():
 
 
 def test_a_server_that_is_not_running_says_how_to_start_it():
-    text, failed = Bridge(api="http://127.0.0.1:9").call("browser_navigate", {"url": "u"})
+    text, failed = Bridge(api="http://127.0.0.1:9").call(
+        "command_list", {"commands": [{"op": "goto", "url": "u"}]}
+    )
     assert failed is True
     assert "abt serve" in text
 
@@ -221,26 +238,33 @@ def test_responses_are_compact_not_pretty_printed():
                 )
             )
 
-    text, failed = _Stub().call("browser_navigate", {"url": "u"})
+    text, failed = _Stub().call("command_list", {"commands": [{"op": "reload"}]})
     assert failed is False
     assert "\n" not in text and ", " not in text
     assert text == '{"ok":true,"result":{"a":1,"b":2}}'
 
 
-def test_run_js_is_a_typed_tool_not_only_an_escape_hatch():
-    """Both blind runs reached run_js through browser_command and guessed its
-    parameter name -- `code` instead of `script`. A typed tool cannot."""
-    assert to_op("browser_run_js", {"script": "return 1;"}) == {"op": "run_js", "script": "return 1;"}
-    props = tool("browser_run_js")["inputSchema"]["properties"]
-    assert "script" in props and "code" not in props
-    assert tool("browser_run_js")["inputSchema"]["required"] == ["script"]
+def test_run_js_advertises_script_not_code():
+    """Both blind runs guessed run_js's parameter name -- `code`, then `js` --
+    and a typed tool used to be what prevented it. There is no typed tool now,
+    so the reference has to carry it: /ops publishes every op's real
+    parameters, and that is where a caller is sent instead of guessing.
+    """
+    from abt.schema import op_signatures
+
+    params = op_signatures()["run_js"]
+    assert "script" in params
+    assert "code" not in params and "js" not in params
+    assert params["script"]["required"] is True
 
 
-def test_screenshot_is_typed_and_takes_no_path():
-    """The first blind run guessed `path`, then `filename`, then gave up."""
-    assert to_op("browser_screenshot", {"css": "#chart"}) == {"op": "screenshot", "css": "#chart"}
-    props = tool("browser_screenshot")["inputSchema"]["properties"]
-    assert "path" not in props and "filename" not in props
+def test_screenshot_advertises_no_path_or_filename():
+    """The first blind run guessed `path`, then `filename`, then gave up. The
+    op takes neither -- it names the frame the server already wrote."""
+    from abt.schema import op_signatures
+
+    params = op_signatures()["screenshot"]
+    assert "path" not in params and "filename" not in params
 
 
 def test_the_one_command_points_at_the_op_reference():
