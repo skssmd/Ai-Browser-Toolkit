@@ -105,10 +105,23 @@ def test_status_counts_live_refs(client):
     assert client.get("/status").json()["result"]["refs_valid"] == 3
 
 
-def test_ops_endpoint_lists_every_op(client):
+def test_ops_endpoint_gives_every_op_its_parameters(client):
+    """It returned bare names while the help promised "every op and its exact
+    parameters", so callers guessed -- and guessed `js` for run_js's `script`.
+    """
     from abt.ops import REGISTRY
 
-    assert client.get("/ops").json()["result"] == sorted(REGISTRY)
+    body = client.get("/ops").json()["result"]
+    assert sorted(body) == sorted(REGISTRY)
+    assert body["run_js"]["script"]["required"] is True
+    assert "js" not in body["run_js"] and "code" not in body["run_js"]
+
+
+def test_ops_endpoint_keeps_the_old_shape_on_request(client):
+    """Anything that only ever wanted the list can still have it."""
+    from abt.ops import REGISTRY
+
+    assert client.get("/ops?names=true").json()["result"] == sorted(REGISTRY)
 
 
 def test_find_then_click_by_ref_over_http(client, base_url):
