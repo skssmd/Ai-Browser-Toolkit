@@ -1,0 +1,26 @@
+{
+  "benchmark": "webarena",
+  "created": "2026-08-26T04:12:14.174783+00:00",
+  "provider": "openrouter",
+  "model": "stealth/ox-alpha",
+  "server": "http://127.0.0.1:8766",
+  "sites_running": [
+    "shopping"
+  ],
+  "note": "Only the listed sites are running. Tasks needing others are recorded as skipped, not as failures.",
+  "task_ids": [
+    "webarena.0",
+    "webarena.1",
+    "webarena.10",
+    "webarena.100",
+    "webarena.101",
+    "webarena.102",
+    "webarena.103",
+    "webarena.104",
+    "webarena.105",
+    "webarena.106",
+    "webarena.107",
+    "webarena.108"
+  ],
+  "episodes": 12
+}
