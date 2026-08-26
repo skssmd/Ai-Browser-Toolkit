@@ -62,8 +62,8 @@ def test_tabs_actions_map_to_their_ops():
     assert to_op("browser_tabs", {"action": "close", "tab_id": "tab_1"})["op"] == "tab_close"
 
 
-def test_batch_becomes_a_commands_payload():
-    payload = to_op("browser_batch", {"commands": [{"op": "reload"}]})
+def test_command_list_becomes_a_commands_payload():
+    payload = to_op("command_list", {"commands": [{"op": "reload"}]})
     assert payload == {"commands": [{"op": "reload"}], "continue_on_error": False}
 
 
@@ -105,9 +105,16 @@ def test_targeting_options_are_advertised_together():
         assert "exactly ONE" in tool(name)["description"]
 
 
-def test_batch_is_described_as_preferred():
-    """It is the toolkit's real latency advantage; the model has to know."""
-    assert "ONE call" in tool("browser_batch")["description"]
+def test_the_one_command_says_it_takes_a_list():
+    """The name teaches, and the description has to finish the lesson.
+
+    `browser_batch` sat beside `browser_command`, so a model that found the
+    singular first had no reason to look for the other and sent one op per
+    call forever. One tool, named for the plural, cannot be read that way.
+    """
+    desc = tool("command_list")["description"]
+    assert "LIST" in desc
+    assert "one call" in desc.lower()
 
 
 # --- protocol ------------------------------------------------------------------
@@ -236,9 +243,14 @@ def test_screenshot_is_typed_and_takes_no_path():
     assert "path" not in props and "filename" not in props
 
 
-def test_the_escape_hatch_warns_that_it_does_not_validate():
-    desc = tool("browser_command")["description"]
-    assert "WITHOUT" in desc and "GET /ops" in desc
+def test_the_one_command_points_at_the_op_reference():
+    """There is no separate escape hatch now -- command_list is both.
+
+    It carries raw ops, so it has to say where their exact parameters live:
+    a caller guessing `js` for `script` is what /ops exists to prevent.
+    """
+    desc = tool("command_list")["description"]
+    assert "/ops" in desc
 
 
 def test_browser_session_tool_is_offered():

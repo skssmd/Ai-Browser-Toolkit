@@ -175,26 +175,35 @@ def create_app(
         if request_stop is not None:
             request_stop()
 
-    @app.post("/command")
-    async def command(request: Request, background: BackgroundTasks):
+    async def _command_list(request: Request, background: BackgroundTasks):
+        """The one endpoint. Takes a command, or a list of them.
+
+        Named for the plural on purpose. There were two endpoints -- /command
+        and /commands -- and a caller that found the singular first had no
+        reason to look for the other, so it sent one op per request forever.
+        Watching real agents, that is exactly what happened: a fixed pair like
+        type-then-Enter paid as two round trips, twice per episode.
+        One endpoint whose name is a list makes the batch the obvious shape and
+        the single command a special case of it, rather than the reverse.
+
+        A bare object is accepted because refusing it would only teach callers
+        to wrap things, not to batch them.
+        """
         body = await _json(request)
         if isinstance(body, JSONResponse):
             return body
 
-        results = await run_in_threadpool(execute, [body], False)
-        response = results[0]
-        if response["ok"] and _is_shutdown(body):
-            background.add_task(teardown)
-        return response
-
-    @app.post("/commands")
-    async def commands(request: Request, background: BackgroundTasks):
-        body = await _json(request)
-        if isinstance(body, JSONResponse):
-            return body
+        # One command, sent bare. Answered in the same shape it was sent, so a
+        # caller that sends one thing gets one thing back.
+        if isinstance(body, dict) and "op" in body:
+            results = await run_in_threadpool(execute, [body], False)
+            response = results[0]
+            if response["ok"] and _is_shutdown(body):
+                background.add_task(teardown)
+            return response
 
         if isinstance(body, dict):
-            items = body.get("commands")
+            items = body.get("commands") or body.get("command_list")
             continue_on_error = bool(body.get("continue_on_error", False))
         else:
             items, continue_on_error = body, False
@@ -205,8 +214,9 @@ def create_app(
                 content=fail(
                     OpError(
                         "invalid_op",
-                        "body must be an array of commands, or an object with a "
-                        "'commands' array and an optional 'continue_on_error' flag",
+                        "send one command object, or a list of them. An object "
+                        "with a 'commands' array and an optional "
+                        "'continue_on_error' flag also works.",
                     )
                 ),
             )
@@ -227,6 +237,17 @@ def create_app(
         if failed:
             payload["error"] = failed[0]["error"]
         return payload
+
+    # The name to learn. Registered first so it is what /openapi.json and any
+    # generated client lead with.
+    app.post("/command-list")(_command_list)
+
+    # The old spellings, kept working and undocumented. Removing them would
+    # break every caller written against the two-endpoint shape -- including a
+    # benchmark that was mid-run when this landed -- and they cost nothing but
+    # a route entry.
+    app.post("/command")(_command_list)
+    app.post("/commands")(_command_list)
 
     # --- messenger ------------------------------------------------------------
 

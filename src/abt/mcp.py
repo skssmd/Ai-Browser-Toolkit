@@ -67,8 +67,9 @@ shadow roots. count=0 is an answer, not a bad selector -- the control does not
 exist yet, so click whatever creates it. Do not fall back to browser_run_js to
 scan the DOM.
 
-browser_batch runs a sequence you already know in one round trip. Prefer it
-over one call per step.
+command_list runs a sequence you already know in one round trip, and is the
+only way to act on the page. Send everything you know you need in one call --
+typing and pressing Enter is one call, not two.
 
 Site playbooks: before driving an unfamiliar site call browser_guidelines with
 that domain. Some sites have a written procedure, and it is shorter than
@@ -247,26 +248,25 @@ TOOLS: list[dict] = [
         }, ["action"]),
     },
     {
-        "name": "browser_batch",
+        "name": "command_list",
         "description": (
-            "Run several ops in ONE call, in order. Prefer this for any sequence "
-            "you already know -- one round trip instead of one per step. Items "
-            'are raw op objects: {"op":"click","css":"#x"}. Stops at the first '
-            "failure unless continue_on_error."
+            "Run a browser command, or a LIST of them in order -- this is the "
+            "only way to act on the page, and the same name and shape the CLI "
+            'and HTTP API use. Items are raw op objects: {"op":"click",'
+            '"css":"#x"}. Send every op you already know you need in one call: '
+            "typing and pressing Enter is one call, not two. Stops at the "
+            "first failure and says which, so a list is never a blind leap. "
+            "`abt ops` (GET /ops) gives every op with its exact parameters."
         ),
         "inputSchema": _schema({
-            "commands": {"type": "array", "items": {"type": "object"}},
+            "commands": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "One or more ops, run in order.",
+                "minItems": 1,
+            },
             "continue_on_error": {"type": "boolean"},
         }, ["commands"]),
-    },
-    {
-        "name": "browser_command",
-        "description": (
-            "Last resort: one raw op no named tool covers (alert, scroll, "
-            "status). Passed through WITHOUT validation, so check GET /ops for "
-            "exact parameter names rather than guessing."
-        ),
-        "inputSchema": _schema({"command": {"type": "object"}}, ["command"]),
     },
     {
         "name": "browser_guidelines",
@@ -391,14 +391,11 @@ def to_op(tool: str, args: dict) -> Any:
     if tool == "browser_screenshot":
         return {"op": "screenshot", **target, **_one_of(args, "base64")}
 
-    if tool == "browser_batch":
+    if tool == "command_list":
         return {
             "commands": args.get("commands") or [],
             "continue_on_error": bool(args.get("continue_on_error")),
         }
-
-    if tool == "browser_command":
-        return args.get("command") or {}
 
     raise KeyError(tool)
 
@@ -430,7 +427,10 @@ class Bridge:
                 payload = to_op(tool, args)
             except KeyError:
                 return f"no such tool: {tool}", True
-            endpoint = "/commands" if tool == "browser_batch" else "/command"
+            # One endpoint for everything, named for the plural. See
+            # server.py: the two-endpoint shape taught callers to send one op
+            # per round trip.
+            endpoint = "/command-list"
             request = ("POST", endpoint, payload)
 
         method, path, body = request

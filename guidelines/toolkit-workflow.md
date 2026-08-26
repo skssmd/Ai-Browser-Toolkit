@@ -19,22 +19,22 @@ abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
 
 # every page action -- one op
-abt exec '{"op":"goto","url":"https://example.com"}'
-abt exec '{"op":"find","text":"Sign in"}'
-abt exec '{"op":"click","ref":"el_3"}'
+abt command-list '{"op":"goto","url":"https://example.com"}'
+abt command-list '{"op":"find","text":"Sign in"}'
+abt command-list '{"op":"click","ref":"el_3"}'
 
 # ...or a sequence you already know, in ONE round trip
-abt exec-batch '[{"op":"input","css":"#email","value":"me@example.com"},
+abt command-list '[{"op":"input","css":"#email","value":"me@example.com"},
                  {"op":"input","css":"#password","value":"hunter2"},
                  {"op":"click","css":"#submit"}]' 
 ```
 
-**`abt exec` and `abt exec-batch` are how you drive the page.** The
+**`abt command-list` is how you drive the page -- one command, taking an op or a list of them.** The
 subcommands are lifecycle only — start the server, start the browser, look
-at what is recorded. Every op in the tables below goes through `exec`,
+at what is recorded. Every op in the tables below goes through `command-list`,
 spelled exactly as the table spells it, so there is no second vocabulary to
 learn and nothing that can disagree with `abt ops`. On PowerShell, pipe JSON rather than
-quoting it inline: `'{"op":"press","key":"Enter"}' | abt exec -`.
+quoting it inline: `'{"op":"press","key":"Enter"}' | abt command-list -`.
 
 **Never run `abt serve` from a tool call.** That is the command loop itself: it
 never returns, so whatever launched it hangs until killed. `abt up` is the one
@@ -43,15 +43,15 @@ the server outside your job object so your call returns while it keeps running.
 The server usually *is* already running, holding tabs and logins that must not
 be thrown away, so check before starting anything.
 
-**Batch what you already know.** `abt exec-batch` runs a list in order and stops
+**Batch what you already know.** `abt command-list` runs a list in order and stops
 at the first error. Two round trips become one, and you stop guessing between
 them.
 
 **The viewer.** `/viewer` in a browser tab replays every command and response as
 it happens — the best debugging tool here. Open it beside your work.
 
-**Underneath is HTTP**, and that surface is supported: `POST /command`,
-`POST /commands`, `GET /status`, `GET /ops`. Every `abt` subcommand except
+**Underneath is HTTP**, and that surface is supported: `POST /command-list`,
+`GET /status`, `GET /ops`. Every `abt` subcommand except
 `serve` is one of those requests. Use it directly when you are already making
 HTTP calls and want to avoid a process launch per command; otherwise prefer
 `abt`.
@@ -345,7 +345,7 @@ next thing you do is retype the value that was never the problem.
 The diff is what tells you, and it tells you immediately:
 
 ```
-abt exec '{"op":"input","css":"#flight-from","value":"ACV"}'
+abt command-list '{"op":"input","css":"#flight-from","value":"ACV"}'
 ```
 ```json
 "text": {"added": ["ACV", "Arcata, CA (ACV)", "Eureka/Arcata, CA (ACV)",

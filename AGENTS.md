@@ -77,12 +77,12 @@ Selectors and all three tracks reach **inside iframes**, so an embedded sign-in
 widget, card field or editor is targetable like anything else and its refs act
 normally. You never switch frames yourself.
 
-**5. Batch what you already know.** `POST /commands` takes a list and runs it in
+**5. Batch what you already know.** `POST /command-list` takes a list and runs it in
 order, in one round trip. Filling a form is one call, not six.
 
 ```bash
-curl -s localhost:8765/commands -d '[{"op":"input","css":"#a","value":"x"},
-                                     {"op":"click","text":"Save"}]'
+curl -s localhost:8765/command-list -d '[{"op":"input","css":"#a","value":"x"},
+                                         {"op":"click","text":"Save"}]'
 ```
 
 **6. `run_js` is the escape hatch, not the tool.** If you are writing

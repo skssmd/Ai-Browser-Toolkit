@@ -10,9 +10,9 @@ all of them:
 
 | | Use it when |
 |---|---|
-| **CLI** — `abt exec`, `abt exec-batch` | The agent already has a shell. Nothing to configure. |
+| **CLI** — `abt command-list` | The agent already has a shell. Nothing to configure. |
 | **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
-| **HTTP** — `POST /command` on :8765 | You are writing the integration yourself. |
+| **HTTP** — `POST /command-list` on :8765 | You are writing the integration yourself. |
 
 Why not a headless scraper: it keeps **one long-lived browser on a persistent
 profile**. Log into Gmail, your CRM, your ticket system once, by hand — every
@@ -226,14 +226,14 @@ loginctl enable-linger $USER
 One command:
 
 ```bash
-curl -s localhost:8765/command -H 'content-type: application/json' \
+curl -s localhost:8765/command-list -H 'content-type: application/json' \
   -d '{"op":"goto","url":"https://example.com"}'
 ```
 
 A list, run in order:
 
 ```bash
-curl -s localhost:8765/commands -H 'content-type: application/json' -d '[
+curl -s localhost:8765/command-list -H 'content-type: application/json' -d '[
   {"op":"goto","url":"https://example.com"},
   {"op":"find","css":"a"},
   {"op":"click","ref":"el_0"},
@@ -297,8 +297,8 @@ Full details and the traps behind them: [guidelines/messenger.com/messenger.md](
 The DOM cannot tell you why a request failed. These can:
 
 ```bash
-curl -s localhost:8765/command -d '{"op":"read_network","failures_only":true}'
-curl -s localhost:8765/command -d '{"op":"read_console","levels":["error"]}'
+curl -s localhost:8765/command-list -d '{"op":"read_network","failures_only":true}'
+curl -s localhost:8765/command-list -d '{"op":"read_console","levels":["error"]}'
 ```
 
 `read_console` captures from **document start**, so a reload hands back what the
@@ -745,8 +745,8 @@ cleaner answer of the two when the target is a link. Add `"activate": false` to
 open it in the background. The two flags are mutually exclusive.
 
 ```bash
-abt exec '{"op":"click","css":"a.result","force":true}'
-abt exec '{"op":"click","css":"a.result","new_tab":true,"activate":false}'
+abt command-list '{"op":"click","css":"a.result","force":true}'
+abt command-list '{"op":"click","css":"a.result","new_tab":true,"activate":false}'
 ```
 
 `GET /ops` lists them live; `GET /status` reports the current URL, open tabs, and
@@ -858,7 +858,7 @@ nothing to capture or nothing to point at.
 
 `abt` is a thin client over the same API; anything it does, curl can do.
 
-**Subcommands are lifecycle. Every page action goes through `exec`.** There is
+**Subcommands are lifecycle. Every page action goes through `command-list`.** There is
 one spelling of each op — the one `abt ops` prints — so nothing can drift out
 of step with the server.
 
@@ -874,20 +874,20 @@ abt shutdown
 
 ```bash
 # one page action
-abt exec '{"op":"goto","url":"https://example.com"}'
-abt exec '{"op":"find","css":"a.product","limit":20}'
-abt exec '{"op":"click","ref":"el_0"}'
+abt command-list '{"op":"goto","url":"https://example.com"}'
+abt command-list '{"op":"find","css":"a.product","limit":20}'
+abt command-list '{"op":"click","ref":"el_0"}'
 ```
 
 **A sequence you already know is one round trip, not six.** This is the
 biggest single thing you can do to work faster with the toolkit:
 
 ```bash
-abt exec-batch '[{"op":"input","css":"#search","value":"hello"},
-                 {"op":"click","css":"#go"}]'
+abt command-list '[{"op":"input","css":"#search","value":"hello"},
+                   {"op":"click","css":"#go"}]'
 
-abt exec-batch steps.json --continue-on-error
-'[{"op":"press","key":"Enter"}]' | abt exec-batch -    # PowerShell-safe
+abt command-list steps.json --continue-on-error
+'[{"op":"press","key":"Enter"}]' | abt command-list -    # PowerShell-safe
 ```
 
 It stops at the first failure and names it, so batching is never a blind leap.
@@ -928,9 +928,11 @@ guessed parameter name — `label` on a `select`, `diff` on a `get_text`, a
 the JSON never meets a shell, which on Windows is its own source of quoting
 failures.
 
-Seventeen tools rather than one per op, since every schema sits in the model's
-context for the whole session. `browser_batch` sends a whole sequence in one
-call, and `browser_command` passes through any raw op the named tools miss.
+Sixteen tools rather than one per op, since every schema sits in the model's
+context for the whole session. `command_list` is the one that carries every op:
+it takes a single command or a list of them, runs them in order, and is the
+same name the CLI and HTTP surfaces use — so a caller who meets it anywhere
+learns the same lesson, that a list is what this takes.
 
 The server also answers `initialize` with MCP `instructions` — how the pieces
 fit together, which most clients place in the system prompt once. That is where

@@ -12,7 +12,7 @@ was a command the CLI rejected. Every one of those gaps was a correct guess
 answered with an error.
 
 One surface also makes batching the obvious thing rather than the clever
-thing. `exec-batch` is the same command with a list, so a form is one round
+thing. the same command takes a list, so a form is one round
 trip instead of six -- which is what MCP callers had been doing all along,
 because MCP says so and the CLI never did.
 
@@ -51,25 +51,25 @@ _EPILOG_HEADER = (
     "  abt up                              start the server (no-op if up)\n"
     "  abt browser start                   open the browser -- a SEPARATE\n"
     "                                      step, up to 2 min\n"
-    "  abt exec '{\"op\":\"goto\",\"url\":...}'   drive it\n\n"
+    "  abt command-list '{\"op\":\"goto\",\"url\":...}'   drive it\n\n"
     "The server runs without a browser on purpose: it answers in a second,\n"
     "while Chrome on a persistent profile can take two minutes. browser_dead\n"
     "or 'no browser is running' means you skipped `abt browser start`.\n\n"
     "The subcommands here are lifecycle only -- start things, look at things.\n"
-    "EVERY page action goes through `exec` and `exec-batch`, which take the\n"
-    "ops verbatim. `abt ops` prints every op and its exact parameters.\n\n\x08\n"
-    "  abt exec '{\"op\":\"find\",\"css\":\"input\"}'\n"
-    "  abt exec '{\"op\":\"click\",\"ref\":\"el_3\"}'\n\n"
+    "EVERY page action goes through ONE command -- `abt command-list` -- taking\n"
+    "an op or a list of them, verbatim. `abt ops` prints every op and its exact parameters.\n\n\x08\n"
+    "  abt command-list '{\"op\":\"find\",\"css\":\"input\"}'\n"
+    "  abt command-list '{\"op\":\"click\",\"ref\":\"el_3\"}'\n\n"
     "**Send a sequence you already know in ONE call.** A form is one round\n"
     "trip, not six -- and it is the single biggest thing you can do to work\n"
     "faster with this tool:\n\n\x08\n"
-    "  abt exec-batch '[{\"op\":\"input\",\"css\":\"#user\",\"value\":\"me\"},\n"
+    "  abt command-list '[{\"op\":\"input\",\"css\":\"#user\",\"value\":\"me\"},\n"
     "                   {\"op\":\"input\",\"css\":\"#pass\",\"value\":\"pw\"},\n"
     "                   {\"op\":\"click\",\"css\":\"#submit\"}]'\n\n"
     "It stops at the first failure and tells you which one, so a batch is\n"
     "never a blind leap. On PowerShell, pipe JSON rather than quoting it\n"
     "inline:\n\n\x08\n"
-    "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n\n"
+    "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt command-list -\n\n"
     "Never run `abt serve` from a tool call. It is the command loop: it never\n"
     "returns, and whatever launched it hangs. Use `abt up`.\n\n"
     "A site may also have a playbook of its own:\n"
@@ -613,51 +613,8 @@ def up(
     raise typer.Exit(1)
 
 
-@app.command("exec")
-def exec_(
-    command: str = typer.Argument(..., help="A command as a JSON object."),
-    port: int = _port_option(),
-) -> None:
-    """Send one raw JSON command."""
-    _call(port, "/command", _load(command))
 
 
-@app.command("exec-batch")
-def exec_batch(
-    commands_in: Optional[str] = typer.Argument(
-        None,
-        metavar="[COMMANDS]",
-        help="A JSON array, a file holding one, or `-` for stdin. Omit to read "
-        "stdin as well.",
-    ),
-    continue_on_error: bool = typer.Option(
-        False, "--continue-on-error", help="Run every command even if one fails."
-    ),
-    port: int = _port_option(),
-) -> None:
-    """Send a list of commands, run in order.
-
-    This is the fast path. A sequence you already know is one round trip
-    rather than one per step, and it stops at the first failure and says
-    which, so batching is never a blind leap.
-
-    It took a Path and nothing else, so `exec-batch -` -- the spelling `exec`
-    uses, and the one PowerShell needs since it mangles inline JSON -- tried
-    to open a file named "-" and died with a traceback. Inline JSON was not
-    accepted either, though `exec` takes it. The two now agree.
-    """
-    # `-` when nothing was given, so omitting the argument and passing `-`
-    # both mean stdin, and _load handles inline JSON and a path identically
-    # to how `exec` handles them.
-    commands = _load(commands_in if commands_in is not None else "-")
-    if not isinstance(commands, list):
-        typer.secho("expected a JSON array of commands", fg="red", err=True)
-        raise typer.Exit(2)
-    _call(
-        port,
-        "/commands",
-        {"commands": commands, "continue_on_error": continue_on_error},
-    )
 
 
 
@@ -924,6 +881,44 @@ def messenger_jobs(
 
 
 
+@app.command("command-list")
+def command_list(
+    commands_in: Optional[str] = typer.Argument(
+        None,
+        metavar="[COMMANDS]",
+        help="One command object, a list of them, a file holding either, or "
+        "`-` for stdin. Omit to read stdin.",
+    ),
+    continue_on_error: bool = typer.Option(
+        False, "--continue-on-error", help="Run every command even if one fails."
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Run a browser command, or a list of them in order.
+
+    \b
+      abt command-list '{"op":"goto","url":"https://example.com"}'
+      abt command-list '[{"op":"input","css":"#user","value":"me"},
+                         {"op":"input","css":"#pass","value":"pw"},
+                         {"op":"click","css":"#submit"}]'
+      '[{"op":"press","key":"Enter"}]' | abt command-list -
+
+    This replaced `exec` and `exec-batch`. Two commands meant a caller that
+    found the singular first had no reason to look for the other, and so sent
+    one op per round trip forever -- watched agents pay for a fixed pair like
+    type-then-Enter as two calls, twice in one episode. A single command whose
+    name is a list makes the batch the ordinary shape and the lone command a
+    special case of it, rather than the reverse.
+
+    A list stops at the first failure and says which one failed, so sending
+    several at once is never a blind leap.
+    """
+    payload = _load(commands_in if commands_in is not None else "-")
+    if isinstance(payload, list) and continue_on_error:
+        payload = {"commands": payload, "continue_on_error": True}
+    _call(port, "/command-list", payload)
+
+
 def _load(raw: str) -> Any:
     """JSON from an argument, a file, or stdin.
 
@@ -957,7 +952,7 @@ def _load(raw: str) -> Any:
             typer.secho(
                 "On PowerShell, quoting JSON inline is unreliable. Pipe it "
                 "instead:\n"
-                "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt exec -\n"
+                "  '{\"op\":\"press\",\"key\":\"Enter\"}' | abt command-list -\n"
                 "or put it in a file and pass the path.",
                 fg="yellow",
                 err=True,

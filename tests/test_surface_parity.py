@@ -29,7 +29,7 @@ LIFECYCLE = {
     "serve", "up", "shutdown", "browser", "autostart",   # run the thing
     "status", "doctor", "logs", "ops", "guidelines", "mcp",  # look at the thing
     "messenger",                                          # a site shortcut
-    "exec", "exec-batch",                                 # every page action
+    "command-list",                                       # every page action
 }
 
 
@@ -41,20 +41,41 @@ def test_the_cli_does_not_respell_the_ops():
     extra = cli_commands() - LIFECYCLE
     assert extra == set(), (
         f"subcommands that are not lifecycle: {sorted(extra)}. Page actions go "
-        f"through `exec`/`exec-batch` so there is one spelling of each op, the "
+        f"through `command-list` so there is one spelling of each op, the "
         f"one `abt ops` prints. A subcommand is a second spelling that can "
         f"disagree with it -- which is how `abt click --text` came to be "
         f"rejected while the click op accepted `text`."
     )
 
 
-def test_exec_is_present_to_carry_them():
-    assert {"exec", "exec-batch"} <= cli_commands()
+def test_one_command_carries_every_op():
+    assert "command-list" in cli_commands()
+
+
+def test_the_name_is_the_same_on_every_surface():
+    """CLI, MCP and HTTP must spell it identically.
+
+    The name is doing work: a caller who meets `command-list` learns that a
+    list is what this takes, before reading a word of documentation. That
+    lesson only lands if the three surfaces agree -- `exec` here and
+    `browser_batch` there taught nothing and had to be learned twice.
+    """
+    assert "command-list" in cli_commands()
+    assert any(t["name"] == "command_list" for t in mcp.TOOLS)
+    # and the MCP tool must require the plural field
+    tool = next(t for t in mcp.TOOLS if t["name"] == "command_list")
+    assert tool["inputSchema"]["required"] == ["commands"]
+
+
+def test_mcp_posts_to_the_one_endpoint():
+    import inspect
+
+    assert '"/command-list"' in inspect.getsource(mcp.Bridge.call)
 
 
 def test_help_teaches_batching():
     """The reason MCP callers batch and CLI callers did not: nobody said to."""
-    assert "exec-batch" in cli._EPILOG_HEADER
+    assert "command-list" in cli._EPILOG_HEADER
     assert "ONE call" in cli._EPILOG_HEADER or "ONE round trip" in cli._EPILOG_HEADER
 
 
@@ -62,7 +83,7 @@ def test_mcp_tools_lower_to_real_ops():
     """Every MCP tool must translate into an op the server actually has."""
     for tool in mcp.TOOLS:
         name = tool["name"]
-        if name in {"browser_batch", "browser_command", "browser_guidelines"}:
+        if name in {"command_list", "browser_guidelines"}:
             continue  # passthroughs, not a single op
         # Per tool: `action` means different things to different tools, and a
         # shared value makes browser_navigate lower "start" as a navigation.
