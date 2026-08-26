@@ -685,9 +685,19 @@ def status(port: int = _port_option()) -> None:
 
 
 @app.command()
-def ops(port: int = _port_option()) -> None:
-    """List every supported op."""
-    _call(port, "/ops", method="GET")
+def ops(
+    names: bool = typer.Option(
+        False, "--names", help="Just the op names, without their parameters."
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Every op with its exact parameters, types and defaults.
+
+    `abt --help` has always said this printed the parameters. It printed a
+    list of names, so anyone who believed the help had to guess -- and guessed
+    `js` for `script`, `selector` for `css`. Now it prints what it promised.
+    """
+    _call(port, "/ops" + ("?names=true" if names else ""), method="GET")
 
 
 

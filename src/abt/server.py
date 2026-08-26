@@ -31,7 +31,7 @@ from .recorder import (
     shot_path,
     sites_index,
 )
-from .schema import OP_NAMES, parse_command
+from .schema import OP_NAMES, op_signatures, parse_command
 from .viewer import VIEWER_HTML
 
 
@@ -390,8 +390,17 @@ def create_app(
             )
 
     @app.get("/ops")
-    async def ops():
-        return ok(OP_NAMES)
+    async def ops(names: bool = False):
+        """Every op with its parameters -- which is what this always claimed.
+
+        It returned bare names while `abt --help` advertised "every op and its
+        exact parameters", so a caller that believed the documentation had to
+        guess, and guessed `js` for `script`. `?names=true` keeps the old
+        shape for anything that only wanted the list.
+        """
+        if names:
+            return ok(OP_NAMES)
+        return ok(op_signatures())
 
     # --- playbooks ------------------------------------------------------------
     #
