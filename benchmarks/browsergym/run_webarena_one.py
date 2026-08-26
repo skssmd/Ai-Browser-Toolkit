@@ -29,6 +29,8 @@ def main() -> int:
     ap.add_argument("--model", default="stealth/ox-alpha")
     ap.add_argument("--max-turns", type=int, default=25)
     ap.add_argument("--cdp-port", type=int, default=9222)
+    ap.add_argument("--trace-port", type=int, default=None,
+                    help="Serve the live loop view on this port while running.")
     ap.add_argument("--headed", dest="headless", action="store_false",
                     default=True,
                     help="Show the browser. Needs a display; on a server the "
@@ -99,16 +101,41 @@ def main() -> int:
         raise
 
     client.attach(headless=args.headless)
+
+    # attach() restarts the browser, which reconnects to BrowserGym's Chromium
+    # but loses the page BrowserGym had already navigated to -- so the agent
+    # woke up on about:blank, was asked a shopping question, and went to the
+    # real amazon.com to answer it. Every op after that was against the open
+    # internet rather than the benchmark, which is worse than a failure: it
+    # looks like a result.
+    start_url = obs.get("url") or ""
+    if start_url and not start_url.startswith("about:"):
+        client.command({"op": "goto", "url": start_url})
+    landed = (client.command({"op": "current_url"}).get("result") or {}).get("url")
+    if not landed or landed.startswith("about:"):
+        print(f"could not land on the task page (got {landed!r})", file=sys.stderr)
+        return 4
+
     ops_before, errs_before = client.op_tally()
     started = time.time()
 
+    # The site is named in the goal on purpose. Without it the model has only
+    # the page in front of it, and a shopping question with no stated site is
+    # an invitation to go and find one.
+    goal = (
+        f"{obs.get('goal') or ''}\n\n"
+        f"You are on a self-contained store at {start_url}. Everything you need "
+        f"is on this site. Do NOT navigate to any other domain -- there is no "
+        f"internet here, and the task is only about this site."
+    )
     session = loop_policy.run_episode(
-        goal=obs.get("goal") or "",
+        goal=goal,
         server=args.server,
         model=args.model,
         max_turns=args.max_turns,
         provider=args.provider,
         quiet=False,
+        trace_port=args.trace_port,
     )
 
     wall = time.time() - started

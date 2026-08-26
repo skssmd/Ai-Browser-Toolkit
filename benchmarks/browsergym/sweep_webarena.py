@@ -132,6 +132,7 @@ def cmd_plan(args) -> int:
         "model": args.model,
         "server": args.server,
         "sites_running": args.sites.split(","),
+        "trace_port": args.trace_port,
         # Stated in the plan because it bounds every number that comes out:
         # a task needing a site that is not up is skipped, never failed.
         "note": (
@@ -158,6 +159,8 @@ def run_one(plan: dict, out: Path, task_id: str, budget: float) -> dict:
         "--model", plan["model"],
         "--out", str(scratch),
     ]
+    if plan.get("trace_port"):
+        cmd += ["--trace-port", str(plan["trace_port"])]
     started = time.time()
     row = {"task_id": task_id, "started": datetime.now(timezone.utc).isoformat()}
     try:
@@ -287,6 +290,8 @@ def main() -> int:
     p.add_argument("--provider", default=DEFAULT_PROVIDER)
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--server", default="http://127.0.0.1:8766")
+    p.add_argument("--trace-port", type=int, default=9100,
+                   help="Each episode serves its live loop view here.")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_plan)
 
