@@ -133,6 +133,10 @@ def cmd_plan(args) -> int:
         "server": args.server,
         "sites_running": args.sites.split(","),
         "trace_port": args.trace_port,
+        # Each concurrent sweep needs its own, or two workers fight over one
+        # browser: BrowserGym launches chromium on this port and abt attaches
+        # to it, so a shared port silently crosses the wires.
+        "cdp_port": args.cdp_port,
         # Stated in the plan because it bounds every number that comes out:
         # a task needing a site that is not up is skipped, never failed.
         "note": (
@@ -161,6 +165,8 @@ def run_one(plan: dict, out: Path, task_id: str, budget: float) -> dict:
     ]
     if plan.get("trace_port"):
         cmd += ["--trace-port", str(plan["trace_port"])]
+    if plan.get("cdp_port"):
+        cmd += ["--cdp-port", str(plan["cdp_port"])]
     started = time.time()
     row = {"task_id": task_id, "started": datetime.now(timezone.utc).isoformat()}
     try:
@@ -287,6 +293,10 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--limit", type=int)
     p.add_argument("--sites", default="shopping")
+    p.add_argument("--cdp-port", type=int, default=None,
+                   help="Debugging port for this sweep's browser. Give each "
+                        "concurrent sweep its own; 9222 is the default when "
+                        "unset and is what a lone sweep already uses.")
     p.add_argument("--provider", default=DEFAULT_PROVIDER)
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--server", default="http://127.0.0.1:8766")

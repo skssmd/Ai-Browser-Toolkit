@@ -46,8 +46,13 @@ def main() -> int:
                     default=True,
                     help="Show the browser. Needs a display; on a server the "
                          "run dies at startup without one.")
-    ap.add_argument("--shopping-url", default="http://127.0.0.1:7770",
-                    help="Where the shopping site answers (through the tunnel).")
+    ap.add_argument("--shopping-url", default="http://localhost:7770",
+                    help="Where the shopping site answers. Must be the host "
+                         "the site REDIRECTS TO, not merely one that reaches "
+                         "it: WebArena's validate() rejects any open tab whose "
+                         "netloc is not in this list, scoring 0 before the "
+                         "evaluator runs. Magento redirects to localhost, so "
+                         "127.0.0.1 here silently zeroes every episode.")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -176,7 +181,19 @@ def main() -> int:
     except Exception:
         final_url = None
 
-    obs, reward, terminated, truncated, info = env.step("noop(500)")
+    # The answer must reach the evaluator as an action, not just our record:
+    # WebArena's string_match reads the last send_msg_to_user of the episode,
+    # so ending on noop scored an empty string every time, however right the
+    # agent was. repr() gives a correctly escaped Python string literal, which
+    # is exactly what BrowserGym's action parser expects.
+    answer = (session.get("reply") or "").strip()
+    final_action = f"send_msg_to_user({answer!r})" if answer else "noop(500)"
+    try:
+        obs, reward, terminated, truncated, info = env.step(final_action)
+    except Exception:
+        # A malformed answer must not cost the episode its score -- fall back
+        # to the old ending, which at least still validates site state.
+        obs, reward, terminated, truncated, info = env.step("noop(500)")
     env.close()
 
     ops = (ops_after - ops_before) if ops_before >= 0 else None
@@ -189,6 +206,9 @@ def main() -> int:
         # --- WebArena's answer, untouched ---
         "success": float(reward) > 0,
         "reward": float(reward),
+        # What the evaluator actually saw. Without this, a 0 is ambiguous
+        # between "answered wrongly" and "answer never reached the scorer".
+        "scored_action": final_action[:200],
         # --- ours ---
         "turns": session.get("turns"),
         "ops": ops,
