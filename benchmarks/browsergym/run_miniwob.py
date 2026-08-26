@@ -166,13 +166,27 @@ with just: DONE
 # ~30-60 s and can never act inside that window, so the runner neutralizes the
 # wall clock while leaving correctness fully graded by task.validate().
 # Disclosed in README.md.
+# `run_js` wraps the body in a function, so the value has to be RETURNED.
+# This was an IIFE expression -- it ran, but its result was discarded, and the
+# op answered `None` on all 131 calls of a sweep. So the harness could not tell
+# whether its single most important intervention had applied, on a run whose
+# every reward depends on it. `verify_frozen` now checks, and the runner aborts
+# rather than quietly scoring a whole episode against an unpatched clock.
 FREEZE_TIMERS_JS = (
-    "(() => { const c = window.core; if (!c) return 'no core';"
+    "return (() => { const c = window.core; if (!c) return 'no core';"
+    " if (c.__abtFrozen) return 'frozen';"
     " const orig = c.endEpisode;"
     " c.endEpisode = function (reward, timeProportional, reason) {"
     "  if (reason === 'timed out') return undefined;"
     "  return orig.call(c, reward, false, reason); };"
+    " c.__abtFrozen = true;"
     " return 'frozen'; })()"
+)
+
+# Asked after the fact, on the page the agent is about to be pointed at.
+VERIFY_FROZEN_JS = (
+    "return (window.core && window.core.__abtFrozen) ? 'frozen' : "
+    "(window.core ? 'not frozen' : 'no core')"
 )
 
 MCP_HINT = """
@@ -462,8 +476,23 @@ def main() -> int:
 
             if not args.no_freeze_timers:
                 frozen = client.command({"op": "run_js", "script": FREEZE_TIMERS_JS})
+                state = (frozen.get("result") or {}).get("value")
+                if state != "frozen":
+                    # Every reward in this run depends on the clock being
+                    # neutralized. An episode scored against a live clock looks
+                    # like a model failure -- correct behaviour, reward 0 --
+                    # and is indistinguishable from one in the results.
+                    raise SystemExit(
+                        f"timer freeze did not apply (script returned {state!r}). "
+                        f"Refusing to run: MiniWoB would score this episode "
+                        f"against a 10s clock while the agent takes ~100s, so a "
+                        f"correct run would record as a failure."
+                    )
+                verify = client.command({"op": "run_js", "script": VERIFY_FROZEN_JS})
+                if (verify.get("result") or {}).get("value") != "frozen":
+                    raise SystemExit("timer freeze did not survive to the page")
                 if ep == 0:
-                    print(f"[freeze-timers] {json.dumps(frozen.get('result'))[:100]}")
+                    print("[freeze-timers] verified frozen")
 
             steps = []
             reward, terminated, truncated = 0.0, False, False

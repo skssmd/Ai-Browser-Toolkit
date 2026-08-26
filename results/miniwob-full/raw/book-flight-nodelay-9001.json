@@ -1,0 +1,42 @@
+{
+  "benchmark": "miniwob",
+  "task": "book-flight-nodelay",
+  "episodes": [
+    {
+      "task_id": "miniwob.book-flight-nodelay",
+      "seed": 9001,
+      "success": false,
+      "reward": 0.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "loop:stealth/ox-alpha",
+          "ops": 18,
+          "error": null,
+          "reward": 0.0
+        }
+      ],
+      "duration_s": 130.8,
+      "agent_timed_out": true,
+      "ops": 18,
+      "op_errors": 1,
+      "turns": 15,
+      "ops_per_turn": 1.29,
+      "input_tokens": 89545,
+      "output_tokens": 2703,
+      "cache_read_tokens": 83392,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 0.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "loop",
+  "agent": null,
+  "agent_mcp": null,
+  "agent_model": "stealth/ox-alpha",
+  "provider": "openrouter",
+  "freeze_timers": true
+}

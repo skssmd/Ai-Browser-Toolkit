@@ -226,17 +226,35 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     """
     before = session.snapshot()
     url_before = session.driver.current_url
+    navigated_away = False
     try:
         result = handler(session, cmd)
     except OpError:
         after = session.snapshot()
         session.set_baseline(after)
         raise
+    except Exception as exc:
+        # The op worked and the page navigated *because* it worked -- a
+        # <select> that reloads on change, a click that submits. The engine
+        # loses its execution context mid-op and raises, and that used to
+        # reach the server's catch-all and be reported as `browser_dead`.
+        #
+        # Which is the most misleading answer available: the browser is fine,
+        # the action succeeded, and an agent told its browser died goes off to
+        # restart a healthy one. Watched exactly that -- a Magento sort
+        # dropdown cost two turns and a failed browser_start before the agent
+        # decided the toolkit was wrong and carried on.
+        if "execution context was destroyed" not in str(exc).lower():
+            raise
+        navigated_away = True
+        result = {"navigated": True}
 
     # A click that redirected has landed on a document that may still be
     # rendering, exactly like a goto. Settle before looking, or the diff reports
     # the destination's spinner as though it were the destination.
-    navigated = page_key(url_before) != page_key(session.driver.current_url)
+    navigated = navigated_away or page_key(url_before) != page_key(
+        session.driver.current_url
+    )
     if navigated:
         session.settle()
     else:
@@ -270,6 +288,10 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         # diff -- but the question the caller was asking ("what am I looking at
         # now?") still has an answer, and it is the new page's text.
         info["navigation"] = True
+        if navigated_away:
+            # Worth stating outright: the op is being reported as a success
+            # *because* it navigated, and the caller's refs are now stale.
+            info["navigated_during_op"] = True
         info["note"] = (
             "the page navigated; text is the new page in full, not a diff, and "
             "the element track is skipped because the two documents are unrelated"

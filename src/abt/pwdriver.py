@@ -187,6 +187,29 @@ def translate_launch_failure(exc: BaseException, browser: str) -> OpError | None
     own traceback rather than being relabelled as a missing browser.
     """
     text = str(exc).lower()
+
+    # A profile another Chrome already holds. Chrome does not fail loudly: it
+    # hands the URL to the running instance, prints "Opening in existing
+    # browser session" and exits 0 -- so a window appears, the launcher's
+    # handle dies with the process, and the toolkit reports browser_dead while
+    # the user is looking at a browser. The real reason is in Playwright's
+    # message, buried in two thousand characters of call log, and the stock
+    # browser_dead hint then advises `browser restart`, which cannot help:
+    # restarting reuses the same locked profile.
+    if "already in use" in text or "opening in existing browser session" in text:
+        return OpError(
+            "browser_dead",
+            "that profile is already open in another Chrome, which took the "
+            "window and left this toolkit without a handle to it.",
+            hint=(
+                "Close every Chrome using this profile and start again, or "
+                "run a second browser on its own profile: `abt browser start "
+                "--profile <dir>` (or `abt serve --profile <dir>`). "
+                "`browser restart` will not help -- it reuses the same locked "
+                "profile."
+            ),
+        )
+
     if "is not found" not in text and "executable doesn't exist" not in text:
         return None
     other = "edge" if browser == "chrome" else "chrome"

@@ -1,0 +1,42 @@
+{
+  "benchmark": "miniwob",
+  "task": "buy-ticket",
+  "episodes": [
+    {
+      "task_id": "miniwob.buy-ticket",
+      "seed": 9001,
+      "success": true,
+      "reward": 1.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "loop:stealth/ox-alpha",
+          "ops": 6,
+          "error": null,
+          "reward": 1.0
+        }
+      ],
+      "duration_s": 60.4,
+      "agent_timed_out": false,
+      "ops": 6,
+      "op_errors": 1,
+      "turns": 6,
+      "ops_per_turn": 1.2,
+      "input_tokens": 22156,
+      "output_tokens": 645,
+      "cache_read_tokens": 17664,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 1.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "loop",
+  "agent": null,
+  "agent_mcp": null,
+  "agent_model": "stealth/ox-alpha",
+  "provider": "openrouter",
+  "freeze_timers": true
+}

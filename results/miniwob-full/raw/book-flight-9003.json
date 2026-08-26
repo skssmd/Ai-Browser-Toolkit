@@ -1,0 +1,42 @@
+{
+  "benchmark": "miniwob",
+  "task": "book-flight",
+  "episodes": [
+    {
+      "task_id": "miniwob.book-flight",
+      "seed": 9003,
+      "success": true,
+      "reward": 1.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "loop:stealth/ox-alpha",
+          "ops": 23,
+          "error": null,
+          "reward": 1.0
+        }
+      ],
+      "duration_s": 112.0,
+      "agent_timed_out": true,
+      "ops": 23,
+      "op_errors": 1,
+      "turns": 15,
+      "ops_per_turn": 1.64,
+      "input_tokens": 98469,
+      "output_tokens": 1962,
+      "cache_read_tokens": 91072,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 1.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "loop",
+  "agent": null,
+  "agent_mcp": null,
+  "agent_model": "stealth/ox-alpha",
+  "provider": "openrouter",
+  "freeze_timers": true
+}

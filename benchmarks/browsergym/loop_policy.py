@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.request
 
 # Haiku 4.5 by decision -- one model across a sweep, chosen for cost. Override
@@ -135,6 +136,226 @@ def ops_reference(server: str) -> str:
 
 
 
+PAGE = """<!doctype html><meta charset="utf-8"><title>abt loop</title>
+<style>
+ :root{color-scheme:dark light}
+ body{background:#0d1117;color:#c9d1d9;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;margin:0;padding:14px 18px}
+ h1{font-size:13px;font-weight:600;color:#8b949e;margin:0 0 10px;letter-spacing:.08em;text-transform:uppercase}
+ #log{white-space:pre-wrap;word-break:break-word}
+ .turn{color:#58a6ff;font-weight:600;margin-top:10px}
+ .think{color:#8b949e}
+ .says{color:#d2a8ff}
+ .ops{color:#7ee787}
+ .back{color:#79c0ff}
+ .fail{color:#ff7b72;font-weight:600}
+ .done{color:#f0b72f;font-weight:600;margin-top:10px}
+ #status{position:fixed;top:10px;right:16px;font-size:11px;color:#6e7681}
+</style>
+<h1>abt &mdash; agent loop</h1><div id=status>connecting</div><div id=log></div>
+<script>
+let seen = 0;
+const log = document.getElementById('log'), status = document.getElementById('status');
+function cls(line){
+  if (line.startsWith('--- turn')) return 'turn';
+  if (line.includes('[think]')) return 'think';
+  if (line.includes('[says')) return 'says';
+  if (line.includes('[ops')) return 'ops';
+  if (line.includes('FAILED')) return 'fail';
+  if (line.includes('[back')) return 'back';
+  if (line.startsWith('=== done')) return 'done';
+  return '';
+}
+async function poll(){
+  try{
+    const r = await fetch('/since?n=' + seen);
+    const d = await r.json();
+    seen = d.total;
+    for (const line of d.lines){
+      const el = document.createElement('div');
+      el.className = cls(line);
+      el.textContent = line;
+      log.appendChild(el);
+    }
+    if (d.lines.length) window.scrollTo(0, document.body.scrollHeight);
+    status.textContent = d.running ? 'live \\u00b7 ' + d.total + ' lines'
+                                   : 'finished \\u00b7 ' + d.total + ' lines';
+  } catch(e){ status.textContent = 'disconnected'; }
+  setTimeout(poll, 600);
+}
+poll();
+</script>
+"""
+
+
+class LogServer:
+    """Serves the trace over HTTP so a run can be watched in a browser.
+
+    Polling rather than SSE: an agent loop can sit silent for a minute while
+    the model thinks, and a silent SSE stream is indistinguishable from a
+    dropped one to every proxy in between. A poll that returns nothing is
+    unambiguous, and the client shows whether the run is still going.
+    """
+
+    def __init__(self, trace, port: int) -> None:
+        import http.server
+        import threading
+
+        self.trace = trace
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass  # its own access log would drown the trace
+
+            def _send(self, body: bytes, kind: str) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.startswith("/since"):
+                    from urllib.parse import parse_qs, urlparse
+
+                    seen = int(
+                        (parse_qs(urlparse(self.path).query).get("n") or ["0"])[0]
+                    )
+                    lines = outer.trace.lines
+                    payload = {
+                        "lines": lines[seen:],
+                        "total": len(lines),
+                        "running": outer.trace.running,
+                    }
+                    self._send(json.dumps(payload).encode(), "application/json")
+                elif self.path == "/raw":
+                    self._send(
+                        "\n".join(outer.trace.lines).encode(), "text/plain; charset=utf-8"
+                    )
+                else:
+                    self._send(PAGE.encode(), "text/html; charset=utf-8")
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+
+class Trace:
+    """Prints what the loop is doing, turn by turn.
+
+    Without this the loop is a black box that emits one summary at the end,
+    which is unwatchable on a task taking minutes: there is no way to tell
+    "thinking hard" from "stuck retrying" from "hung". Everything goes to
+    stderr, so piping the JSON result stays clean.
+    """
+
+    RULE = "-" * 52
+
+    def __init__(self, enabled: bool = True, port: int | None = None) -> None:
+        self.enabled = enabled
+        self.lines: list[str] = []
+        self.running = True
+        self.server = LogServer(self, port) if port else None
+        if port:
+            print(f"[trace] watch it at http://127.0.0.1:{port}",
+                  file=sys.stderr, flush=True)
+
+    def say(self, text: str = "") -> None:
+        self.lines.append(text)
+        if self.enabled:
+            print(text, file=sys.stderr, flush=True)
+
+    def __getattribute__(self, name):
+        """Never let watching break the thing being watched.
+
+        A tracer bug took down a live episode: `_gained` called .get() on a
+        result that happened to be a bare string, and an exception from code
+        whose only job is to print ended a run that was going fine. Reporting
+        is not worth a single lost episode, so every public method here
+        swallows its own failures and says so instead.
+        """
+        attribute = object.__getattribute__(self, name)
+        if name.startswith("_") or not callable(attribute):
+            return attribute
+
+        def guarded(*args, **kwargs):
+            try:
+                return attribute(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - deliberate
+                try:
+                    print(f"  [trace failed: {type(exc).__name__}: {exc}]",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+
+        return guarded
+
+    @staticmethod
+    def _flat(body: str, limit: int) -> str:
+        one = " ".join(body.split())
+        return one[:limit] + ("..." if len(one) > limit else "")
+
+    def turn(self, n: int, thinking: str | None, text: str | None) -> None:
+        self.say("")
+        self.say(f"--- turn {n} {self.RULE}")
+        if thinking and thinking.strip():
+            self.say(f"  [think] {self._flat(thinking, 400)}")
+        if text and text.strip():
+            self.say(f"  [says ] {self._flat(text, 400)}")
+
+    def ops(self, ops: list) -> None:
+        self.say(f"  [ops  ] sending {len(ops)}:")
+        for op in ops[:12]:
+            detail = {
+                k: (str(v)[:40] + "..." if len(str(v)) > 40 else v)
+                for k, v in op.items()
+                if k != "op"
+            }
+            self.say(f"          {str(op.get('op')).ljust(12)} {detail}")
+        if len(ops) > 12:
+            self.say(f"          ... and {len(ops) - 12} more")
+
+    def result(self, count: int, failures: int, gained: list | None) -> None:
+        mark = "ok" if not failures else f"{failures} FAILED"
+        self.say(f"  [back ] {count} ops, {mark}")
+        if gained:
+            joined = " | ".join(str(g) for g in gained[:6])
+            self.say(f"          page gained: {joined[:200]}")
+
+    def done(self, turns: int, ops: int, usage: dict) -> None:
+        self.say("")
+        self.say(
+            f"=== done: {turns} turns, {ops} ops, "
+            f"{usage['input'] + usage['output']:,} tokens "
+            f"({usage['cache_read']:,} cached) ==="
+        )
+
+
+def _gained(payload: str) -> list:
+    """The text the page gained, pulled out of a batch reply for the trace."""
+    try:
+        answer = json.loads(payload)
+    except ValueError:
+        return []
+    results = answer.get("results") or ([answer] if isinstance(answer, dict) else [])
+    gained: list = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        # `result` is not always an object: get_text answers with a bare
+        # string, and calling .get() on that took down a whole episode from
+        # inside the *tracer* -- code whose only job is to watch.
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        diff = result.get("dom_diff")
+        if not isinstance(diff, dict):
+            continue
+        text = diff.get("text")
+        if isinstance(text, dict):
+            gained += text.get("added") or []
+    return gained
+
+
 class Cost:
     """Token accounting that means the same thing on both providers."""
 
@@ -176,7 +397,8 @@ def _execute(server: str, ops: list, continue_on_error: bool) -> tuple[str, bool
     )
 
 
-def _run_anthropic(goal, server, model, max_turns, reference, client, max_tokens=8000):
+def _run_anthropic(goal, server, model, max_turns, reference, client,
+                   max_tokens=8000, trace=None):
     """The native Anthropic path: content blocks, tool_use, prefix caching."""
     import anthropic
 
@@ -207,6 +429,12 @@ def _run_anthropic(goal, server, model, max_turns, reference, client, max_tokens
         cost.cache_read += getattr(response.usage, "cache_read_input_tokens", 0) or 0
         cost.cache_write += getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         messages.append({"role": "assistant", "content": response.content})
+        if trace:
+            trace.turn(
+                turns,
+                "".join(b.thinking for b in response.content if b.type == "thinking"),
+                "".join(b.text for b in response.content if b.type == "text"),
+            )
 
         if response.stop_reason != "tool_use":
             break
@@ -220,10 +448,14 @@ def _run_anthropic(goal, server, model, max_turns, reference, client, max_tokens
                 continue
             ops = block.input.get("ops") or []
             ops_sent += len(ops)
+            if trace:
+                trace.ops(ops)
             text, is_error, failures = _execute(
                 server, ops, block.input.get("continue_on_error")
             )
             op_failures += failures
+            if trace:
+                trace.result(len(ops), failures, _gained(text))
             results.append({
                 "type": "tool_result", "tool_use_id": block.id,
                 "content": text, "is_error": is_error,
@@ -297,7 +529,8 @@ def _openrouter_call(client, **kwargs):
     raise RuntimeError("unreachable")
 
 
-def _run_openrouter(goal, server, model, max_turns, reference, client, max_tokens=32000):
+def _run_openrouter(goal, server, model, max_turns, reference, client,
+                    max_tokens=32000, trace=None):
     from openai import OpenAI
 
     key = os.environ.get("OPENROUTER_API_KEY")
@@ -332,6 +565,8 @@ def _run_openrouter(goal, server, model, max_turns, reference, client, max_token
         choice = response.choices[0].message
         messages.append(choice.model_dump(exclude_none=True))
         reply = choice.content or reply
+        if trace:
+            trace.turn(turns, getattr(choice, "reasoning", None), choice.content)
 
         calls = choice.tool_calls or []
         if not calls:
@@ -351,10 +586,14 @@ def _run_openrouter(goal, server, model, max_turns, reference, client, max_token
                 continue
             ops = arguments.get("ops") or []
             ops_sent += len(ops)
+            if trace:
+                trace.ops(ops)
             text, _is_error, failures = _execute(
                 server, ops, arguments.get("continue_on_error")
             )
             op_failures += failures
+            if trace:
+                trace.result(len(ops), failures, _gained(text))
             messages.append(
                 {"role": "tool", "tool_call_id": call.id, "content": text}
             )
@@ -374,6 +613,8 @@ def run_episode(
     provider: str = "anthropic",
     client=None,
     max_tokens: int | None = None,
+    trace_port: int | None = None,
+    quiet: bool = False,
 ) -> dict:
     """Drive one task to completion. Returns what it cost and what it did."""
     if provider not in BACKENDS:
@@ -385,9 +626,17 @@ def run_episode(
     # call; too small a budget truncates it mid-thought and the turn produces
     # nothing. Hence a far larger default on the OpenRouter path.
     budget = max_tokens or (32000 if provider == "openrouter" else 8000)
-    turns, ops_sent, op_failures, cost, reply = BACKENDS[provider](
-        goal, server, model, max_turns, reference, client, budget
-    )
+    trace = Trace(enabled=not quiet, port=trace_port)
+    trace.say(f"goal: {goal}")
+    trace.say(f"model: {model} via {provider}  |  toolkit: {server}")
+    try:
+        turns, ops_sent, op_failures, cost, reply = BACKENDS[provider](
+            goal, server, model, max_turns, reference, client, budget, trace
+        )
+    finally:
+        # The page must stop saying "live" whether the run finished or threw.
+        trace.running = False
+    trace.done(turns, ops_sent, cost.as_dict())
     return {
         "provider": provider,
         "model": model,
@@ -412,6 +661,11 @@ def main() -> int:
     ap.add_argument("--provider", default="anthropic", choices=sorted(BACKENDS))
     ap.add_argument("--model", default=None, help="Defaults per provider.")
     ap.add_argument("--max-turns", type=int, default=30)
+    ap.add_argument("--trace-port", type=int, default=None,
+                    help="Serve a live view of the loop at "
+                         "http://127.0.0.1:PORT while it runs.")
+    ap.add_argument("--quiet", action="store_true",
+                    help="No turn-by-turn output on stderr.")
     ap.add_argument("--max-tokens", type=int, default=None,
                     help="Output budget per turn. Defaults 32000 on openrouter "
                          "(reasoning models think before answering), 8000 on anthropic.")
@@ -426,7 +680,7 @@ def main() -> int:
 
     print(json.dumps(run_episode(
         args.goal, args.server, args.model, args.max_turns, args.provider,
-        None, args.max_tokens,
+        None, args.max_tokens, args.trace_port, args.quiet,
     ), indent=2))
     return 0
 

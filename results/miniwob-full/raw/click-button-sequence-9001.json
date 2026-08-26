@@ -1,0 +1,42 @@
+{
+  "benchmark": "miniwob",
+  "task": "click-button-sequence",
+  "episodes": [
+    {
+      "task_id": "miniwob.click-button-sequence",
+      "seed": 9001,
+      "success": true,
+      "reward": 1.0,
+      "steps": 1,
+      "log": [
+        {
+          "step": 0,
+          "action": "loop:stealth/ox-alpha",
+          "ops": 4,
+          "error": null,
+          "reward": 1.0
+        }
+      ],
+      "duration_s": 23.3,
+      "agent_timed_out": false,
+      "ops": 4,
+      "op_errors": 0,
+      "turns": 3,
+      "ops_per_turn": 2.0,
+      "input_tokens": 10525,
+      "output_tokens": 349,
+      "cache_read_tokens": 9600,
+      "cost_usd": null
+    }
+  ],
+  "n_episodes": 1,
+  "score": 1.0,
+  "executor": "ai-browser-toolkit (HTTP ops)",
+  "scorer": "browsergym task.validate",
+  "policy": "loop",
+  "agent": null,
+  "agent_mcp": null,
+  "agent_model": "stealth/ox-alpha",
+  "provider": "openrouter",
+  "freeze_timers": true
+}
