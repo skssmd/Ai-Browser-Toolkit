@@ -49,6 +49,36 @@ DEFAULT_MODEL = "stealth/ox-alpha"
 DEFAULT_PROVIDER = "openrouter"
 
 
+def _task_sites() -> dict[str, list[str]]:
+    """Which sites each task needs, read from WebArena's own task file.
+
+    Read rather than hardcoded: the mapping is data that ships with the
+    benchmark, and a copy here would drift the moment the task set changed.
+    Returns {} if the file cannot be found, and the caller then plans
+    everything -- degraded, not broken.
+    """
+    import json as _json
+    import os
+    import site
+
+    for base in site.getsitepackages():
+        for dirpath, _dirs, files in os.walk(base):
+            for name in files:
+                if not name.endswith(".json") or "test" not in name:
+                    continue
+                path = Path(dirpath) / name
+                try:
+                    data = _json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(data, list) and data and "sites" in (data[0] or {}):
+                    return {
+                        f"webarena.{t['task_id']}": t.get("sites") or []
+                        for t in data
+                    }
+    return {}
+
+
 def plan_path(out: Path) -> Path:
     return out / "plan.json"
 
@@ -80,6 +110,18 @@ def cmd_plan(args) -> int:
         )
 
     task_ids = sorted(ALL_WEBARENA_TASK_IDS)
+    if args.sites:
+        # Only plan tasks whose sites are actually running. A task needing an
+        # absent site is skipped at run time anyway, but planning it wastes a
+        # browser launch each -- and a plan padded with tasks that cannot be
+        # scored makes the completion figure meaningless.
+        wanted = set(args.sites.split(","))
+        by_id = _task_sites()
+        if by_id:
+            task_ids = [
+                t for t in task_ids
+                if by_id.get(t) is not None and set(by_id[t]) <= wanted
+            ]
     if args.limit:
         task_ids = task_ids[: args.limit]
 
