@@ -1,8 +1,8 @@
 """`abt` -- the command line for driving a real browser.
 
 The subcommands are lifecycle: start the server, start the browser, look at
-what was recorded. Every page action goes through `exec` and `exec-batch`,
-which take an op exactly as `abt ops` prints it.
+what was recorded. Every page action goes through `command-list`,
+which takes an op -- or a list of them -- exactly as `abt ops` prints it.
 
 There used to be a subcommand per op, and keeping two spellings in step by
 hand did not work: the ops accept ref/css/xpath/text/index/near while `click`
@@ -530,7 +530,7 @@ def serve(
     )
     holder["server"] = uvicorn.Server(config)
 
-    typer.echo(f"listening on http://{HOST}:{port}  (POST /command, /commands)")
+    typer.echo(f"listening on http://{HOST}:{port}  (POST /command-list)")
     if recorder is not None:
         typer.echo(f"log viewer at http://{HOST}:{port}/viewer")
     typer.echo("send {\"op\": \"shutdown\"} to stop")
@@ -737,7 +737,7 @@ def mcp(
 @app.command()
 def shutdown(port: int = _port_option()) -> None:
     """Close the browser and stop the server."""
-    _call(port, "/command", {"op": "shutdown"})
+    _call(port, "/command-list", {"op": "shutdown"})
 
 
 @messenger.command("send")
@@ -836,51 +836,6 @@ def messenger_jobs(
     _call(port, f"/messenger/jobs{suffix}", method="GET")
 
 
-# --- the rest of the op vocabulary, as named commands -------------------------
-#
-# `abt exec` has always reached every op, and for a long time that was the
-# argument for not writing these. It was wrong in a way that only shows up in
-# use: the workflow document tells the reader to use `get_text`, and `abt
-# get-text` did not exist -- so following the instructions produced "No such
-# command", and the reader had to already know about `exec` to recover. A
-# vocabulary you can only reach by knowing a second thing is not reachable.
-#
-# So every op has a subcommand. `exec` stays, for raw JSON and for anything
-# added to the server that this CLI has not caught up with.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.command("command-list")
 def command_list(
     commands_in: Optional[str] = typer.Argument(
@@ -903,12 +858,11 @@ def command_list(
                          {"op":"click","css":"#submit"}]'
       '[{"op":"press","key":"Enter"}]' | abt command-list -
 
-    This replaced `exec` and `exec-batch`. Two commands meant a caller that
-    found the singular first had no reason to look for the other, and so sent
-    one op per round trip forever -- watched agents pay for a fixed pair like
-    type-then-Enter as two calls, twice in one episode. A single command whose
-    name is a list makes the batch the ordinary shape and the lone command a
-    special case of it, rather than the reverse.
+    This is the only way to reach an op, and its name is the instruction:
+    a list is what it takes. Send everything you already know in one call --
+    a form is one round trip, not six. Agents that send one op at a time pay
+    for a fixed pair like type-then-Enter twice, and that is the single
+    largest avoidable cost in a session.
 
     A list stops at the first failure and says which one failed, so sending
     several at once is never a blind leap.

@@ -103,7 +103,7 @@ cannot recover on its own. `tab_switch` and `tab_list` fail too.
 Recovery:
 
 ```
-POST /command {"op":"shutdown"}     # still works with a dead browser
+POST /command-list {"op":"shutdown"}     # still works with a dead browser
 ./start-server.sh                   # or start-server.bat
 ```
 
