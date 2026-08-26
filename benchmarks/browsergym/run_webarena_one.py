@@ -54,7 +54,11 @@ def main() -> int:
     # BrowserGym wants them WA_-prefixed and asserts on every one, even the
     # sites a given task will never touch -- so all seven must be set or the
     # import fails before any task runs.
-    absent = "http://127.0.0.1:9"
+    # A high, unused port -- NOT a low one. Chrome refuses ports on its
+    # reserved list outright with ERR_UNSAFE_PORT, which is not a connection
+    # failure and so never reaches the "site not running" branch: the episode
+    # dies as a harness error instead of being recorded as skipped.
+    absent = "http://127.0.0.1:19999"
     os.environ["WA_SHOPPING"] = args.shopping_url
     for name in ("SHOPPING_ADMIN", "REDDIT", "GITLAB", "WIKIPEDIA", "MAP",
                  "HOMEPAGE"):
@@ -88,7 +92,8 @@ def main() -> int:
         # A task whose site is not running is not a failure of the toolkit or
         # the model, and must never be averaged in as one.
         text = str(exc).lower()
-        if "connection" in text or "refused" in text or "not running" in text:
+        if any(marker in text for marker in
+               ("connection", "refused", "err_connection", "not running")):
             print("site not running", file=sys.stderr)
             return 3
         raise
