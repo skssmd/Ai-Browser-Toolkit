@@ -29,11 +29,32 @@ def main() -> int:
     ap.add_argument("--model", default="stealth/ox-alpha")
     ap.add_argument("--max-turns", type=int, default=25)
     ap.add_argument("--cdp-port", type=int, default=9222)
+    ap.add_argument("--shopping-url", default="http://127.0.0.1:7770",
+                    help="Where the shopping site answers (through the tunnel).")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+
+    # WebArena reads every site URL from the environment AT IMPORT TIME, so
+    # this has to happen before browsergym.webarena is imported -- setting it
+    # afterwards silently leaves the library pointed at its own defaults, and
+    # the task then fails against a host that was never running.
+    #
+    # Only shopping is up. The rest are pointed at a port nothing listens on,
+    # so a task needing them fails immediately and is recorded as skipped
+    # rather than spending a full episode discovering it.
+    import os
+
+    # BrowserGym wants them WA_-prefixed and asserts on every one, even the
+    # sites a given task will never touch -- so all seven must be set or the
+    # import fails before any task runs.
+    absent = "http://127.0.0.1:9"
+    os.environ["WA_SHOPPING"] = args.shopping_url
+    for name in ("SHOPPING_ADMIN", "REDDIT", "GITLAB", "WIKIPEDIA", "MAP",
+                 "HOMEPAGE"):
+        os.environ.setdefault(f"WA_{name}", absent)
 
     inject_cdp_port(args.cdp_port)
     import gymnasium as gym
