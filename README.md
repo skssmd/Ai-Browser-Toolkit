@@ -928,11 +928,23 @@ guessed parameter name — `label` on a `select`, `diff` on a `get_text`, a
 the JSON never meets a shell, which on Windows is its own source of quoting
 failures.
 
-Sixteen tools rather than one per op, since every schema sits in the model's
-context for the whole session. `command_list` is the one that carries every op:
-it takes a single command or a list of them, runs them in order, and is the
-same name the CLI and HTTP surfaces use — so a caller who meets it anywhere
-learns the same lesson, that a list is what this takes.
+**Three tools, not one per op.** Every schema sits in the model's context for
+the whole session and is re-sent on every turn, so a tool per op is a bill you
+pay forever: sixteen of them measured ~2,300 tokens a turn. Worse, thirteen of
+those were single actions, so the easy path was always one op per call — the
+tools taught serial work while the documentation asked for batching, and
+agents obliged 64% of the time.
+
+| tool | mirrors |
+|---|---|
+| `command_list` | `abt command-list` — every page action, one op or a list |
+| `browser_session` | `abt browser` — start, stop, restart, status |
+| `browser_guidelines` | `abt guidelines` — the workflow and site playbooks |
+
+The parameter schemas the per-op tools carried are not lost. `GET /ops`
+returns every op with its exact parameters, types and defaults, so a caller
+reads them once when it needs them instead of being told all of them every
+turn.
 
 The server also answers `initialize` with MCP `instructions` — how the pieces
 fit together, which most clients place in the system prompt once. That is where
