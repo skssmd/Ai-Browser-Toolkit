@@ -29,6 +29,10 @@ def main() -> int:
     ap.add_argument("--model", default="stealth/ox-alpha")
     ap.add_argument("--max-turns", type=int, default=25)
     ap.add_argument("--cdp-port", type=int, default=9222)
+    ap.add_argument("--headed", dest="headless", action="store_false",
+                    default=True,
+                    help="Show the browser. Needs a display; on a server the "
+                         "run dies at startup without one.")
     ap.add_argument("--shopping-url", default="http://127.0.0.1:7770",
                     help="Where the shopping site answers (through the tunnel).")
     ap.add_argument("--out", required=True)
@@ -70,7 +74,12 @@ def main() -> int:
     # registers one env per task id, and that registration is what carries the
     # task's config, its start url and -- the part that matters -- its
     # evaluator. Constructing BrowserEnv by hand skips all three.
-    env = gym.make(f"browsergym/{task_id}", headless=False)
+    # Headless by default. The MiniWoB runner is headed on purpose so a person
+    # can watch, and this file inherited that -- which on a server with no
+    # display is fatal rather than merely invisible: Chrome exits with "Missing
+    # X server or $DISPLAY" before the task starts. Watching happens through
+    # /viewer and the trace server now, neither of which needs a display.
+    env = gym.make(f"browsergym/{task_id}", headless=args.headless)
 
     record: dict = {"task_id": task_id, "model": args.model}
     try:
@@ -84,7 +93,7 @@ def main() -> int:
             return 3
         raise
 
-    client.attach(headless=False)
+    client.attach(headless=args.headless)
     ops_before, errs_before = client.op_tally()
     started = time.time()
 
