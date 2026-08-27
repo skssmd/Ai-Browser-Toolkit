@@ -421,6 +421,57 @@ class BrowserStatus(Base):
     op: Literal["browser_status"]
 
 
+
+class GuidelinesSearch(Base):
+    """Is there a written playbook for this site?
+
+    Ask before driving somewhere unfamiliar. An empty result is an answer --
+    most sites have no playbook, and that means the workflow document is all
+    there is. It does not mean search again differently.
+    """
+
+    op: Literal["guidelines_search"]
+    query: str
+    """A domain, or anything domain-ish. Fuzzy: `sheets` finds docs.google.com."""
+    limit: int = Field(default=8, ge=1, le=50)
+
+
+class GuidelinesRead(Base):
+    """One playbook in full, by the name a search returned."""
+
+    op: Literal["guidelines_read"]
+    name: str
+    """`domain/file.md` for a site playbook, or a bare stem like
+    `toolkit-workflow` for a general one."""
+
+
+class GuidelinesNote(Base):
+    """Append what you had to work out, so the next run starts ahead.
+
+    Write one only when a site genuinely fought you and you won. The four
+    fields are all required because an entry missing any of them cannot be
+    acted on by the next reader: without the URL they do not know where it
+    applies, without `tried` they repeat your dead ends.
+
+    Saved locally. A pull never overwrites it, and it is not shared anywhere
+    -- contributing upstream is a separate, deliberate step.
+    """
+
+    op: Literal["guidelines_note"]
+    domain: str
+    """Site the note is about, e.g. `shop.example.com`."""
+    title: str
+    """One line naming the problem, as the next reader would recognise it."""
+    url: str
+    """Where it happened, so a reader knows the scope."""
+    problem: str
+    """What happened, in the terms you first saw it."""
+    tried: str
+    """What you tried and what it taught you. Name dead ends as dead ends --
+    that is as useful as the fix."""
+    solution: str
+    """What worked, concretely enough to run."""
+
 Command = Annotated[
     Union[
         Goto, Back, Forward, Reload, CurrentUrl,
@@ -429,6 +480,7 @@ Command = Annotated[
         TabNew, TabList, TabSwitch, TabClose,
         RunJs, Diff, Status, Shutdown, Alert,
         ReadConsole, ReadNetwork,
+        GuidelinesSearch, GuidelinesRead, GuidelinesNote,
         BrowserStart, BrowserStop, BrowserRestart, BrowserStatus,
     ],
     Field(discriminator="op"),

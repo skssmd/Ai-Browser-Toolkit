@@ -518,12 +518,24 @@ def search(query: str, limit: int = 8, timeout: float = 10.0) -> dict:
     domain.
     """
     try:
-        index = fetch_index(timeout=timeout)
+        index = dict(fetch_index(timeout=timeout))
+        source = source_url()
     except Exception:
-        return {"query": query, "exact": False, "matches": [], "source": None}
+        # No network, or lookup switched off. That must not hide what is
+        # already on this machine -- an agent searching before it drives a
+        # site is asking "do I hold anything for this", not "does upstream".
+        index, source = {}, None
 
     domain, rest = _normalise_query(query)
     held = installed()
+
+    # Everything installed is searchable, whether or not upstream has heard of
+    # it. A playbook an agent wrote a minute ago is exactly the one worth
+    # finding, and it exists in no remote index by definition -- without this,
+    # `guidelines_note` writes into a hole nothing can read back out of.
+    for name, meta in held.items():
+        if name not in index:
+            index[name] = {"version": meta["version"], "files": meta["files"]}
 
     def entry(name: str, files: list[str], matched_on: str, score: float) -> dict:
         local = held.get(name)
@@ -552,7 +564,7 @@ def search(query: str, limit: int = 8, timeout: float = 10.0) -> dict:
         return {
             "query": query,
             "exact": True,
-            "source": source_url(),
+            "source": source,
             "matches": [entry(domain, narrowed, "domain", 1.0)],
         }
 
@@ -576,7 +588,7 @@ def search(query: str, limit: int = 8, timeout: float = 10.0) -> dict:
     return {
         "query": query,
         "exact": False,
-        "source": source_url(),
+        "source": source,
         "matches": [match for _, match in scored[:limit]],
     }
 

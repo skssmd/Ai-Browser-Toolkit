@@ -34,6 +34,9 @@ REGISTRY: dict[str, Handler] = {
     "tab_switch": tabs.tab_switch,
     "tab_close": tabs.tab_close,
     "read_console": inspect.read_console,
+    "guidelines_search": control.guidelines_search,
+    "guidelines_read": control.guidelines_read,
+    "guidelines_note": control.guidelines_note,
     "read_network": inspect.read_network,
     "run_js": control.run_js,
     "alert": control.alert,
@@ -63,6 +66,11 @@ DOM_TOUCHING_OPS = DIFFABLE_OPS | NAVIGATION_OPS | {"tab_new", "tab_close"}
 # The health check exists to fail fast instead of hanging on a dead driver. But
 # these are exactly what you reach for *when* it has died -- gating them behind
 # it means a server whose browser crashed can never recover or be shut down.
+#
+# The guidelines ops are here for a different reason: they read and write files
+# and never touch the page at all. Gating them on a live browser would mean an
+# agent could not look up a site's playbook before starting a browser -- which
+# is precisely when it is most worth reading.
 NO_HEALTH_CHECK = frozenset(
     {
         "shutdown",
@@ -71,6 +79,9 @@ NO_HEALTH_CHECK = frozenset(
         "browser_stop",
         "browser_restart",
         "browser_status",
+        "guidelines_search",
+        "guidelines_read",
+        "guidelines_note",
     }
 )
 

@@ -298,6 +298,19 @@ outside browser internals like `<video>` controls.
 
 - **Reading a page:** `find` shells → `find_full` the interesting ones →
   `get_text`/`get_html` for specifics. `run_js` for anything the ops don't cover.
+- **`run_js` takes a function BODY, so it needs `return`.** This document
+  names `run_js` nine times and every other mention is telling you not to
+  reach for it — but when you do, this is the one thing to know:
+
+  ```json
+  {"op": "run_js", "script": "1+1"}            → value: null
+  {"op": "run_js", "script": "return 1+1;"}    → value: 2
+  ```
+
+  A null with no `return` in the script comes back with a hint saying so.
+  Do **not** conclude that return values are unsupported and start writing
+  results into the DOM to read them back — a watched agent did exactly that
+  and spent three turns on a workaround it never needed.
 - **Typing:** `input` clears then types into a **visible** target (use
   `"clear": false` to append). The one exception is `<input type=file>`, which
   sites hide on purpose — `input` writes a path to it anyway. `press` sends keystrokes to whatever has focus —
@@ -472,3 +485,78 @@ Still worth fixing properly: falling back to a surviving window handle on
   never assume a tab id survives. Create a fresh tab for each export check and
   read the newest file in the Downloads folder.
 - Log everything. If a run goes wrong, `/viewer` shows exactly what happened.
+
+## Playbooks: read one first, leave one behind
+
+**Before you drive an unfamiliar site, ask whether someone already solved it.**
+
+```bash
+abt guidelines search <domain>       # nothing back means no playbook exists
+abt guidelines show <name>           # read it before your first op
+```
+
+**Nothing found is a normal answer, not a failure.** Most sites have no
+playbook. It means the rules in this document are all you get, and you should
+carry on rather than searching again in a different way.
+
+### When you work something out, write it down
+
+**If a site fought you and you won, record how.** This is the one thing here
+that compounds. Every other rule saves you tokens once; a playbook saves every
+future run on that site.
+
+The reason is the cost shape: each turn re-sends everything before it, so cost
+grows with the *square* of turn count. The four turns you spent discovering
+that a grid header needs `force: true` are not a fixed cost -- they are four
+turns multiplied against every turn that follows. Halving the turns on a site
+is closer to quartering the bill.
+
+### The shape of an entry
+
+One file per domain, entries appended under it, newest anywhere -- the whole
+file is read at once, so order does not matter. Every entry carries four
+things, because an entry missing any of them cannot be trusted by the next
+reader:
+
+```markdown
+# shop.example.com
+
+## Filter form silently drops values
+- **URL:** /admin/reports/sales/
+- **What happened:** filled the date fields, clicked Show Report, and the
+  report came back unfiltered with the fields blank.
+- **Tried and learned:** pressing Enter submits but does not carry the values.
+  The fields are bound by JS that only commits on the button's click handler.
+- **Solution:** `input` each field, then `click {"text": "Show Report"}` in the
+  SAME command-list. Do not press Enter.
+
+## Grid headers are not clickable where they appear
+- **URL:** /admin/sales/order/
+- **What happened:** `click` on the Purchase Date header returned
+  not_interactable -- matched, but covered.
+- **Tried and learned:** a sticky toolbar overlays the header row. Scrolling
+  does not clear it.
+- **Solution:** `{"op": "click", "force": true, "xpath": "//th[...]"}`.
+```
+
+- **URL** so the next reader knows where it applies
+- **What happened** so they recognise the situation before spending turns on it
+- **Tried and learned** so they do not repeat the dead ends -- name a dead end
+  as a dead end, it is as valuable as the fix
+- **Solution** as a command they can run
+
+### Saving it
+
+```bash
+abt guidelines save <domain> notes.md      # local to this machine
+```
+
+That is a **local** file. It is not shared, not uploaded, and not a pull
+request -- a later `pull` will never overwrite it. Contributing upstream is a
+separate, deliberate step (`abt guidelines submit`) that you take only when
+asked.
+
+If a playbook for the domain already exists, read it and append your entry
+rather than replacing the file. Do not record what is already in it, anything
+true of every site, or a generated selector that will not survive a deploy.
+

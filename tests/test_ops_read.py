@@ -135,3 +135,42 @@ def test_element_screenshot_without_base64_still_frames_the_element(clean_sessio
     result = run(clean_session, op="screenshot", css="#p1")
     assert result["format"] == "jpeg"
     assert "base64" not in result
+
+
+# --- run_js: the return-statement trap ----------------------------------------
+#
+# execute_script runs the script as a function BODY, so a value only comes back
+# if the script says `return`. A watched agent sent `1+1`, got null, concluded
+# "run_js return values aren't surfaced", and spent three turns writing results
+# into the DOM to read them back. Nothing was broken -- and nothing said so.
+#
+# The reply now explains it, but only when the cause is certain. The first
+# version of that check used a regex whose escape was eaten in transit and so
+# never matched, which meant the hint fired on EVERY null -- including the two
+# cases below where null is the honest answer. These tests are what makes that
+# difference visible.
+
+
+def test_run_js_needs_a_return_statement(clean_session):
+    assert run(clean_session, op="run_js", script="return 1+1;")["value"] == 2
+    assert run(clean_session, op="run_js", script="1+1")["value"] is None
+
+
+def test_a_null_with_no_return_explains_itself(clean_session):
+    result = run(clean_session, op="run_js", script="1+1")
+    assert result["value"] is None
+    assert "return" in result["hint"]
+
+
+def test_a_value_carries_no_hint(clean_session):
+    assert "hint" not in run(clean_session, op="run_js", script="return 1+1;")
+
+
+def test_an_honest_null_is_not_second_guessed(clean_session):
+    """A script that DOES say return may still yield null, and saying "you
+    forgot return" there would send the reader looking for a bug they do not
+    have. Silence is the correct answer."""
+    for script in ("return null;", "return document.querySelector('#nope-xyz');"):
+        result = run(clean_session, op="run_js", script=script)
+        assert result["value"] is None
+        assert "hint" not in result, script
