@@ -44,6 +44,17 @@ class Target(Base):
                 "near qualifies a selector that matches several elements; a ref "
                 "already names exactly one"
             )
+        if self.near is not None and not given:
+            # Silently the most expensive mistake here. On an op where no
+            # target means "the whole document", `near` alone used to fall
+            # through to that branch: an agent asking for the HTML *near*
+            # something was handed the entire page instead -- measured at
+            # 127,941 bytes, more than asking for `body` outright, with no
+            # error to say the qualifier had been ignored.
+            raise ValueError(
+                "near qualifies a selector, it is not one: give css, xpath or "
+                "text as well, or drop near to read the whole document"
+            )
         return self
 
     @property

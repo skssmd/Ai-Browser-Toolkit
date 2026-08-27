@@ -61,6 +61,14 @@ know the whole form once you have its refs. You know `press Enter` follows
 call. What you cannot know yet — which product the search returns — is where
 a batch legitimately ends.
 
+**The corollary, and it costs turns when missed: never put a read behind an
+action you are unsure of.** A list stops at the first failure, so if the click
+you guessed does not land, the `get_text` you queued behind it never runs and
+you have spent a turn learning one thing instead of two. A watched agent did
+exactly this twice in a row on a grid header it could not hit. Send the
+uncertain action alone, or pass `continue_on_error` when you genuinely want
+the rest to run regardless.
+
 **The viewer.** `/viewer` in a browser tab replays every command and response as
 it happens — the best debugging tool here. Open it beside your work.
 

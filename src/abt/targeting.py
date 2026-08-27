@@ -202,7 +202,20 @@ def resolve_one(
     draw a box around whatever was acted on. Kept here rather than in each op
     because this is the one place every targeted op passes through.
     """
-    element = _resolve_one(session, cmd, state, timeout)
+    try:
+        element = _resolve_one(session, cmd, state, timeout)
+    except OpError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - re-raised unless it is ours
+        # A malformed selector reached here as a raw WebDriverException, and
+        # the server's fallback turned it into `browser_dead` -- whose hint
+        # tells the reader to restart a browser that is working perfectly.
+        # `find` already guarded this in resolve_many; get_text, get_html,
+        # click and every other targeted op did not, so three ops in four gave
+        # the most expensive wrong answer the toolkit has for a typo.
+        if _is_bad_selector(exc):
+            raise _bad_selector_error(locator(cmd)[1], exc) from exc
+        raise
     session.last_target = element
     return element
 
@@ -311,6 +324,19 @@ def _is_bad_selector(exc: Exception) -> bool:
     return any(marker in text for marker in _BAD_SELECTOR_MARKERS)
 
 
+def _bad_selector_error(selector: str, exc: Exception) -> OpError:
+    """The one wording for a malformed selector, wherever it is caught."""
+    return OpError(
+        "invalid_op",
+        f"{selector!r} is not a valid selector: {exc}",
+        hint=(
+            "This is a syntax error in your selector, NOT an empty page. Fix "
+            "the selector and search again -- unlike a count of 0, this says "
+            "nothing about what the page contains."
+        ),
+    )
+
+
 def resolve_many(
     session: BrowserSession,
     cmd,
@@ -351,16 +377,7 @@ def resolve_many(
                 # not to widen the search, so the toolkit was stating
                 # something false about the page with full confidence.
                 if _is_bad_selector(exc):
-                    raise OpError(
-                        "invalid_op",
-                        f"{selector!r} is not a valid selector: {exc}",
-                        hint=(
-                            "This is a syntax error in your selector, NOT an "
-                            "empty page. Fix the selector and search again -- "
-                            "unlike a count of 0, this says nothing about "
-                            "what the page contains."
-                        ),
-                    ) from exc
+                    raise _bad_selector_error(selector, exc) from exc
                 elements = []
             if visible_only:
                 elements = [e for e in elements if _is_displayed(e)]

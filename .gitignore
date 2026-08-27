@@ -33,3 +33,4 @@ dist/
 
 # Local-only playbooks: client material and sites not worth shipping.
 private/
+/results
