@@ -436,7 +436,12 @@ def create_app(
                         "This is an exact-domain lookup. For anything else -- a "
                         "product name, a subdomain, a guess -- use "
                         "GET /guidelines/search?q=, which is fuzzy. A site with "
-                        "no playbook is normal: drive it directly."
+                        "no playbook is normal: drive it directly. If you have "
+                        "not read it yet, GET /guidelines/toolkit-workflow is "
+                        "the general workflow for driving this toolkit, and it "
+                        "is worth reading before you start rather than after "
+                        "something goes wrong. When you work this site out, "
+                        "post a guidelines_note so the next run starts ahead."
                     ),
                 )
             )

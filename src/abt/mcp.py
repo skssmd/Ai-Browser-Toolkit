@@ -47,7 +47,16 @@ Browser automation against one long-lived Chrome. The server is a separate
 process that outlives this session; it owns the browser and this connection
 owns nothing.
 
-Start here:
+FIRST, BEFORE ANY OTHER CALL:
+
+  browser_guidelines {"name":"toolkit-workflow"}   -- the workflow document.
+  Read it once, at the start, before you start a browser or touch a page. It
+  is not reference to reach for when you get stuck; it is how this toolkit is
+  driven, and everything below is a summary of it. One call, and it is the
+  difference between driving this well and rediscovering its traps the
+  expensive way.
+
+Then start a browser:
 
   browser_session {"action":"start"}   -- the server runs WITHOUT a browser on
   purpose, and nothing starts one for you. Every page command fails with
@@ -79,10 +88,24 @@ find searches the document, every frame and (with shadow=true) open shadow
 roots. count=0 is an answer, not a bad selector -- the control does not exist
 yet, so click whatever creates it. Do not fall back to run_js to scan the DOM.
 
-Site playbooks: before driving an unfamiliar site call browser_guidelines with
-that domain. Some sites have a written procedure, and it is shorter than
-discovering the page. browser_guidelines {"name":"toolkit-workflow"} is the
-full workflow document.
+Site playbooks -- read one, and leave one behind. Both halves, not just the
+first:
+
+  READ: before driving an unfamiliar site, call browser_guidelines with that
+  domain. Some sites have a written procedure and it is shorter than
+  discovering the page. An empty result is a normal and complete answer --
+  most sites have none, so carry on rather than searching again another way.
+
+  WRITE: when you work something out that the next run would rather be told
+  than rediscover, send guidelines_note through command_list with domain,
+  title, url, problem, tried and solution. Name the dead ends too. If an entry
+  already there turns out to be wrong, set `replaces` to its exact title
+  rather than appending a second entry that contradicts it -- a reader who
+  meets both cannot tell which one won.
+
+  This second half is the one agents skip, and it is the half that compounds:
+  every other rule here saves tokens once, a playbook saves every future run
+  on that site.
 
 Every failure carries a `hint` saying what to do next. Read it before retrying.
 """
@@ -126,10 +149,14 @@ TOOLS: list[dict] = [
     {
         "name": "browser_guidelines",
         "description": (
-            "The toolkit's own docs. domain=<host> asks whether a written "
-            "playbook exists for a site -- fuzzy, so 'sheets' finds "
-            'docs.google.com. name="toolkit-workflow" returns the full '
-            "workflow. Neither argument lists what is installed."
+            'The toolkit\'s own docs. name="toolkit-workflow" returns the '
+            "workflow document, which you should read once at the start of a "
+            "session before driving anything -- it is how this toolkit is "
+            "meant to be used, not troubleshooting material. domain=<host> "
+            "separately asks whether a written playbook exists for one site "
+            "-- fuzzy, so 'sheets' finds docs.google.com; an empty result "
+            "just means nobody has written one. Neither argument lists what "
+            "is installed."
         ),
         "inputSchema": _schema({
             "domain": {"type": "string", "description": "Site to look up. Fuzzy."},

@@ -200,13 +200,22 @@ def installed() -> dict[str, dict]:
             continue
         for directory in sorted(p for p in root.iterdir() if p.is_dir()):
             domain = directory.name
-            if "." not in domain or not _allowed(domain):
+            files = sorted(p.name for p in directory.glob("*.md"))
+            # A playbook directory is one with playbooks in it. This used to
+            # demand a dot in the name to weed out stray directories, which
+            # quietly excluded every single-label host -- localhost:9999,
+            # intranet, jira, gitlab. Notes for those saved without error and
+            # then could never be found again, because search() reads this
+            # list: the write half worked and the read half did not, which is
+            # the worst shape a bug like this can take. Forty-four benchmark
+            # episodes wrote notes here and not one could open them.
+            if not files or not _allowed(domain):
                 continue
             found[domain] = {
                 "domain": domain,
                 "source": layer,
                 "version": int(_meta(root, domain).get("version", 1)),
-                "files": sorted(p.name for p in directory.glob("*.md")),
+                "files": files,
                 "trusted": True,
             }
 

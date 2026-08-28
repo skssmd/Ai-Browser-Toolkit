@@ -471,6 +471,14 @@ class GuidelinesNote(Base):
     that is as useful as the fix."""
     solution: str
     """What worked, concretely enough to run."""
+    replaces: str | None = None
+    """Title of an existing entry this one supersedes, copied exactly.
+
+    Use it when you find an entry here is wrong or has been overtaken, rather
+    than appending a second entry that argues with the first -- a reader who
+    meets both cannot tell which one won. That entry is cut and yours takes
+    its place; every other entry is untouched. Leave it unset for anything
+    new."""
 
 Command = Annotated[
     Union[

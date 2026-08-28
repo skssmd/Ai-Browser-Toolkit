@@ -511,10 +511,29 @@ that a grid header needs `force: true` are not a fixed cost -- they are four
 turns multiplied against every turn that follows. Halving the turns on a site
 is closer to quartering the bill.
 
+### When an entry here is wrong, replace it -- do not argue with it
+
+**If you find an existing entry is wrong or has been overtaken, supersede it
+rather than appending a correction.** Set `replaces` to that entry's title,
+copied exactly; it is cut and yours takes its place, and nothing else in the
+file is touched.
+
+This matters more than it sounds. A playbook is read whole, so two entries
+that contradict each other do not cancel out -- the next reader gets both and
+has no way to tell which one won. One site here ended up with an entry saying
+"the first item on `/new` is the latest post" and a later one proving `/new`
+sorts by internal id and the first item is *not* the latest. Both looked
+equally authoritative. Contradictory guidance is worse than none, because it
+is followed.
+
+Only supersede an entry you have shown to be wrong. An entry that is merely
+incomplete should be left alone and added to.
+
 ### The shape of an entry
 
 One file per domain, entries appended under it, newest anywhere -- the whole
-file is read at once, so order does not matter. Every entry carries four
+file is read at once, so order does not matter, and that is exactly why a
+wrong entry must be replaced rather than answered. Every entry carries four
 things, because an entry missing any of them cannot be trusted by the next
 reader:
 
