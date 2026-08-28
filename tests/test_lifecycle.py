@@ -286,17 +286,45 @@ def test_the_new_ops_are_registered():
         assert name in OP_NAMES
 
 
-def test_the_new_ops_skip_the_health_check():
+def test_the_lifecycle_ops_skip_the_health_check():
+    """These are what you reach for *when* the browser has died.
+
+    Gating them behind the health check means a server whose browser crashed
+    can never recover or be shut down.
+    """
     from abt.ops import NO_HEALTH_CHECK
 
-    assert NO_HEALTH_CHECK == {
+    assert {
         "shutdown",
         "status",
         "browser_start",
         "browser_stop",
         "browser_restart",
         "browser_status",
-    }
+    } <= NO_HEALTH_CHECK
+
+
+def test_the_guidelines_ops_skip_it_too():
+    """For a different reason: they read and write files and never touch the
+    page. Gating them on a live browser would stop an agent looking up a
+    site's playbook before starting a browser -- which is exactly when it is
+    most worth reading."""
+    from abt.ops import NO_HEALTH_CHECK
+
+    assert {
+        "guidelines_search",
+        "guidelines_read",
+        "guidelines_note",
+    } <= NO_HEALTH_CHECK
+
+
+def test_nothing_that_touches_the_page_skips_the_health_check():
+    """The exemption is a hole in the fail-fast guarantee, so it must not grow
+    by accident. Anything that drives the browser belongs behind it."""
+    from abt.ops import NO_HEALTH_CHECK
+
+    for op in ("click", "goto", "find", "get_text", "run_js", "screenshot"):
+        assert op not in NO_HEALTH_CHECK
 
 
 def test_browser_start_accepts_overrides():
