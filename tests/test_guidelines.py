@@ -449,7 +449,7 @@ def test_browser_lifecycle_is_reachable_from_the_cli():
     from abt import cli
 
     names = {c.name for c in cli.browser_app.registered_commands}
-    assert names == {"start", "stop", "restart", "status"}
+    assert names == {"start", "stop", "restart", "status", "open-manual"}
 
 
 def test_the_epilog_leads_with_the_start_sequence():
