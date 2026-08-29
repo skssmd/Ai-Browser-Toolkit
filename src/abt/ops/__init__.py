@@ -47,6 +47,7 @@ REGISTRY: dict[str, Handler] = {
     "browser_stop": control.browser_stop,
     "browser_restart": control.browser_restart,
     "browser_status": control.browser_status,
+    "browser_open_manual": control.browser_open_manual,
 }
 
 # Ops that change the page in place and therefore get a before/after diff
@@ -79,6 +80,7 @@ NO_HEALTH_CHECK = frozenset(
         "browser_stop",
         "browser_restart",
         "browser_status",
+        "browser_open_manual",
         "guidelines_search",
         "guidelines_read",
         "guidelines_note",

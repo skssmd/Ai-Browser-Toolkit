@@ -500,13 +500,16 @@ def create_app(
         a running command would launch Chrome underneath it.
         """
         payload: dict[str, Any] = {"op": op}
-        if op in ("browser_start", "browser_restart"):
+        if op in ("browser_start", "browser_restart", "browser_open_manual"):
             try:
                 body = await request.json()
             except Exception:
                 body = None
+            fields = ("browser", "profile") if op == "browser_open_manual" else (
+                "browser", "profile", "headless"
+            )
             if isinstance(body, dict):
-                for field in ("browser", "profile", "headless"):
+                for field in fields:
                     if body.get(field) is not None:
                         payload[field] = body[field]
         results = await run_in_threadpool(execute, [payload], False)
@@ -523,6 +526,10 @@ def create_app(
     @app.post("/browser/restart")
     async def browser_restart_route(request: Request):
         return await _lifecycle(request, "browser_restart")
+
+    @app.post("/browser/open-manual")
+    async def browser_open_manual_route(request: Request):
+        return await _lifecycle(request, "browser_open_manual")
 
     # --- session logs ---------------------------------------------------------
 

@@ -42,6 +42,13 @@ If you launch it by hand anyway, you must **both** detach it and redirect its
 stdout/stderr to a file. Detaching alone is not enough: the server inherits the
 open pipe and your call keeps waiting on it.
 
+This applies no matter how `serve` is spelled — `abt serve`, `python -m abt
+serve`, `py -m abt serve` all hit the same blocking command loop. `abt up`
+(`py -m abt up`) is the safe alternative: it spawns `serve` detached and
+returns in seconds, same as `start-server.bat`/`start-server.sh`, so it is
+also fine to run directly from a tool call. `python -m abt`/`py -m abt` with
+**no** subcommand is separately harmless — it just prints help and exits.
+
 `GET /ops` lists every operation and its parameters. Read it instead of
 guessing a parameter name.
 
@@ -151,6 +158,20 @@ which never returns. The server comes up with **no browser**, so:
 `start` uses the server's defaults; `restart` keeps whatever the last browser
 used. So a session started headless comes back headless under `restart` and
 windowed under `start`.
+
+**Google (and some other sites) block a driven browser at sign-in.** Even with
+the anti-detection flags this toolkit already sets, `accounts.google.com`
+detects the CDP connection Selenium/Playwright use and refuses login with
+"This browser or app may not be secure" — no flag fixes this, since it is
+Google's own automation check, not a fingerprinting gap.
+
+`POST /browser/open-manual` (`{"op": "browser_open_manual"}`, optional
+`{browser, profile}`, no `headless`) launches the real installed browser
+directly — not through Selenium/Playwright at all — on the same profile.
+Refuses if abt's own browser is running on that profile, or if anything else
+already holds it: stop it first with `browser_stop`. Sign in by hand in the
+window it opens, close that window, then `browser_start` again — it reuses the
+same profile, so the session it just saved is already there.
 
 ## If you speak MCP
 

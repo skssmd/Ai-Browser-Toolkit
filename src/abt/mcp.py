@@ -170,13 +170,20 @@ TOOLS: list[dict] = [
             "Every page command fails with browser_dead until a browser is "
             "started; nothing starts one for you. Use restart after a crash or "
             "after a tab closed the session. start uses the server's defaults, "
-            "restart keeps whatever the last browser used."
+            "restart keeps whatever the last browser used. open_manual launches "
+            "the real installed browser directly (no automation) on the same "
+            "profile, for sites -- Google among them -- that block a "
+            "CDP-controlled browser at sign-in: stop the running browser first, "
+            "sign in by hand in the window this opens, close it, then start "
+            "again to pick the session back up. Do not pass headless with it "
+            "-- a manual login needs a visible window, and the call is "
+            "rejected if you do."
         ),
         "inputSchema": _schema(
             {
                 "action": {
                     "type": "string",
-                    "enum": ["start", "stop", "restart", "status"],
+                    "enum": ["start", "stop", "restart", "status", "open_manual"],
                 },
                 "browser": {"type": "string", "enum": ["chrome", "edge"]},
                 "profile": {"type": "string"},

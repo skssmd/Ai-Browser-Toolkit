@@ -351,6 +351,39 @@ def test_browser_stop_rejects_stray_fields():
     assert exc.value.type == "invalid_op"
 
 
+def test_browser_open_manual_accepts_overrides():
+    from abt.schema import parse_command
+
+    cmd = parse_command(
+        {"op": "browser_open_manual", "browser": "edge", "profile": "/x"}
+    )
+    assert cmd.browser == "edge"
+    assert cmd.profile == "/x"
+
+
+def test_browser_open_manual_takes_no_arguments_happily():
+    from abt.schema import parse_command
+
+    cmd = parse_command({"op": "browser_open_manual"})
+    assert (cmd.browser, cmd.profile) == (None, None)
+
+
+def test_browser_open_manual_rejects_headless():
+    """A manual login needs a visible window by definition -- headless is not
+    a meaningful override here, unlike browser_start/browser_restart."""
+    from abt.schema import parse_command
+
+    with pytest.raises(OpError) as exc:
+        parse_command({"op": "browser_open_manual", "headless": True})
+    assert exc.value.type == "invalid_op"
+
+
+def test_browser_open_manual_is_registered():
+    from abt.schema import OP_NAMES
+
+    assert "browser_open_manual" in OP_NAMES
+
+
 def test_browser_state_reports_both_configs(session):
     from abt.ops.control import browser_state
 
@@ -371,13 +404,120 @@ def test_browser_status_op_dispatches_without_a_browser(session):
     assert state["running"] is False
 
 
+def test_browser_open_manual_refuses_while_abts_browser_is_running(session):
+    from abt.ops.control import browser_open_manual
+    from abt.schema import parse_command
+
+    session._driver = object()  # pretend one is up
+    with pytest.raises(OpError) as exc:
+        browser_open_manual(session, parse_command({"op": "browser_open_manual"}))
+    assert exc.value.type == "invalid_op"
+    assert "browser_stop" in exc.value.message
+
+
+def test_browser_open_manual_refuses_when_the_profile_is_locked(session, tmp_path):
+    """Even if abt's own driver isn't running, some other browser -- including
+    a manual window left open from a previous call -- may still hold it."""
+    from abt.ops.control import browser_open_manual
+    from abt.schema import parse_command
+
+    (tmp_path / "SingletonLock").write_text("host-1234")
+    with pytest.raises(OpError) as exc:
+        browser_open_manual(session, parse_command({"op": "browser_open_manual"}))
+    assert exc.value.type == "invalid_op"
+    assert "close" in exc.value.message.lower()
+
+
+def test_browser_open_manual_reports_no_browser_found(session, monkeypatch):
+    from abt import doctor
+    from abt.ops import control
+    from abt.schema import parse_command
+
+    monkeypatch.setattr(doctor, "find_browsers", lambda: [])
+
+    with pytest.raises(OpError) as exc:
+        control.browser_open_manual(session, parse_command({"op": "browser_open_manual"}))
+    assert exc.value.type == "browser_not_found"
+    assert "chrome" in exc.value.message.lower()
+
+
+def test_browser_open_manual_launches_the_real_binary_detached(
+    session, tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    from abt import doctor, proc
+    from abt.ops import control
+    from abt.schema import parse_command
+
+    binary = tmp_path / "chrome.exe"
+    monkeypatch.setattr(
+        doctor, "find_browsers", lambda: [doctor.Browser("chrome", binary)]
+    )
+    seen = {}
+
+    def fake_spawn_detached(argv, cwd, stdout, stderr):
+        seen["argv"] = argv
+        seen["cwd"] = cwd
+        return "detached"
+
+    monkeypatch.setattr(proc, "spawn_detached", fake_spawn_detached)
+
+    result = control.browser_open_manual(
+        session, parse_command({"op": "browser_open_manual"})
+    )
+
+    assert seen["argv"][0] == str(binary)
+    assert f"--user-data-dir={session.profile}" in seen["argv"]
+    assert result["launched"] is True
+    assert result["browser"] == "chrome"
+    assert result["profile"] == str(session.profile)
+
+
+def test_browser_open_manual_creates_the_profile_directory(
+    session, tmp_path, monkeypatch
+):
+    from abt import doctor, proc
+    from abt.launch import LaunchConfig
+    from abt.ops import control
+    from abt.schema import parse_command
+
+    fresh_profile = tmp_path / "not-there-yet"
+    session.defaults = LaunchConfig(profile=fresh_profile)
+
+    monkeypatch.setattr(
+        doctor, "find_browsers", lambda: [doctor.Browser("chrome", tmp_path / "chrome.exe")]
+    )
+    monkeypatch.setattr(proc, "spawn_detached", lambda *a, **k: "detached")
+
+    control.browser_open_manual(session, parse_command({"op": "browser_open_manual"}))
+
+    assert fresh_profile.is_dir()
+
+
 def test_the_lifecycle_ops_are_not_treated_as_dom_touching():
     from abt.ops import DIFFABLE_OPS, DOM_TOUCHING_OPS, NAVIGATION_OPS
 
-    for name in ("browser_start", "browser_stop", "browser_restart", "browser_status"):
+    for name in (
+        "browser_start", "browser_stop", "browser_restart", "browser_status",
+        "browser_open_manual",
+    ):
         assert name not in DIFFABLE_OPS
         assert name not in NAVIGATION_OPS
         assert name not in DOM_TOUCHING_OPS
+
+
+def test_browser_open_manual_is_in_the_registry():
+    from abt.ops import REGISTRY
+
+    assert "browser_open_manual" in REGISTRY
+
+
+def test_browser_open_manual_skips_the_health_check():
+    """Must work with no browser present -- that is the whole point of it."""
+    from abt.ops import NO_HEALTH_CHECK
+
+    assert "browser_open_manual" in NO_HEALTH_CHECK
 
 
 # --- HTTP ------------------------------------------------------------------
@@ -427,6 +567,35 @@ def test_start_route_reports_a_bad_browser_without_launching(unstarted_client):
 def test_ops_route_lists_the_lifecycle_ops(unstarted_client):
     body = unstarted_client.get("/ops").json()
     assert "browser_start" in body["result"]
+    assert "browser_open_manual" in body["result"]
+
+
+def test_open_manual_route_launches_over_http(unstarted_client, monkeypatch):
+    from abt import doctor, proc
+
+    monkeypatch.setattr(
+        doctor, "find_browsers", lambda: [doctor.Browser("chrome", "C:/chrome.exe")]
+    )
+    seen = {}
+    monkeypatch.setattr(
+        proc, "spawn_detached", lambda argv, **kw: seen.setdefault("argv", argv)
+    )
+
+    body = unstarted_client.post("/browser/open-manual", json={}).json()
+
+    assert body["ok"] is True
+    assert body["result"]["launched"] is True
+    assert seen["argv"][0] == "C:/chrome.exe"
+
+
+def test_open_manual_route_refuses_while_running(unstarted_session, unstarted_client):
+    unstarted_session._driver = object()  # pretend one is up; no real browser needed
+
+    body = unstarted_client.post("/browser/open-manual", json={}).json()
+
+    assert body["ok"] is False
+    assert body["error"]["type"] == "invalid_op"
+    assert "browser_stop" in body["error"]["message"]
 
 
 # --- CLI -------------------------------------------------------------------
@@ -440,3 +609,23 @@ def test_serve_has_an_opt_in_browser_launch_flag():
 
     parameter = inspect.signature(serve).parameters["start_browser"]
     assert parameter.default.default is False
+
+
+def test_browser_open_manual_cli_command_exists_with_no_headless_option():
+    """No --headless: a manual login needs a visible window by definition."""
+    import inspect
+
+    from abt.cli import browser_app
+
+    command = browser_app.registered_commands
+    names = {c.name or c.callback.__name__.replace("_", "-") for c in command}
+    assert "open-manual" in names
+
+    callback = next(
+        c.callback for c in command
+        if (c.name or c.callback.__name__.replace("_", "-")) == "open-manual"
+    )
+    parameters = inspect.signature(callback).parameters
+    assert "browser" in parameters
+    assert "profile" in parameters
+    assert "headless" not in parameters

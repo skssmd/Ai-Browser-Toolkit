@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from ..browser import BrowserSession
+from .. import doctor, proc
+from ..browser import BrowserSession, _profile_locked
 from ..diff import diff_html, diff_text, page_key, page_text
 from ..engine import EngineError, NoAlert, ScriptError
 from ..errors import OpError
+from ..paths import default_log_dir
 
 
 def run_js(session: BrowserSession, cmd) -> dict:
@@ -155,6 +157,55 @@ def browser_restart(session: BrowserSession, cmd) -> dict:
 
 def browser_status(session: BrowserSession, cmd) -> dict:
     return browser_state(session)
+
+
+def browser_open_manual(session: BrowserSession, cmd) -> dict:
+    """Launch the real installed browser directly, bypassing Selenium/Playwright.
+
+    For sites -- Google among them -- that block a CDP-controlled browser at
+    sign-in no matter what anti-detection flags `_make_options` sets. Fire and
+    forget: the caller logs in by hand and closes the window; `browser_start`
+    then picks up the saved session on the same profile.
+
+    Refuses rather than stopping abt's own browser for the caller, on purpose:
+    a profile is never safely shared between two running browsers, and both
+    directions of that swap (which one to keep, whether to wait) are the
+    caller's call, not this op's to make silently.
+    """
+    config = session.defaults.merge(browser=cmd.browser, profile=cmd.profile)
+    if session.is_running:
+        raise OpError(
+            "invalid_op",
+            "abt's browser is already running on this profile; run "
+            "browser_stop first, then open a manual window on the same profile.",
+        )
+    if _profile_locked(config):
+        raise OpError(
+            "invalid_op",
+            f"a browser already has the profile at {config.profile} open; "
+            "close it, then try again.",
+        )
+    browsers = {b.name: b.path for b in doctor.find_browsers()}
+    binary = browsers.get(config.browser)
+    if binary is None:
+        raise OpError(
+            "browser_not_found",
+            f"no installed {config.browser} found; run "
+            "`abt doctor --install-browser` to install one.",
+        )
+    config.profile.mkdir(parents=True, exist_ok=True)
+    log_dir = default_log_dir()
+    proc.spawn_detached(
+        [str(binary), f"--user-data-dir={config.profile}"],
+        cwd=config.profile,
+        stdout=log_dir / "manual-browser.log",
+        stderr=log_dir / "manual-browser.err",
+    )
+    return {
+        "launched": True,
+        "browser": config.browser,
+        "profile": str(config.profile),
+    }
 
 
 def status(session: BrowserSession, cmd) -> dict:

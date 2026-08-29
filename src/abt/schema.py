@@ -421,6 +421,20 @@ class BrowserStatus(Base):
     op: Literal["browser_status"]
 
 
+class BrowserOpenManual(Base):
+    """Launch a plain, non-automated browser on the same profile.
+
+    For sites (Google among them) that block a Selenium/CDP-controlled
+    browser at sign-in regardless of anti-detection flags. No `headless`: a
+    manual login needs a visible window. abt's own browser must not be
+    running on this profile -- stop it first.
+    """
+
+    op: Literal["browser_open_manual"]
+    browser: str | None = None
+    profile: str | None = None
+
+
 
 class GuidelinesSearch(Base):
     """Is there a written playbook for this site?
@@ -490,6 +504,7 @@ Command = Annotated[
         ReadConsole, ReadNetwork,
         GuidelinesSearch, GuidelinesRead, GuidelinesNote,
         BrowserStart, BrowserStop, BrowserRestart, BrowserStatus,
+        BrowserOpenManual,
     ],
     Field(discriminator="op"),
 ]

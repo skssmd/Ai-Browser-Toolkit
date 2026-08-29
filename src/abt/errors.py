@@ -72,6 +72,10 @@ HINTS = {
         "Only chrome and edge are supported. `abt doctor` reports which are "
         "installed and where."
     ),
+    "browser_not_found": (
+        "The named browser is supported but not installed where abt looked. "
+        "`abt doctor --install-browser` installs one."
+    ),
 }
 
 ERROR_TYPES = frozenset(HINTS)

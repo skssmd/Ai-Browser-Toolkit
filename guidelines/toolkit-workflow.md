@@ -435,7 +435,7 @@ it costs a click each time you guess low.
 A closed set of `error.type` values to branch on: `invalid_op`,
 `element_not_found`, `stale_ref`, `not_interactable`, `not_a_select`, `timeout`,
 `navigation_failed`, `js_error`, `last_tab`, `tab_not_found`, `browser_dead`,
-`bad_browser`.
+`bad_browser`, `browser_not_found`.
 
 Failed ops never quietly continue: batches stop unless `continue_on_error`.
 
@@ -462,6 +462,26 @@ fails loudly rather than handing you one that dies on first use.
 
 Still worth fixing properly: falling back to a surviving window handle on
 `NoSuchWindowException` would keep the tabs, which `browser_restart` cannot.
+
+### Some sites block a driven browser at sign-in
+
+Google in particular: `accounts.google.com` detects the CDP connection
+Selenium/Playwright use and refuses login with "This browser or app may not
+be secure," regardless of the anti-detection flags this toolkit already sets
+(`--disable-blink-features=AutomationControlled`, `excludeSwitches:
+enable-automation`). This is Google's own automation check, not a
+fingerprinting gap, so there is no flag that gets past it.
+
+`{"op": "browser_open_manual"}` (optional `browser`, `profile`; no
+`headless` — a manual login needs a visible window) launches the real
+installed Chrome/Edge binary directly, bypassing Selenium/Playwright
+entirely, on the same profile. It refuses if abt's own browser is running on
+that profile, or if anything else already holds it — `browser_stop` first.
+Sign in by hand in the window it opens, close that window, then
+`browser_start` again: same profile, so the session it just saved is already
+there. It is fire-and-forget — abt does not track or wait on the window it
+opened, so `browser_status` still reports whatever abt's own browser is
+doing, not this window.
 
 ## Site traps to remember
 

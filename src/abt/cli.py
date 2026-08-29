@@ -1345,3 +1345,24 @@ def browser_restart(port: int = _port_option()) -> None:
 def browser_status(port: int = _port_option()) -> None:
     """Is a browser running, and on what configuration."""
     _call(port, "/browser", None, method="GET")
+
+
+@browser_app.command("open-manual")
+def browser_open_manual(
+    browser: str = typer.Option(None, "--browser", help="chrome or edge."),
+    profile: Path = typer.Option(None, "--profile", help="user-data-dir to use."),
+    port: int = _port_option(),
+) -> None:
+    """Open a plain, non-automated browser window on the same profile.
+
+    For sites -- Google among them -- that block a Selenium/CDP-controlled
+    browser at sign-in. abt's own browser must not be running on this profile;
+    stop it first with `browser stop`. Sign in by hand, close the window, then
+    `browser start` again to pick the session back up.
+    """
+    payload: dict[str, Any] = {}
+    if browser is not None:
+        payload["browser"] = browser
+    if profile is not None:
+        payload["profile"] = str(profile)
+    _call(port, "/browser/open-manual", payload)

@@ -96,6 +96,16 @@ def test_mcp_tools_lower_to_real_ops():
         assert payload["op"] in OP_NAMES, f"{name} lowers to unknown op {payload['op']}"
 
 
+def test_browser_session_exposes_open_manual():
+    """browser_open_manual reaches MCP through the same tool as start/stop/
+    restart/status -- one more enum value, not a fourth bespoke tool."""
+    tool = next(t for t in mcp.TOOLS if t["name"] == "browser_session")
+    assert "open_manual" in tool["inputSchema"]["properties"]["action"]["enum"]
+
+    payload = mcp.to_op("browser_session", {"action": "open_manual"})
+    assert payload["op"] == "browser_open_manual"
+
+
 def test_mcp_exposes_the_targeting_vocabulary():
     for tool in mcp.TOOLS:
         properties = tool["inputSchema"]["properties"]

@@ -7,8 +7,11 @@ that file. The full workflow is
 The one rule worth repeating here, because getting it wrong wedges your session:
 
 **Never run `abt serve` from a tool call.** It is a command loop that never
-returns, so the call that launched it hangs forever. Start the server with
-`start-server.bat` (Windows cmd) or `./start-server.sh` (bash) in this
-directory. Both are safe to run at any time — they no-op if a server is already
+returns, so the call that launched it hangs forever. This holds regardless of
+spelling — `abt serve`, `python -m abt serve`, `py -m abt serve` are the same
+blocking call. Start the server with `start-server.bat` (Windows cmd) or
+`./start-server.sh` (bash) in this directory. Both are safe to run at any time — they no-op if a server is already
 up, install dependencies only when missing, launch it detached, and exit once
-`/status` answers. `--status` alone reports whether one is running.
+`/status` answers. `--status` alone reports whether one is running. `abt up`
+(`py -m abt up`) does the same thing as a native subcommand and is also safe
+to run directly. `py -m abt`/`abt` with no subcommand just prints help.
