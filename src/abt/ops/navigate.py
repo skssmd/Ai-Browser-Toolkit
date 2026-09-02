@@ -2,14 +2,48 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..browser import BrowserSession
 from ..engine import EngineError
 from ..errors import OpError
 
+# Off unless asked for, so ordinary use is unchanged: a browser that cannot
+# open a local file is a worse browser. Set ABT_URL_SCHEMES to a comma-list
+# (normally "http,https") wherever the agent must not be able to read the
+# machine it is running on.
+#
+# Written after watching an agent fail a login, then go looking for the
+# password: file:///etc/hosts, the compose file, the project source, then
+# chrome://password-manager. Nothing was exploited and nothing was broken --
+# it was being resourceful, which is the point. On a benchmark host the
+# answer key sits in those same directories, so an agent that CAN read them
+# invalidates the score whether or not it did.
+_SCHEME_ENV = "ABT_URL_SCHEMES"
+
+
+def _check_scheme(url: str) -> None:
+    allowed = os.environ.get(_SCHEME_ENV, "").strip()
+    if not allowed:
+        return
+    permitted = {s.strip().lower() for s in allowed.split(",") if s.strip()}
+    scheme = (urlsplit(url).scheme or "").lower()
+    if scheme and scheme not in permitted:
+        raise OpError(
+            "invalid_op",
+            f"{scheme}: navigation is not permitted here",
+            hint=(
+                f"This session is restricted to {sorted(permitted)}. Whatever "
+                f"you are looking for, it is on the site you were given -- the "
+                f"machine hosting it is not part of the task."
+            ),
+        )
+
 
 def goto(session: BrowserSession, cmd) -> dict:
+    _check_scheme(cmd.url)
     settled = session.goto(cmd.url)
     result = session.location()
     if not settled:

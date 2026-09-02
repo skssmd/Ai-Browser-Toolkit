@@ -18,23 +18,28 @@ abt ops                               # every op and its exact parameters
 abt guidelines show toolkit-workflow  # this document
 abt guidelines search <domain>        # a playbook for the site you are on?
 
-# every page action -- one op
-abt exec '{"op":"goto","url":"https://example.com"}'
-abt exec '{"op":"find","text":"Sign in"}'
-abt exec '{"op":"click","ref":"el_3"}'
+# every page action goes through command-list, and it takes a LIST.
+# Send everything you already know in one round trip:
+abt command-list '[{"op":"goto","url":"https://example.com/login"},
+                   {"op":"find","css":"input"}]'
 
-# ...or a sequence you already know, in ONE round trip
-abt exec-batch '[{"op":"input","css":"#email","value":"me@example.com"},
-                 {"op":"input","css":"#password","value":"hunter2"},
-                 {"op":"click","css":"#submit"}]' 
+# find gave you refs. Act on all of them in the NEXT single call --
+# this is the shape almost every task has, and the one most often
+# paid for as three round trips instead of one:
+abt command-list '[{"op":"input","ref":"el_0","value":"me@example.com"},
+                   {"op":"input","ref":"el_1","value":"hunter2"},
+                   {"op":"click","ref":"el_2"}]'
+
+# a lone op is just a list of one, and is the exception, not the habit
+abt command-list '{"op":"reload"}'
 ```
 
-**`abt exec` and `abt exec-batch` are how you drive the page.** The
+**`abt command-list` is how you drive the page -- one command, taking an op or a list of them.** The
 subcommands are lifecycle only — start the server, start the browser, look
-at what is recorded. Every op in the tables below goes through `exec`,
+at what is recorded. Every op in the tables below goes through `command-list`,
 spelled exactly as the table spells it, so there is no second vocabulary to
 learn and nothing that can disagree with `abt ops`. On PowerShell, pipe JSON rather than
-quoting it inline: `'{"op":"press","key":"Enter"}' | abt exec -`.
+quoting it inline: `'{"op":"press","key":"Enter"}' | abt command-list -`.
 
 **Never run `abt serve` from a tool call.** That is the command loop itself: it
 never returns, so whatever launched it hangs until killed. `abt up` is the one
@@ -43,15 +48,32 @@ the server outside your job object so your call returns while it keeps running.
 The server usually *is* already running, holding tabs and logins that must not
 be thrown away, so check before starting anything.
 
-**Batch what you already know.** `abt exec-batch` runs a list in order and stops
-at the first error. Two round trips become one, and you stop guessing between
-them.
+**Batch what you already know — this is the single biggest thing you can do
+here.** `abt command-list` runs a list in order and stops at the first error,
+naming it, so a batch is never a blind leap. Measured on a real benchmark,
+agents sent one op per call 64% of the time and paid a full model round trip
+for each: typing a value and pressing Enter, billed twice, in a pair that was
+never in doubt.
+
+The rule is simple: **before you send, ask what else you already know.** You
+know the whole form once you have its refs. You know `press Enter` follows
+`input`. You know the click that follows the select. Those go in the same
+call. What you cannot know yet — which product the search returns — is where
+a batch legitimately ends.
+
+**The corollary, and it costs turns when missed: never put a read behind an
+action you are unsure of.** A list stops at the first failure, so if the click
+you guessed does not land, the `get_text` you queued behind it never runs and
+you have spent a turn learning one thing instead of two. A watched agent did
+exactly this twice in a row on a grid header it could not hit. Send the
+uncertain action alone, or pass `continue_on_error` when you genuinely want
+the rest to run regardless.
 
 **The viewer.** `/viewer` in a browser tab replays every command and response as
 it happens — the best debugging tool here. Open it beside your work.
 
-**Underneath is HTTP**, and that surface is supported: `POST /command`,
-`POST /commands`, `GET /status`, `GET /ops`. Every `abt` subcommand except
+**Underneath is HTTP**, and that surface is supported: `POST /command-list`,
+`GET /status`, `GET /ops`. Every `abt` subcommand except
 `serve` is one of those requests. Use it directly when you are already making
 HTTP calls and want to avoid a process launch per command; otherwise prefer
 `abt`.
@@ -276,6 +298,19 @@ outside browser internals like `<video>` controls.
 
 - **Reading a page:** `find` shells → `find_full` the interesting ones →
   `get_text`/`get_html` for specifics. `run_js` for anything the ops don't cover.
+- **`run_js` takes a function BODY, so it needs `return`.** This document
+  names `run_js` nine times and every other mention is telling you not to
+  reach for it — but when you do, this is the one thing to know:
+
+  ```json
+  {"op": "run_js", "script": "1+1"}            → value: null
+  {"op": "run_js", "script": "return 1+1;"}    → value: 2
+  ```
+
+  A null with no `return` in the script comes back with a hint saying so.
+  Do **not** conclude that return values are unsupported and start writing
+  results into the DOM to read them back — a watched agent did exactly that
+  and spent three turns on a workaround it never needed.
 - **Typing:** `input` clears then types into a **visible** target (use
   `"clear": false` to append). The one exception is `<input type=file>`, which
   sites hide on purpose — `input` writes a path to it anyway. `press` sends keystrokes to whatever has focus —
@@ -345,7 +380,7 @@ next thing you do is retype the value that was never the problem.
 The diff is what tells you, and it tells you immediately:
 
 ```
-abt exec '{"op":"input","css":"#flight-from","value":"ACV"}'
+abt command-list '{"op":"input","css":"#flight-from","value":"ACV"}'
 ```
 ```json
 "text": {"added": ["ACV", "Arcata, CA (ACV)", "Eureka/Arcata, CA (ACV)",
@@ -450,3 +485,97 @@ Still worth fixing properly: falling back to a surviving window handle on
   never assume a tab id survives. Create a fresh tab for each export check and
   read the newest file in the Downloads folder.
 - Log everything. If a run goes wrong, `/viewer` shows exactly what happened.
+
+## Playbooks: read one first, leave one behind
+
+**Before you drive an unfamiliar site, ask whether someone already solved it.**
+
+```bash
+abt guidelines search <domain>       # nothing back means no playbook exists
+abt guidelines show <name>           # read it before your first op
+```
+
+**Nothing found is a normal answer, not a failure.** Most sites have no
+playbook. It means the rules in this document are all you get, and you should
+carry on rather than searching again in a different way.
+
+### When you work something out, write it down
+
+**If a site fought you and you won, record how.** This is the one thing here
+that compounds. Every other rule saves you tokens once; a playbook saves every
+future run on that site.
+
+The reason is the cost shape: each turn re-sends everything before it, so cost
+grows with the *square* of turn count. The four turns you spent discovering
+that a grid header needs `force: true` are not a fixed cost -- they are four
+turns multiplied against every turn that follows. Halving the turns on a site
+is closer to quartering the bill.
+
+### When an entry here is wrong, replace it -- do not argue with it
+
+**If you find an existing entry is wrong or has been overtaken, supersede it
+rather than appending a correction.** Set `replaces` to that entry's title,
+copied exactly; it is cut and yours takes its place, and nothing else in the
+file is touched.
+
+This matters more than it sounds. A playbook is read whole, so two entries
+that contradict each other do not cancel out -- the next reader gets both and
+has no way to tell which one won. One site here ended up with an entry saying
+"the first item on `/new` is the latest post" and a later one proving `/new`
+sorts by internal id and the first item is *not* the latest. Both looked
+equally authoritative. Contradictory guidance is worse than none, because it
+is followed.
+
+Only supersede an entry you have shown to be wrong. An entry that is merely
+incomplete should be left alone and added to.
+
+### The shape of an entry
+
+One file per domain, entries appended under it, newest anywhere -- the whole
+file is read at once, so order does not matter, and that is exactly why a
+wrong entry must be replaced rather than answered. Every entry carries four
+things, because an entry missing any of them cannot be trusted by the next
+reader:
+
+```markdown
+# shop.example.com
+
+## Filter form silently drops values
+- **URL:** /admin/reports/sales/
+- **What happened:** filled the date fields, clicked Show Report, and the
+  report came back unfiltered with the fields blank.
+- **Tried and learned:** pressing Enter submits but does not carry the values.
+  The fields are bound by JS that only commits on the button's click handler.
+- **Solution:** `input` each field, then `click {"text": "Show Report"}` in the
+  SAME command-list. Do not press Enter.
+
+## Grid headers are not clickable where they appear
+- **URL:** /admin/sales/order/
+- **What happened:** `click` on the Purchase Date header returned
+  not_interactable -- matched, but covered.
+- **Tried and learned:** a sticky toolbar overlays the header row. Scrolling
+  does not clear it.
+- **Solution:** `{"op": "click", "force": true, "xpath": "//th[...]"}`.
+```
+
+- **URL** so the next reader knows where it applies
+- **What happened** so they recognise the situation before spending turns on it
+- **Tried and learned** so they do not repeat the dead ends -- name a dead end
+  as a dead end, it is as valuable as the fix
+- **Solution** as a command they can run
+
+### Saving it
+
+```bash
+abt guidelines save <domain> notes.md      # local to this machine
+```
+
+That is a **local** file. It is not shared, not uploaded, and not a pull
+request -- a later `pull` will never overwrite it. Contributing upstream is a
+separate, deliberate step (`abt guidelines submit`) that you take only when
+asked.
+
+If a playbook for the domain already exists, read it and append your entry
+rather than replacing the file. Do not record what is already in it, anything
+true of every site, or a generated selector that will not survive a deploy.
+

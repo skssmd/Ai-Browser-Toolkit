@@ -34,6 +34,7 @@ different provider reached the way that provider expects.
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 import urllib.request
@@ -80,6 +81,77 @@ retrying.
 When the task is done, stop and say DONE. Do not navigate away or reload -- that
 would reset the task.
 """
+
+# A turn with no tool calls is how an agent says "finished", and that is how it
+# is treated -- except when it has not actually answered. Episodes stop mid
+# thought: "This strongly suggests..." with no ops, no ANSWER line, and turns
+# still on the clock. The loop took that as done, and the answer parser then
+# submitted the trailing reasoning as the answer, so a stopped-early episode
+# was recorded as a rambling wrong one.
+#
+# 17 of 187 shopping episodes ended this way; 14 of them scored zero.
+#
+# So: ask once, and only when asking is free -- no answer given, turns
+# remaining, and not already asked. If the agent still declines to answer, it
+# is finished and the episode ends as before.
+_ANSWER_MARK = re.compile(r"^\s*ANSWER:", re.MULTILINE)
+
+_NUDGE = (
+    "You stopped without giving an answer, and you still have turns left. If "
+    "you already have the answer, give it now, ending with the ANSWER: line "
+    "in the required form. If you do not have it yet, carry on working and "
+    "answer once you do. If you have established that it cannot be "
+    "determined, answer N/A."
+)
+
+
+def _playbook_section() -> str:
+    """The shipped playbook discipline, read from the guideline it ships in.
+
+    Deliberately not restated here. The benchmark should measure what the
+    toolkit actually tells its agents, so if that guidance changes, this
+    changes with it and the run stays honest.
+
+    The two CLI lines are swapped for the op form, because this agent drives
+    ops rather than a shell. Nothing else is altered.
+    """
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[2] / "guidelines" / "toolkit-workflow.md"
+    try:
+        raw = doc.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    # The whole document, not a section of it. An earlier version fed only
+    # the playbook part to save tokens; that dropped fifteen of sixteen
+    # sections, including every operational rule the agent actually needs.
+    # It is ~6.7k tokens, sent once as a cached prefix, so it is re-read for
+    # roughly nothing after the first turn.
+    section = (
+        "The toolkit workflow follows. It is the same guidance every agent "
+        "driving this toolkit is given. Its examples are written as `abt` "
+        "shell commands; you are not in a shell -- send the same operations "
+        "through your run_ops tool, using the op names and fields shown.\n\n"
+    ) + raw
+    for old, new in (
+        ("abt guidelines search <domain>       # nothing back means no playbook exists",
+         '{"op": "guidelines_search", "query": "<domain>"}    # nothing back means none'),
+        ("abt guidelines show <name>           # read it before your first op",
+         '{"op": "guidelines_read", "name": "<name>"}         # read before your first op'),
+        ("```bash", "```json"),
+    ):
+        section = section.replace(old, new)
+    return section
+
+
+_PLAYBOOK = _playbook_section()
+if _PLAYBOOK:
+    SYSTEM = SYSTEM + "\n\n" + _PLAYBOOK + (
+        "DO EXACTLY WHAT WAS ASKED AND NOTHING MORE. Do not explore past the "
+        "question, gather detail nobody wanted, tidy anything you were not "
+        "asked about, or keep verifying an answer you already have.\n"
+    )
+
 
 TOOL = {
     "name": "run_ops",
@@ -394,7 +466,7 @@ def _execute(server: str, ops: list, continue_on_error: bool) -> tuple[str, bool
     try:
         answer = _post(
             server,
-            "/commands",
+            "/command-list",
             {"commands": ops, "continue_on_error": bool(continue_on_error)},
         )
     except Exception as exc:
@@ -409,6 +481,39 @@ def _execute(server: str, ops: list, continue_on_error: bool) -> tuple[str, bool
         not answer.get("ok", True),
         failures,
     )
+
+
+def _turn_budget(turns: int, max_turns: int) -> str:
+    """Tell the agent how much rope is left, appended to every tool result.
+
+    An episode that runs out of turns scores zero even when it was one step
+    from the answer, and the agent could not see it coming: nothing in the
+    conversation says a ceiling exists. Roughly one episode in eight died this
+    way, most of them still making progress rather than looping.
+
+    Escalates rather than repeating, because a constant note becomes wallpaper.
+    The last band deliberately asks for a defensible answer instead of a
+    perfect one -- a wrong answer and no answer both score zero, so a guess
+    from evidence strictly dominates silence.
+    """
+    left = max_turns - turns
+    if left <= 0:
+        return ""
+    line = "\n\n[turn %d of %d -- %d left]" % (turns, max_turns, left)
+    if left <= 3:
+        return line + (
+            " ANSWER NOW. Send your final message this turn, ending with the "
+            "ANSWER: line. Running "
+            "out of turns scores zero; your best answer from what you already "
+            "have may score. If you truly could not determine it, answer N/A."
+        )
+    if left <= 8:
+        return line + (
+            " Start converging. Settle for the answer you can defend rather "
+            "than the one you can perfect, and stop re-verifying anything you "
+            "have already confirmed once."
+        )
+    return line
 
 
 def _run_anthropic(goal, server, model, max_turns, reference, client,
@@ -474,6 +579,9 @@ def _run_anthropic(goal, server, model, max_turns, reference, client,
                 "type": "tool_result", "tool_use_id": block.id,
                 "content": text, "is_error": is_error,
             })
+        budget = _turn_budget(turns, max_turns)
+        if budget:
+            results.append({"type": "text", "text": budget})
         messages.append({"role": "user", "content": results})
 
     reply = "".join(b.text for b in response.content if b.type == "text")
@@ -563,6 +671,7 @@ def _run_openrouter(goal, server, model, max_turns, reference, client,
     cost, turns, ops_sent, op_failures = Cost(), 0, 0, 0
     reply = ""
 
+    nudged = False
     while turns < max_turns:
         turns += 1
         response = _openrouter_call(
@@ -584,6 +693,10 @@ def _run_openrouter(goal, server, model, max_turns, reference, client,
 
         calls = choice.tool_calls or []
         if not calls:
+            if not nudged and not _ANSWER_MARK.search(reply or "") and turns < max_turns:
+                nudged = True
+                messages.append({"role": "user", "content": _NUDGE})
+                continue
             break
 
         for call in calls:
@@ -608,9 +721,10 @@ def _run_openrouter(goal, server, model, max_turns, reference, client,
             op_failures += failures
             if trace:
                 trace.result(len(ops), failures, _gained(text))
-            messages.append(
-                {"role": "tool", "tool_call_id": call.id, "content": text}
-            )
+            messages.append({
+                "role": "tool", "tool_call_id": call.id,
+                "content": text + _turn_budget(turns, max_turns),
+            })
 
     return turns, ops_sent, op_failures, cost, reply or ""
 
@@ -638,9 +752,15 @@ def run_episode(
     reference = ops_reference(server)
 
     # A reasoning model spends output tokens thinking before it emits a tool
-    # call; too small a budget truncates it mid-thought and the turn produces
-    # nothing. Hence a far larger default on the OpenRouter path.
-    budget = max_tokens or (32000 if provider == "openrouter" else 8000)
+    # call, so the budget has to leave room for that. It does NOT have to be
+    # generous: measured over 43 episodes, a turn produces ~387 output tokens
+    # including reasoning, so 8000 is twenty times the observed need.
+    #
+    # The ceiling matters for a second reason. OpenRouter checks affordability
+    # against max_tokens rather than usage, so an oversized ceiling is refused
+    # outright -- 32000 returned 402 "can only afford 22583" and halted two
+    # sweeps without a single token being spent.
+    budget = max_tokens or 8000
     trace = Trace(enabled=not quiet, port=trace_port, path=trace_path)
     trace.say(f"goal: {goal}")
     trace.say(f"model: {model} via {provider}  |  toolkit: {server}")

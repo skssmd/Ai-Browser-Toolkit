@@ -83,16 +83,89 @@ def plan_path(out: Path) -> Path:
     return out / "plan.json"
 
 
-def load_done(out: Path) -> set[str]:
-    done: set[str] = set()
+# Outcomes a retry cannot improve. Everything else goes back in the queue.
+#
+#   ok            ran and was scored -- the answer will not change
+#   skipped_site  the site is not running; retrying reaches the same absence
+#
+# harness_error and harness_timeout are deliberately absent. They describe the
+# environment at a moment -- a 402, a container that had not finished booting,
+# a key that expired -- not the task. Counting them as done struck 39 tasks off
+# one plan without a single turn being spent on them.
+SETTLED = frozenset({"ok", "skipped_site"})
+
+
+def read_rows(out: Path) -> list[dict]:
+    """Every recorded episode, in the order they were written."""
+    rows: list[dict] = []
     for path in sorted(Path(out).glob("episodes*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
-                done.add(str(json.loads(line)["task_id"]))
-            except (ValueError, KeyError):
+                rows.append(json.loads(line))
+            except ValueError:
                 continue
+    return rows
+
+
+def dedupe_rows(rows: list[dict]) -> list[dict]:
+    """One row per task: the settled one, else the last attempt.
+
+    A retried task has more than one row. Counting all of them would report a
+    task that failed once and passed later as both, and would make the totals
+    disagree with the plan.
+    """
+    best: dict[str, dict] = {}
+    for row in rows:
+        key = str(row.get("task_id"))
+        current = best.get(key)
+        if current is None or (
+            row.get("status") in SETTLED and current.get("status") not in SETTLED
+        ):
+            best[key] = row
+        elif current.get("status") not in SETTLED:
+            best[key] = row  # keep the most recent attempt
+    return list(best.values())
+
+
+def _truncated(row: dict, max_turns: int | None) -> bool:
+    """Did this episode stop because it ran out of turns, under a lower ceiling?
+
+    Only true while the ceiling has since been raised. A task run at 40 and
+    stopped at 40 is finished; retrying it would loop.
+    """
+    # Retrying these is switched off. Raising the ceiling 25 -> 30 -> 32 and
+    # re-running 32 capped episodes reproduced the same ceiling failure every
+    # time, at about three cents each. webarena.284 showed why: a good share
+    # of them are long-but-answerable tasks -- scan a product pool, find the
+    # cheapest match -- not tasks the site cannot do. No ceiling short of
+    # absurd finishes those, and no prompt shortens genuine work.
+    #
+    # The mechanism stays, because raising the ceiling for a NEW reason is
+    # still the right trigger. Flip this to re-enable it.
+    return False
+    if not row.get("hit_turn_limit") or (row.get("reward") or 0) > 0:
+        return False
+    if not max_turns:
+        return False
+    return (row.get("turns") or 0) < max_turns
+
+
+def load_done(out: Path, max_turns: int | None = None) -> set[str]:
+    """Task ids that need no further attempt.
+
+    A task cut off by a ceiling that has since been raised is not one of them.
+    The seven "buy the highest rated X" flows that stopped mid-checkout at 25
+    turns were failures of the budget, not of the agent.
+    """
+    done = set()
+    for row in read_rows(out):
+        if "task_id" not in row or row.get("status") not in SETTLED:
+            continue
+        if _truncated(row, max_turns):
+            continue
+        done.add(str(row["task_id"]))
     return done
 
 
@@ -137,6 +210,9 @@ def cmd_plan(args) -> int:
         # browser: BrowserGym launches chromium on this port and abt attaches
         # to it, so a shared port silently crosses the wires.
         "cdp_port": args.cdp_port,
+        # Recorded so a resume can tell a task that failed from one that was
+        # cut off. Raise it and the truncated ones become runnable again.
+        "max_turns": args.max_turns,
         # Stated in the plan because it bounds every number that comes out:
         # a task needing a site that is not up is skipped, never failed.
         "note": (
@@ -167,6 +243,8 @@ def run_one(plan: dict, out: Path, task_id: str, budget: float) -> dict:
         cmd += ["--trace-port", str(plan["trace_port"])]
     if plan.get("cdp_port"):
         cmd += ["--cdp-port", str(plan["cdp_port"])]
+    if plan.get("max_turns"):
+        cmd += ["--max-turns", str(plan["max_turns"])]
     started = time.time()
     row = {"task_id": task_id, "started": datetime.now(timezone.utc).isoformat()}
     try:
@@ -191,10 +269,14 @@ def run_one(plan: dict, out: Path, task_id: str, budget: float) -> dict:
     return row
 
 
+ERROR_RUN_LIMIT = 6
+
+
 def cmd_run(args) -> int:
+    consecutive_errors = 0
     out = Path(args.out)
     plan = json.loads(plan_path(out).read_text(encoding="utf-8"))
-    done = load_done(out)
+    done = load_done(out, plan.get("max_turns"))
     todo = [t for t in plan["task_ids"] if str(t) not in done]
     if args.max_episodes:
         todo = todo[: args.max_episodes]
@@ -204,6 +286,26 @@ def cmd_run(args) -> int:
     for index, task_id in enumerate(todo, 1):
         print(f"[{index}/{len(todo)}] task {task_id} ...", flush=True)
         row = run_one(plan, out, task_id, args.timeout)
+
+        # An unbroken run of harness errors means the environment changed
+        # under the sweep, not that these tasks are hard. Carrying on spends
+        # the plan on failures nobody can score.
+        if row.get("status") == "harness_error":
+            consecutive_errors += 1
+        else:
+            consecutive_errors = 0
+        if consecutive_errors >= ERROR_RUN_LIMIT:
+            print(
+                f"\n  STOPPING: {consecutive_errors} harness errors in a row.\n"
+                f"  Something the sweep depends on has changed -- the model, a "
+                f"site container, or the API key.\n"
+                f"  Last error tail:\n    "
+                + (row.get("stderr_tail") or "(none recorded)")[-400:].replace(
+                    "\n", "\n    "
+                ),
+                flush=True,
+            )
+            break
         with sink.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row) + "\n")
         mark = "PASS" if row.get("success") else row.get("status", "fail")
@@ -224,10 +326,9 @@ def _fmt(value, spec=".1f"):
 def cmd_report(args) -> int:
     out = Path(args.out)
     plan = json.loads(plan_path(out).read_text(encoding="utf-8"))
-    rows = []
-    for path in sorted(out.glob("episodes*.jsonl")):
-        rows += [json.loads(l) for l in
-                 path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    # One row per task. A retried task has several, and counting them all
+    # would report the same task as both a failure and a pass.
+    rows = dedupe_rows(read_rows(out))
 
     graded = [r for r in rows if r.get("status") == "ok"]
     passed = [r for r in graded if r.get("success")]
@@ -293,6 +394,10 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--limit", type=int)
     p.add_argument("--sites", default="shopping")
+    p.add_argument("--max-turns", type=int, default=30,
+                   help="Turn ceiling for every episode in this plan. 25 cut "
+                        "off 7%% of shopping tasks mid-checkout. Cost grows "
+                        "with the square of turns.")
     p.add_argument("--cdp-port", type=int, default=None,
                    help="Debugging port for this sweep's browser. Give each "
                         "concurrent sweep its own; 9222 is the default when "

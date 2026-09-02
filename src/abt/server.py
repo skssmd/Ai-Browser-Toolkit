@@ -175,26 +175,35 @@ def create_app(
         if request_stop is not None:
             request_stop()
 
-    @app.post("/command")
-    async def command(request: Request, background: BackgroundTasks):
+    async def _command_list(request: Request, background: BackgroundTasks):
+        """The one endpoint. Takes a command, or a list of them.
+
+        Named for the plural on purpose. There were two endpoints -- /command
+        and /commands -- and a caller that found the singular first had no
+        reason to look for the other, so it sent one op per request forever.
+        Watching real agents, that is exactly what happened: a fixed pair like
+        type-then-Enter paid as two round trips, twice per episode.
+        One endpoint whose name is a list makes the batch the obvious shape and
+        the single command a special case of it, rather than the reverse.
+
+        A bare object is accepted because refusing it would only teach callers
+        to wrap things, not to batch them.
+        """
         body = await _json(request)
         if isinstance(body, JSONResponse):
             return body
 
-        results = await run_in_threadpool(execute, [body], False)
-        response = results[0]
-        if response["ok"] and _is_shutdown(body):
-            background.add_task(teardown)
-        return response
-
-    @app.post("/commands")
-    async def commands(request: Request, background: BackgroundTasks):
-        body = await _json(request)
-        if isinstance(body, JSONResponse):
-            return body
+        # One command, sent bare. Answered in the same shape it was sent, so a
+        # caller that sends one thing gets one thing back.
+        if isinstance(body, dict) and "op" in body:
+            results = await run_in_threadpool(execute, [body], False)
+            response = results[0]
+            if response["ok"] and _is_shutdown(body):
+                background.add_task(teardown)
+            return response
 
         if isinstance(body, dict):
-            items = body.get("commands")
+            items = body.get("commands") or body.get("command_list")
             continue_on_error = bool(body.get("continue_on_error", False))
         else:
             items, continue_on_error = body, False
@@ -205,8 +214,9 @@ def create_app(
                 content=fail(
                     OpError(
                         "invalid_op",
-                        "body must be an array of commands, or an object with a "
-                        "'commands' array and an optional 'continue_on_error' flag",
+                        "send one command object, or a list of them. An object "
+                        "with a 'commands' array and an optional "
+                        "'continue_on_error' flag also works.",
                     )
                 ),
             )
@@ -227,6 +237,13 @@ def create_app(
         if failed:
             payload["error"] = failed[0]["error"]
         return payload
+
+    # The only way in. There were once two -- /command and /commands -- and
+    # keeping both taught the wrong lesson: a caller that met the singular
+    # first had no reason to look for the other and sent one op per round trip
+    # forever. One name, and it is the plural one, so the batching shape is
+    # the shape you learn first.
+    app.post("/command-list")(_command_list)
 
     # --- messenger ------------------------------------------------------------
 
@@ -419,7 +436,12 @@ def create_app(
                         "This is an exact-domain lookup. For anything else -- a "
                         "product name, a subdomain, a guess -- use "
                         "GET /guidelines/search?q=, which is fuzzy. A site with "
-                        "no playbook is normal: drive it directly."
+                        "no playbook is normal: drive it directly. If you have "
+                        "not read it yet, GET /guidelines/toolkit-workflow is "
+                        "the general workflow for driving this toolkit, and it "
+                        "is worth reading before you start rather than after "
+                        "something goes wrong. When you work this site out, "
+                        "post a guidelines_note so the next run starts ahead."
                     ),
                 )
             )
@@ -478,13 +500,16 @@ def create_app(
         a running command would launch Chrome underneath it.
         """
         payload: dict[str, Any] = {"op": op}
-        if op in ("browser_start", "browser_restart"):
+        if op in ("browser_start", "browser_restart", "browser_open_manual"):
             try:
                 body = await request.json()
             except Exception:
                 body = None
+            fields = ("browser", "profile") if op == "browser_open_manual" else (
+                "browser", "profile", "headless"
+            )
             if isinstance(body, dict):
-                for field in ("browser", "profile", "headless"):
+                for field in fields:
                     if body.get(field) is not None:
                         payload[field] = body[field]
         results = await run_in_threadpool(execute, [payload], False)
@@ -501,6 +526,10 @@ def create_app(
     @app.post("/browser/restart")
     async def browser_restart_route(request: Request):
         return await _lifecycle(request, "browser_restart")
+
+    @app.post("/browser/open-manual")
+    async def browser_open_manual_route(request: Request):
+        return await _lifecycle(request, "browser_open_manual")
 
     # --- session logs ---------------------------------------------------------
 

@@ -37,10 +37,23 @@ class AbtClient:
         return json.loads(urllib.request.urlopen(req, timeout=120).read())
 
     def command(self, cmd: dict) -> dict:
-        return self._post("/command", cmd)
+        """One op, sent through the list endpoint -- the only one there is.
+
+        /command and /commands were retired when the server settled on a
+        single way in. The result is unwrapped back to the single-op shape
+        every caller here already expects, so nothing upstream has to know
+        the request now travels as a list of one.
+        """
+        answer = self._post("/command-list", {"commands": [cmd]})
+        results = answer.get("results") or []
+        if not results:
+            return answer
+        first = dict(results[0])
+        first.setdefault("ok", answer.get("ok"))
+        return first
 
     def commands(self, cmds: list[dict]) -> dict:
-        return self._post("/commands", cmds)
+        return self._post("/command-list", {"commands": cmds})
 
     def browser_state(self) -> dict:
         req = urllib.request.urlopen(self.base_url + "/browser", timeout=10)

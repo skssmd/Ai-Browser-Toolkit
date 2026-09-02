@@ -9,13 +9,38 @@ from ..errors import OpError
 
 
 def run_js(session: BrowserSession, cmd) -> dict:
+    """Run a script body and hand back what it returned.
+
+    The script is a function *body*, not an expression, so a value only comes
+    back if the script says `return`. That trips people, and silently: a
+    watched agent sent `1+1`, got null, concluded "run_js return values aren't
+    surfaced", and spent three turns building a workaround that wrote results
+    into the DOM and read them back out. Nothing was broken. Nothing in the
+    documentation said otherwise either -- the workflow mentions run_js nine
+    times and every one of them is telling you not to use it.
+
+    So when a script returns nothing and contains no `return` at all, the
+    reply says why. The check is deliberately conservative: a script that does
+    contain `return` may still legitimately produce null, and guessing at that
+    would be worse than staying quiet.
+    """
     try:
         value = session.driver.execute_script(cmd.script, *cmd.args)
     except ScriptError as exc:
         raise OpError("js_error", f"script threw: {exc.msg or exc}") from exc
     except EngineError as exc:
         raise OpError("js_error", f"script failed: {exc.msg or exc}") from exc
-    return {"value": value}
+
+    result = {"value": value}
+    if value is None and not "return" in (cmd.script or ""):
+        result["hint"] = (
+            "value is null because this script has no `return`. The script is "
+            "a function body, not an expression: `1+1` evaluates and discards, "
+            "`return 1+1;` hands back 2. Add `return` to whatever you want to "
+            "read. Do not write results into the DOM to read them back -- that "
+            "is two round trips for something already returned."
+        )
+    return result
 
 
 def alert(session: BrowserSession, cmd) -> dict:
@@ -163,3 +188,164 @@ def shutdown(session: BrowserSession, cmd) -> dict:
     # The server tears the browser down after the response is sent, so the
     # caller gets confirmation instead of a dropped connection.
     return {"stopping": True}
+
+
+# --- playbooks ----------------------------------------------------------------
+#
+# Reachable from an agent for the first time here. They were CLI-only and
+# read-only over HTTP, so the one feature meant to compound across runs never
+# accumulated anything: every agent rediscovered every site.
+
+
+def guidelines_search(session: BrowserSession, cmd) -> dict:
+    from .. import guidelines
+
+    found = guidelines.search(cmd.query, limit=cmd.limit)
+    if found.get("matches"):
+        # A match reports `domain` and `files` separately, so the name to read
+        # has to be assembled -- and guidelines_read's own hint promises this
+        # call "returns the exact names". Spell them out rather than leaving
+        # the caller to guess the join.
+        names = [
+            f"{match['domain']}/{filename}"
+            for match in found["matches"]
+            for filename in (match.get("files") or [])
+        ]
+        found["note"] = (
+            f"Read it before your first op. Exact names to pass to "
+            f"guidelines_read: {names}. This is a note from an agent who "
+            f"already worked this site out -- following it costs one call and "
+            f"saves the turns they spent finding out."
+        )
+    if not found.get("matches"):
+        # An empty lookup is the moment an agent closes the subject and starts
+        # driving, so it is the last chance to say that the general workflow
+        # exists and that writing one back is the other half of the job. An
+        # agent that read this, found nothing and moved on is exactly how a
+        # site gets rediscovered from scratch for the tenth time.
+        found["note"] = (
+            "No playbook for this site. That is normal and is an answer -- most "
+            "sites have none, so carry on rather than searching again another "
+            'way. If you have not read it yet, {"op": "guidelines_read", '
+            '"name": "toolkit-workflow"} is the general workflow for driving '
+            "this toolkit and is worth the one call. When you work something "
+            "out here, leave a guidelines_note behind so the next run starts "
+            "ahead of where you did."
+        )
+    return found
+
+
+def guidelines_read(session: BrowserSession, cmd) -> dict:
+    from .. import guidelines
+
+    try:
+        return {"name": cmd.name, "text": guidelines.read(cmd.name)}
+    except KeyError as exc:
+        raise OpError(
+            "element_not_found",
+            f"no playbook named {cmd.name!r}",
+            hint="Run guidelines_search first; it returns the exact names.",
+        ) from exc
+
+
+_NOTE = """
+## {title}
+- **URL:** {url}
+- **What happened:** {problem}
+- **Tried and learned:** {tried}
+- **Solution:** {solution}
+- *recorded {when} by an agent*
+"""
+
+
+def _entry_titles(text: str) -> list[str]:
+    return [line[3:].strip() for line in text.splitlines() if line.startswith("## ")]
+
+
+def _drop_entry(text: str, title: str) -> tuple[str, bool]:
+    """Cut one entry out by its heading, leaving every other entry untouched.
+
+    Surgical on purpose. An agent that could rewrite the file would eventually
+    erase what earlier runs learned; an agent that can only cut the one entry
+    it is superseding can correct the record without being able to lose it.
+    """
+    want = title.strip().lower()
+    kept: list[str] = []
+    skipping = False
+    dropped = False
+    for line in text.splitlines(keepends=True):
+        if line.startswith("## "):
+            skipping = False
+            if line[3:].strip().lower() == want:
+                skipping = dropped = True
+                continue
+        if not skipping:
+            kept.append(line)
+    return "".join(kept), dropped
+
+
+def guidelines_note(session: BrowserSession, cmd) -> dict:
+    """Add an entry to this domain's playbook, creating the file if needed.
+
+    Appends by default: a playbook is a list that grows, and an agent that
+    could overwrite it would erase the work of every run before it.
+
+    `replaces` is the one exception, and it is deliberately narrow. Appending
+    is safe until an earlier entry turns out to be wrong -- then the file holds
+    two entries that contradict each other and the next reader cannot tell
+    which won. Naming the superseded entry cuts exactly that one and nothing
+    else, so the record can be corrected without being able to be lost.
+
+    A `replaces` that matches nothing still saves the note, and says so. The
+    alternative is discarding what the agent just learned over a mistyped
+    title, which costs more than the duplicate does.
+    """
+    from datetime import date
+
+    from .. import guidelines
+
+    name = f"{cmd.domain}/learned.md"
+    try:
+        existing = guidelines.read(name)
+    except KeyError:
+        existing = f"# {cmd.domain}\n\nWhat agents have had to work out here.\n"
+
+    wanted = (getattr(cmd, "replaces", None) or "").strip()
+    replaced: str | None = None
+    if wanted:
+        existing, dropped = _drop_entry(existing, wanted)
+        replaced = wanted if dropped else None
+
+    entry = _NOTE.format(
+        title=cmd.title.strip(),
+        url=cmd.url.strip(),
+        problem=cmd.problem.strip(),
+        tried=cmd.tried.strip(),
+        solution=cmd.solution.strip(),
+        when=date.today().isoformat(),
+    )
+    try:
+        path = guidelines.save(cmd.domain, "learned.md", existing.rstrip() + "\n" + entry)
+    except (KeyError, OSError) as exc:
+        raise OpError("invalid_op", f"could not save a note for {cmd.domain!r}: {exc}") from exc
+
+    result = {
+        "saved": str(path),
+        "domain": cmd.domain,
+        "entries": existing.count("\n## ") + 1,
+        "note": (
+            "Stored locally. A pull will not overwrite it and it is not shared "
+            "-- `abt guidelines submit` is the separate step for that."
+        ),
+    }
+    if wanted:
+        result["replaced"] = replaced
+        if replaced is None:
+            titles = _entry_titles(existing)
+            result["hint"] = (
+                f"saved, but nothing was replaced: no entry is titled "
+                f"{wanted!r}. The playbook now holds both. Titles present: "
+                f"{titles}. Send another note with `replaces` set to one of "
+                f"those, copied exactly, to retire the wrong one."
+            )
+    return result

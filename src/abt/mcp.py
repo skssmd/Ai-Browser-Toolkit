@@ -47,46 +47,68 @@ Browser automation against one long-lived Chrome. The server is a separate
 process that outlives this session; it owns the browser and this connection
 owns nothing.
 
-Start here:
+FIRST, BEFORE ANY OTHER CALL:
+
+  browser_guidelines {"name":"toolkit-workflow"}   -- the workflow document.
+  Read it once, at the start, before you start a browser or touch a page. It
+  is not reference to reach for when you get stuck; it is how this toolkit is
+  driven, and everything below is a summary of it. One call, and it is the
+  difference between driving this well and rediscovering its traps the
+  expensive way.
+
+Then start a browser:
 
   browser_session {"action":"start"}   -- the server runs WITHOUT a browser on
-  purpose, and nothing starts one for you. Every page tool fails with
+  purpose, and nothing starts one for you. Every page command fails with
   browser_dead until you do this. It can take up to two minutes on a profile
   that has logins in it. browser_session {"action":"status"} says what is up.
 
-Then read what you are given. Every tool that changes the page returns a
+Then act through command_list. It is the only way to touch the page, and it
+takes a LIST, so send every op you already know you need in one call --
+typing and pressing Enter is one call, not two. It is the same name and the
+same shape as `abt command-list` and POST /command-list.
+
+  command_list {"commands":[{"op":"find","css":"input[name=q]"},
+                            {"op":"input","ref":"el_0","value":"hello"},
+                            {"op":"press","key":"Enter"}]}
+
+The ops and their exact parameters come from `abt ops` (GET /ops), which
+returns every op with its argument names, types and defaults. Read it instead
+of guessing -- a guessed name is the single most common failed call.
+
+Then read what you are given. Every op that changes the page returns a
 dom_diff: the text that appeared, and dom_diff.actionable listing new controls
 with refs. Re-reading the page to see what happened is the most common and most
 expensive mistake made with this toolkit -- the answer is already in the reply.
 
 Addressing an element: exactly ONE of ref, css, xpath or text. Refs come from
-browser_find and from a diff's actionable list, and they die on navigation.
+find and from a diff's actionable list, and they die on navigation.
 
-browser_find searches the document, every frame and (with shadow=true) open
-shadow roots. count=0 is an answer, not a bad selector -- the control does not
-exist yet, so click whatever creates it. Do not fall back to browser_run_js to
-scan the DOM.
+find searches the document, every frame and (with shadow=true) open shadow
+roots. count=0 is an answer, not a bad selector -- the control does not exist
+yet, so click whatever creates it. Do not fall back to run_js to scan the DOM.
 
-browser_batch runs a sequence you already know in one round trip. Prefer it
-over one call per step.
+Site playbooks -- read one, and leave one behind. Both halves, not just the
+first:
 
-Site playbooks: before driving an unfamiliar site call browser_guidelines with
-that domain. Some sites have a written procedure, and it is shorter than
-discovering the page. browser_guidelines {"name":"toolkit-workflow"} is the
-full workflow document.
+  READ: before driving an unfamiliar site, call browser_guidelines with that
+  domain. Some sites have a written procedure and it is shorter than
+  discovering the page. An empty result is a normal and complete answer --
+  most sites have none, so carry on rather than searching again another way.
+
+  WRITE: when you work something out that the next run would rather be told
+  than rediscover, send guidelines_note through command_list with domain,
+  title, url, problem, tried and solution. Name the dead ends too. If an entry
+  already there turns out to be wrong, set `replaces` to its exact title
+  rather than appending a second entry that contradicts it -- a reader who
+  meets both cannot tell which one won.
+
+  This second half is the one agents skip, and it is the half that compounds:
+  every other rule here saves tokens once, a playbook saves every future run
+  on that site.
 
 Every failure carries a `hint` saying what to do next. Read it before retrying.
 """
-
-_TARGET = {
-    "ref": {"type": "string", "description": "Ref from a find, or from a diff's actionable list."},
-    "css": {"type": "string"},
-    "xpath": {"type": "string"},
-    "text": {"type": "string", "description": "Exact visible text."},
-    "index": {"type": "integer", "description": "Nth match. Default 0."},
-}
-
-_TARGET_NOTE = "Give exactly ONE of ref/css/xpath/text."
 
 
 def _schema(properties: dict, required: list[str] | None = None) -> dict:
@@ -104,177 +126,37 @@ def _schema(properties: dict, required: list[str] | None = None) -> dict:
 # wrong call, and nothing here explains *why*.
 TOOLS: list[dict] = [
     {
-        "name": "browser_navigate",
+        "name": "command_list",
         "description": (
-            "Open a URL, or go back/forward/reload. Returns the landed page's "
-            "full text in dom_diff.text.added, already waited for render. No "
-            "separate read needed."
+            "Run a browser command, or a LIST of them in order -- this is the "
+            "only way to act on the page, and the same name and shape the CLI "
+            'and HTTP API use. Items are raw op objects: {"op":"click",'
+            '"css":"#x"}. Send every op you already know you need in one call: '
+            "typing and pressing Enter is one call, not two. Stops at the "
+            "first failure and says which, so a list is never a blind leap. "
+            "`abt ops` (GET /ops) gives every op with its exact parameters."
         ),
         "inputSchema": _schema({
-            "url": {"type": "string"},
-            "action": {"type": "string", "enum": ["back", "forward", "reload"]},
-        }),
-    },
-    {
-        "name": "browser_find",
-        "description": (
-            "Search the page, iframes included. Each match returns its tag and "
-            "attributes with children stripped, plus a ref. full=true adds inner "
-            "content and is much larger. count=0 is an answer, not a bad "
-            "selector: do not retry with wider selectors or run_js DOM scans. If "
-            "the reply carries shadow_hosts, retry once with shadow=true; "
-            "otherwise the element does not exist yet, so click whatever would "
-            "create it (upload inputs are mounted on click)."
-        ),
-        "inputSchema": _schema({
-            "css": {"type": "string"},
-            "xpath": {"type": "string"},
-            "text": {"type": "string", "description": "Exact visible text."},
-            "full": {"type": "boolean"},
-            "limit": {"type": "integer"},
-            "visible_only": {"type": "boolean"},
-            "shadow": {
-                "type": "boolean",
-                "description": (
-                    "Also search open shadow roots. css/text only. Use when a "
-                    "reply reported shadow_hosts."
-                ),
+            "commands": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "One or more ops, run in order.",
+                "minItems": 1,
             },
-        }),
-    },
-    {
-        "name": "browser_click",
-        "description": (
-            "Click an element. " + _TARGET_NOTE + " dom_diff.actionable lists "
-            "controls that appeared, with refs -- use those instead of searching "
-            "again. Refuses a click an overlay would swallow."
-        ),
-        "inputSchema": _schema({
-            **_TARGET,
-            "force": {"type": "boolean", "description": "Click through an intercepting overlay."},
-            "new_tab": {"type": "boolean", "description": "Open the href in a new tab instead."},
-        }),
-    },
-    {
-        "name": "browser_input",
-        "description": (
-            "Type into a field. " + _TARGET_NOTE + " Also writes a path to a "
-            "file input the page keeps hidden behind a custom uploader."
-        ),
-        "inputSchema": _schema({
-            **_TARGET,
-            "value": {"type": "string", "description": "Text, or a file path for an upload."},
-            "clear": {"type": "boolean", "description": "Empty first. Default true."},
-        }, ["value"]),
-    },
-    {
-        "name": "browser_select",
-        "description": "Pick an option in a native <select>. " + _TARGET_NOTE,
-        "inputSchema": _schema({
-            **_TARGET,
-            "by_text": {"type": "string"},
-            "value": {"type": "string"},
-            "option_index": {"type": "integer"},
-        }),
-    },
-    {
-        "name": "browser_press",
-        "description": "Send a key: a character, a named key (Enter, Tab), or a chord (ctrl+v).",
-        "inputSchema": _schema({**_TARGET, "key": {"type": "string"}}, ["key"]),
-    },
-    {
-        "name": "browser_read",
-        "description": (
-            "Visible text, or HTML with html=true. Prefer the dom_diff you were "
-            "already given."
-        ),
-        "inputSchema": _schema({**_TARGET, "html": {"type": "boolean"}}),
-    },
-    {
-        "name": "browser_wait_for",
-        "description": "Wait for an element to reach a state.",
-        "inputSchema": _schema({
-            **_TARGET,
-            "state": {"type": "string", "enum": ["present", "visible", "clickable", "absent"]},
-            "timeout": {"type": "number", "description": "Seconds."},
-        }),
-    },
-    {
-        "name": "browser_diff",
-        "description": "What changed since the last command. For updates that land asynchronously.",
-        "inputSchema": _schema({
-            "reset": {"type": "boolean", "description": "Re-baseline to the current page."},
-            "element_diff": {"type": "boolean"},
-        }),
-    },
-    {
-        "name": "browser_inspect",
-        "description": "Console messages or network requests. Console is captured from document start.",
-        "inputSchema": _schema({
-            "what": {"type": "string", "enum": ["console", "network"]},
-            "failures_only": {"type": "boolean"},
-            "pattern": {"type": "string", "description": "Regex filter."},
-        }, ["what"]),
-    },
-    {
-        "name": "browser_run_js",
-        "description": (
-            "Run JavaScript, return its value. Escape hatch -- to locate "
-            "something use browser_find and act on the ref."
-        ),
-        "inputSchema": _schema({
-            "script": {"type": "string", "description": "Body. Use `return` to send a value back."},
-            "args": {"type": "array", "description": "Exposed as arguments[0], arguments[1], ..."},
-        }, ["script"]),
-    },
-    {
-        "name": "browser_screenshot",
-        "description": (
-            "Capture the page. Returns the PATH of the written image -- open "
-            "that. A target scrolls the element into view and marks where it "
-            "sits. base64=true inlines the image instead: only ask for that if "
-            "you can render images, it is hundreds of thousands of characters."
-        ),
-        "inputSchema": _schema({**_TARGET, "base64": {"type": "boolean"}}),
-    },
-    {
-        "name": "browser_tabs",
-        "description": "List, open, switch, or close tabs.",
-        "inputSchema": _schema({
-            "action": {"type": "string", "enum": ["list", "new", "switch", "close"]},
-            "url": {"type": "string"},
-            "tab_id": {"type": "string"},
-        }, ["action"]),
-    },
-    {
-        "name": "browser_batch",
-        "description": (
-            "Run several ops in ONE call, in order. Prefer this for any sequence "
-            "you already know -- one round trip instead of one per step. Items "
-            'are raw op objects: {"op":"click","css":"#x"}. Stops at the first '
-            "failure unless continue_on_error."
-        ),
-        "inputSchema": _schema({
-            "commands": {"type": "array", "items": {"type": "object"}},
             "continue_on_error": {"type": "boolean"},
         }, ["commands"]),
     },
     {
-        "name": "browser_command",
-        "description": (
-            "Last resort: one raw op no named tool covers (alert, scroll, "
-            "status). Passed through WITHOUT validation, so check GET /ops for "
-            "exact parameter names rather than guessing."
-        ),
-        "inputSchema": _schema({"command": {"type": "object"}}, ["command"]),
-    },
-    {
         "name": "browser_guidelines",
         "description": (
-            "The toolkit's own docs. domain=<host> asks whether a written "
-            "playbook exists for a site -- fuzzy, so 'sheets' finds "
-            'docs.google.com. name="toolkit-workflow" returns the full '
-            "workflow. Neither argument lists what is installed."
+            'The toolkit\'s own docs. name="toolkit-workflow" returns the '
+            "workflow document, which you should read once at the start of a "
+            "session before driving anything -- it is how this toolkit is "
+            "meant to be used, not troubleshooting material. domain=<host> "
+            "separately asks whether a written playbook exists for one site "
+            "-- fuzzy, so 'sheets' finds docs.google.com; an empty result "
+            "just means nobody has written one. Neither argument lists what "
+            "is installed."
         ),
         "inputSchema": _schema({
             "domain": {"type": "string", "description": "Site to look up. Fuzzy."},
@@ -288,13 +170,20 @@ TOOLS: list[dict] = [
             "Every page command fails with browser_dead until a browser is "
             "started; nothing starts one for you. Use restart after a crash or "
             "after a tab closed the session. start uses the server's defaults, "
-            "restart keeps whatever the last browser used."
+            "restart keeps whatever the last browser used. open_manual launches "
+            "the real installed browser directly (no automation) on the same "
+            "profile, for sites -- Google among them -- that block a "
+            "CDP-controlled browser at sign-in: stop the running browser first, "
+            "sign in by hand in the window this opens, close it, then start "
+            "again to pick the session back up. Do not pass headless with it "
+            "-- a manual login needs a visible window, and the call is "
+            "rejected if you do."
         ),
         "inputSchema": _schema(
             {
                 "action": {
                     "type": "string",
-                    "enum": ["start", "stop", "restart", "status"],
+                    "enum": ["start", "stop", "restart", "status", "open_manual"],
                 },
                 "browser": {"type": "string", "enum": ["chrome", "edge"]},
                 "profile": {"type": "string"},
@@ -327,8 +216,18 @@ def _one_of(args: dict, *names: str) -> dict:
 
 
 def to_op(tool: str, args: dict) -> Any:
-    """Translate a tool call into the op (or batch) the HTTP API expects."""
-    target = _one_of(args, "ref", "css", "xpath", "text", "index")
+    """Translate a tool call into what the HTTP API expects.
+
+    Three tools, so three cases. There used to be sixteen, one per op, and
+    every one of them was a second spelling of a vocabulary `abt ops` already
+    publishes -- which is how MCP came to teach one-op-per-call while the CLI
+    and HTTP taught batching.
+    """
+    if tool == "command_list":
+        return {
+            "commands": args.get("commands") or [],
+            "continue_on_error": bool(args.get("continue_on_error")),
+        }
 
     if tool == "browser_session":
         payload = {"op": f"browser_{args['action']}"}
@@ -336,69 +235,6 @@ def to_op(tool: str, args: dict) -> Any:
             if args.get(field) is not None:
                 payload[field] = args[field]
         return payload
-
-    if tool == "browser_navigate":
-        if args.get("action"):
-            return {"op": args["action"]}
-        return {"op": "goto", "url": args.get("url")}
-
-    if tool == "browser_find":
-        payload = {"op": "find_full" if args.get("full") else "find"}
-        payload.update(
-            _one_of(args, "css", "xpath", "text", "limit", "visible_only", "shadow")
-        )
-        return payload
-
-    if tool == "browser_click":
-        return {"op": "click", **target, **_one_of(args, "force", "new_tab")}
-
-    if tool == "browser_input":
-        return {"op": "input", **target, **_one_of(args, "value", "clear")}
-
-    if tool == "browser_select":
-        return {"op": "select", **target, **_one_of(args, "by_text", "value", "option_index")}
-
-    if tool == "browser_press":
-        return {"op": "press", **target, **_one_of(args, "key")}
-
-    if tool == "browser_read":
-        return {"op": "get_html" if args.get("html") else "get_text", **target}
-
-    if tool == "browser_wait_for":
-        return {"op": "wait_for", **target, **_one_of(args, "state", "timeout")}
-
-    if tool == "browser_diff":
-        return {"op": "diff", **_one_of(args, "reset", "element_diff")}
-
-    if tool == "browser_inspect":
-        if args.get("what") == "network":
-            return {"op": "read_network", **_one_of(args, "failures_only", "pattern")}
-        return {"op": "read_console", **_one_of(args, "pattern")}
-
-    if tool == "browser_tabs":
-        action = args.get("action")
-        if action == "list":
-            return {"op": "tab_list"}
-        if action == "new":
-            return {"op": "tab_new", **_one_of(args, "url")}
-        if action == "switch":
-            return {"op": "tab_switch", **_one_of(args, "tab_id")}
-        return {"op": "tab_close", **_one_of(args, "tab_id")}
-
-    if tool == "browser_run_js":
-        return {"op": "run_js", **_one_of(args, "script", "args")}
-
-    if tool == "browser_screenshot":
-        return {"op": "screenshot", **target, **_one_of(args, "base64")}
-
-    if tool == "browser_batch":
-        return {
-            "commands": args.get("commands") or [],
-            "continue_on_error": bool(args.get("continue_on_error")),
-        }
-
-    if tool == "browser_command":
-        return args.get("command") or {}
 
     raise KeyError(tool)
 
@@ -430,7 +266,10 @@ class Bridge:
                 payload = to_op(tool, args)
             except KeyError:
                 return f"no such tool: {tool}", True
-            endpoint = "/commands" if tool == "browser_batch" else "/command"
+            # One endpoint for everything, named for the plural. See
+            # server.py: the two-endpoint shape taught callers to send one op
+            # per round trip.
+            endpoint = "/command-list"
             request = ("POST", endpoint, payload)
 
         method, path, body = request
