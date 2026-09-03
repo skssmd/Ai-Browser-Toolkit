@@ -596,6 +596,21 @@ class PlaywrightDriver:
         self._cdp: dict[int, object] = {}
         self._net: dict[int, list[dict]] = {}
         self._net_started: dict[int, float] = {}
+        # The last native dialog this session saw, if any.
+        #
+        # Playwright auto-dismisses a dialog when nothing is listening, and
+        # that automatic dismiss can reject inside the Node driver and take
+        # the whole process down with it:
+        #
+        #   Dialog._dismiss -> Page.handleJavaScriptDialog -> unhandled
+        #   rejection -> Node exits
+        #
+        # The Python side survives, holding a driver that no longer exists, so
+        # /health keeps answering while every real call hangs for ever. One
+        # confirm() on a Magento admin page killed the session on a loop that
+        # way. Registering a handler replaces the automatic one, and swallowing
+        # its errors means a dialog can no longer be fatal.
+        self._dialog: dict | None = None
         # A failure that follows a response annotates that row rather than
         # adding a second one. Matched on url+method, not on the Request
         # object: Playwright hands out a *different* wrapper per event, so
@@ -639,8 +654,25 @@ class PlaywrightDriver:
                     contexts[0] if contexts else self._browser.new_context()
                 )
             except Exception as exc:
+                # Terminal, and it has to say so. This browser belongs to
+                # whoever launched it; there is no relaunching it from in
+                # here, and the generic "browser is gone" advice -- restart
+                # it -- is worse than useless when the endpoint is dead: one
+                # benchmark agent spent twenty of its thirty turns and
+                # 640k tokens cycling browser_start / browser_stop /
+                # browser_restart against a socket that was never going to
+                # answer, then guessed at an answer it could no longer check.
                 raise OpError(
-                    "browser_dead", f"could not attach to {cdp_url}: {exc}"
+                    "browser_dead",
+                    f"could not attach to {cdp_url}: {exc}",
+                    hint=(
+                        "This browser is externally owned -- it was launched "
+                        "by the harness, not by this server -- so it cannot "
+                        "be started or restarted from here. Retrying will "
+                        "fail the same way. Nothing further can be done in "
+                        "the browser this session; report what you have and "
+                        "stop."
+                    ),
                 ) from exc
         else:
             self._cdp_attached = False
@@ -725,6 +757,21 @@ class PlaywrightDriver:
         if id(page) in self._net:
             return
         self._net[id(page)] = []
+
+        def on_dialog(dialog) -> None:
+            try:
+                self._dialog = {"type": dialog.type, "message": dialog.message}
+            except Exception:
+                self._dialog = {"type": "unknown", "message": ""}
+            # Dismiss is the safe default: accepting a confirm() agrees to
+            # something nobody asked for. An op that wants to answer one asks
+            # for it explicitly.
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass
+
+        page.on("dialog", on_dialog)
 
         def on_request(request) -> None:
             self._net_started[id(request)] = time.monotonic()
