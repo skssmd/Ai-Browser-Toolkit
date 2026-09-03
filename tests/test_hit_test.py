@@ -8,6 +8,7 @@ changed nothing" is the worst answer an agent can be handed.
 from __future__ import annotations
 
 import pytest
+from conftest import texts
 
 from abt.errors import OpError
 from abt.schema import parse_command
@@ -28,21 +29,30 @@ def page(session, base_url):
     return session
 
 
-def test_a_covered_click_fails_loudly_instead_of_silently(page):
+def test_a_covered_click_is_dispatched_and_says_it_was(page):
+    """Since 0.4.0 ordinary overlap is reported, not refused.
+
+    The rule that matters is still "never succeed silently", but refusing was a
+    blunt way to keep it. A Magento save button covered by its own split-button
+    dropdown cost an agent a turn to a refusal, when the click would have
+    reached exactly the element it named. So a non-modal cover is now clicked
+    through, and the result says what was in the way. A dialog still stops it --
+    see the dialog tests below -- because something there is waiting on an
+    answer.
+    """
     run(page, op="click", css="#reveal-overlay")
+    result = run(page, op="click", css="#under")
 
-    with pytest.raises(OpError) as caught:
-        run(page, op="click", css="#under")
-
-    assert caught.value.type == "not_interactable"
-    assert "blocker" in caught.value.message
+    assert result["clicked"]
+    assert result["forced"] is True
+    assert result["forced_past"]
 
 
-def test_the_error_names_what_would_have_received_the_click(page):
+def test_the_result_names_what_would_have_received_the_click(page):
+    """The obstacle is still named; it is now an observation, not a refusal."""
     run(page, op="click", css="#reveal-overlay")
-    with pytest.raises(OpError) as caught:
-        run(page, op="click", css="#under")
-    assert "covered by" in caught.value.message
+    result = run(page, op="click", css="#under")
+    assert "blocker" in result["forced_past"]
 
 
 def test_force_still_clicks_through_an_overlay(page):
@@ -55,7 +65,7 @@ def test_force_still_clicks_through_an_overlay(page):
 def test_an_uncovered_click_is_unaffected(page):
     result = run(page, op="click", css="#open")
     assert result["forced"] is False
-    assert "Chart" in result["dom_diff"]["text"]["added"]
+    assert "Chart" in texts(result["dom_diff"]["text"]["added"])
 
 
 def test_a_cover_that_is_animating_away_does_not_fail_the_click(page):
@@ -71,16 +81,21 @@ def test_a_cover_that_is_animating_away_does_not_fail_the_click(page):
     result = run(page, op="click", css="#open")
 
     assert result["clicked"]
-    assert "Chart" in result["dom_diff"]["text"]["added"]
+    assert "Chart" in texts(result["dom_diff"]["text"]["added"])
 
 
-def test_a_cover_that_stays_still_fails(page):
-    """Patience must not become blindness: a real overlay still stops a click."""
+def test_a_cover_that_stays_still_is_reported_not_ignored(page):
+    """Patience must not become blindness.
+
+    The check still waits out an animation and still notices a cover that is
+    genuinely there. What changed is the answer: the click goes through and the
+    cover is named, rather than the command failing. What must never happen is
+    the original bug -- succeeding while saying nothing at all.
+    """
     run(page, op="click", css="#reveal-overlay")
-    with pytest.raises(OpError) as caught:
-        run(page, op="click", css="#under")
-    assert caught.value.type == "not_interactable"
-    assert "still covered by" in caught.value.message
+    result = run(page, op="click", css="#under")
+    assert result["forced"] is True
+    assert result["forced_past"]
 
 
 def test_a_click_behind_an_open_dialog_names_the_dialog(page):

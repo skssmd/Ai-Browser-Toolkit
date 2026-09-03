@@ -8,6 +8,7 @@ feature -- with exactly one deliberate exception, the hidden file input.
 from __future__ import annotations
 
 import pytest
+from conftest import texts
 
 from abt.errors import OpError
 from abt.schema import parse_command
@@ -46,7 +47,7 @@ def test_revealing_a_menu_reports_its_items_with_refs(page):
 def test_every_entry_is_anchored_to_text_the_diff_also_reported(page):
     """The contract: nothing is handed out that the agent cannot tie to text."""
     result = run(page, op="click", css="#open")
-    shown = result["dom_diff"]["text"]["added"]
+    shown = texts(result["dom_diff"]["text"]["added"])
 
     for item in actionable(result):
         assert item["name"], "an entry with no text has nothing to anchor to"

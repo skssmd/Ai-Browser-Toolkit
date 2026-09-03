@@ -214,6 +214,34 @@ def actionable_report(
     return {"added": added, "truncated": truncated}
 
 
+def note_no_change(info: dict, changed_elements: bool) -> None:
+    """Say that nothing changed, rather than leaving a hole where a fact goes.
+
+    An empty diff after a successful command is a real outcome -- the click
+    landed and the page did not react -- but reported as an absence it reads
+    like a gap in the response, and an agent that mistakes one for the other
+    goes back to re-read the page it was just handed. This is the argument the
+    shadow-host count already settles: a silence has to say which silence it is.
+
+    Watched happen: a click on a Magento "Content" accordion returned ok with an
+    empty diff. The click had landed; that control simply was not the trigger.
+    The agent read the empty diff as no information and spent turns hunting for
+    a textarea that a different control would have revealed.
+    """
+    text = info.get("text") or {}
+    if info.get("navigation") or text.get("added") or changed_elements:
+        return
+    if text.get("unchanged_count"):
+        return
+    info["no_change"] = True
+    info["note"] = (
+        "the command succeeded and nothing on the page changed -- it landed, "
+        "and the page did not react. If you expected a change, this control is "
+        "probably not the one that makes it; element_diff:true reports "
+        "attribute-only changes a text diff cannot see."
+    )
+
+
 def note_shadow(info: dict, after: dict) -> None:
     """Say how many trees this report did not look into, when that matters.
 
@@ -334,6 +362,8 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
             if controls is not None:
                 info["actionable"] = controls
 
+    elements = info.get("elements") or {}
+    note_no_change(info, bool(elements.get("added") or elements.get("removed")))
     note_shadow(info, after)
     result["dom_diff"] = info
     return result
@@ -368,6 +398,8 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
         "end rather than repeated.",
         "text": page_text(after["text"], before["text"], cmd.include_removed),
     }
+    elements = info.get("elements") or {}
+    note_no_change(info, bool(elements.get("added") or elements.get("removed")))
     note_shadow(info, after)
     result["dom_diff"] = info
     return result

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import pytest
 
+from conftest import texts
+
 from abt.errors import OpError
 from abt.ops import dispatch
 from abt.schema import parse_command
@@ -35,7 +37,9 @@ def run(session, **payload):
 
 
 def added(result):
-    return result["dom_diff"]["text"]["added"]
+    # Positions come off here: these tests are about which document a string
+    # came from, not where it sat in it.
+    return texts(result["dom_diff"]["text"]["added"])
 
 
 @pytest.fixture

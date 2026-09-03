@@ -220,13 +220,13 @@ def _require_hit(session: BrowserSession, element, cmd) -> None:
             "the command that opened it already reported its controls. Pass "
             "force:true only if you mean to click through it.",
         )
-    raise OpError(
-        "not_interactable",
-        f"{describe(cmd)} is still covered by "
-        f"{_blocker(verdict)} after "
-        f"{_HIT_TEST_WINDOW}s, and it would receive the click instead. Pass "
-        "force:true to dispatch it anyway, or new_tab:true if the target is a link",
-    )
+    # Everything else is reported, not refused. A dialog is worth stopping for
+    # because something is waiting on an answer; ordinary overlap usually is
+    # not. The case that forced this: a Magento save button covered by its own
+    # split-button dropdown toggle -- the same control, so the click would have
+    # reached exactly what was meant, and refusing cost a turn at the moment an
+    # agent had one left. The caller dispatches it and says that it did.
+    return _blocker(verdict)
 
 
 def click(session: BrowserSession, cmd) -> dict:
@@ -247,10 +247,32 @@ def click(session: BrowserSession, cmd) -> dict:
             f"{describe(cmd)} is disabled; force defeats occlusion, not intent",
         )
 
+    blocked = None
     if not cmd.force:
         # force exists precisely to click through an overlay, so it skips the
-        # test rather than being blocked by it.
-        _require_hit(session, element, cmd)
+        # test rather than being blocked by it. A dialog still raises from in
+        # there; anything else comes back as a description of what is in the way.
+        blocked = _require_hit(session, element, cmd)
+
+    if blocked:
+        # Dispatch it rather than refusing, and say what was in the way. The
+        # element was named precisely enough to resolve, and the obstacle is not
+        # a dialog waiting on an answer -- it is usually the control's own
+        # furniture sitting on top of it.
+        try:
+            session.driver.execute_script("arguments[0].click();", element)
+        except EngineError as inner:
+            raise OpError(
+                "not_interactable",
+                f"{describe(cmd)} is covered by {blocked} and dispatching it "
+                f"anyway failed: {inner.msg or inner}",
+            ) from inner
+        return {
+            "clicked": describe(cmd),
+            "forced": True,
+            "forced_past": blocked,
+            **session.location(),
+        }
 
     try:
         element.click()

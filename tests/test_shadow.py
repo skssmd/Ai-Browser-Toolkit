@@ -21,6 +21,7 @@ gives a search a bottom rung, which is what lets the guideline finally say
 from __future__ import annotations
 
 import pytest
+from conftest import texts
 
 from abt.errors import OpError
 from abt.ops import dispatch
@@ -32,7 +33,8 @@ def run(session, **payload):
 
 
 def added(result):
-    return result["dom_diff"]["text"]["added"]
+    # Whether a shadow root was walked, not where its text sat.
+    return texts(result["dom_diff"]["text"]["added"])
 
 
 @pytest.fixture

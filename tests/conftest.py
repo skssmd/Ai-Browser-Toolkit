@@ -19,6 +19,27 @@ from abt.server import create_app
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def texts(added: list[str]) -> list[str]:
+    """The strings a diff reported, with the positions taken off.
+
+    Since 0.4.0 every entry arrives with where it sits: `"ACBa Widgets"`, or a
+    bare path introducing members written as `"  a Widgets"`. A test that cares
+    *what* appeared reads through this; a test about the tree itself asserts on
+    the raw lines instead, which is the point of keeping this a helper rather
+    than changing what the ops return.
+
+    Group headers own no text, and the line summarising what a navigation did
+    not repeat is not something the page said, so neither comes back.
+    """
+    out: list[str] = []
+    for line in added:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("…") or " " not in stripped:
+            continue
+        out.append(stripped.partition(" ")[2])
+    return out
+
+
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):  # keep the test output readable
         pass

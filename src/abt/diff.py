@@ -676,6 +676,10 @@ def diff_text(
     autojunk is off: it would classify a string repeated across a long list --
     every "Add to cart" on a results page -- as noise and drop real changes.
     """
+    # Accept either shape. The walk hands over (path, value) pairs, but a caller
+    # holding plain strings -- a unit test, an older snapshot -- gets the same
+    # answer, rendered without positions rather than crashing on the unpack.
+    before, after = _pairs(before), _pairs(after)
     matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
     added_pairs: list[tuple[str, str]] = []
     removed_pairs: list[tuple[str, str]] = []

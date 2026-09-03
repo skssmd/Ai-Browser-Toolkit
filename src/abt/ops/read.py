@@ -105,7 +105,12 @@ def get_text(session: BrowserSession, cmd) -> str:
         return _tree_text(session, element)
 
     if cmd.has_target:
-        return _tree_text(session, resolve_one(session, cmd))
+        # A selector names one element and the caller wants what it says, so
+        # this stays the plain string it has always been. Structure is what
+        # `level` is for: a table read by selector would come back as a wall of
+        # cells, and the way to avoid that is to ask for its level -- which
+        # `find` now hands back with every match.
+        return resolve_one(session, cmd).text
 
     session.leave_frames()
     parts = [_tree_text(session)]

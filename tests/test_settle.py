@@ -13,6 +13,7 @@ It survived 253 passing tests because every other fixture is complete at load.
 from __future__ import annotations
 
 import pytest
+from conftest import texts
 
 from abt.schema import parse_command
 from abt.ops import dispatch
@@ -31,7 +32,8 @@ def clean(session, base_url):
 
 
 def added(result):
-    return result["dom_diff"]["text"]["added"]
+    # These tests ask whether late content arrived, not where it landed.
+    return texts(result["dom_diff"]["text"]["added"])
 
 
 def test_goto_waits_for_late_content(clean, base_url):
