@@ -78,7 +78,14 @@ def _tree_text(session: BrowserSession, element=None) -> str:
     """
     pairs = diff.text_with_shadow(session.driver, root=element)
     if pairs:
-        return "\n".join(diff.render_text(pairs))
+        lines = diff.render_text(pairs)
+        hint = diff.status_hint(lines)
+        if hint:
+            # Appended as an extra line, the same way the navigation-suppression
+            # note is: this is still the page's own text, plus one line that is
+            # not, and the two must never be confused for each other.
+            lines = [*lines, f"… {hint}"]
+        return "\n".join(lines)
     return element.text if element is not None else _body_text(session)
 
 
@@ -94,8 +101,15 @@ def get_text(session: BrowserSession, cmd) -> str:
     if level:
         element = diff.element_at(session.driver, level)
         if element is None:
+            # "not_found" is not in the closed error-type set -- OpError's own
+            # constructor raises ValueError on an unrecognised type, which the
+            # server's catch-all then reports as browser_dead. A stale level
+            # told an agent its browser had died; it believed the diagnosis
+            # over the message and ran browser_restart, discarding every tab
+            # and ref for a level that was simply out of date. element_not_found
+            # is the type this already is: a search that found nothing.
             raise OpError(
-                "not_found",
+                "element_not_found",
                 f"nothing sits at level {level!r}",
                 hint=(
                     "Levels come from the text track and describe one page: a "

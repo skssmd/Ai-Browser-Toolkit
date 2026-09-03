@@ -694,6 +694,32 @@ commands in a batch whose effects you do not care about, `--no-diff` when
 running a script you have already debugged, and `"diff": true` to force one back
 on when the server default is off.
 
+### Extra fields that appear only when they are worth saying
+
+`dom_diff` carries a few keys that show up only in the specific case they
+apply to — an ordinary response on an ordinary page has none of them.
+
+**`no_change: true`** — the command succeeded and nothing in either track
+changed: no added text, no element changes. That is a real outcome, not an
+error — the click landed and the page did not react, usually because the
+control you hit was not the one that produces the effect you expected.
+`element_diff: true` is the next thing to try, for an attribute-only change a
+text diff cannot see.
+
+**`status_hint`** — the text just returned names a status like `Canceled`,
+`Rejected`, `Declined`, `Deleted`, `Refunded` or `Voided`. It is a reminder,
+not a filter: if you are about to count or sum across rows, check each row's
+status before including it. Matches only the status *form* — "Canceled"
+fires, the button labelled "Cancel" does not — so it does not fire on
+ordinary page chrome.
+
+**`forced_past`** on a `click` response — the click was dispatched through
+something covering the target that was not a dialog, and this names it. A
+click behind an open dialog still refuses outright, because something there
+is waiting on an answer; anything else is treated as the target's own
+furniture (a split-button's dropdown toggle overlapping the button it
+belongs to) and clicked through rather than blocked.
+
 ## Ops
 
 | Group | Ops |

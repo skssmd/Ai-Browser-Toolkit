@@ -39,6 +39,7 @@ never captured -- diffs get written to session logs.
 from __future__ import annotations
 
 import difflib
+import re
 
 # Element lines captured per snapshot. Enough to see any real mutation on an
 # SPA; short enough that two snapshots still diff fast.
@@ -671,6 +672,48 @@ def _pairs(raw) -> list[tuple[str, str]]:
             # strings. Pathless entries still render, just without grouping.
             out.append(("", str(item)))
     return out
+
+
+# Past-tense/adjective status forms only -- deliberately not "cancel",
+# "reject", "delete", which are what a button says before you press it.
+# "Canceled" versus "Cancel" is the whole trick: a status column and a button
+# use different grammatical forms of the same word, so matching the status
+# form alone skips almost every UI-chrome collision without needing to know
+# anything about where on the page the text sat.
+#
+# Traced to a real failure: an agent listed an order as "$354.66 (Canceled)"
+# in the same sentence it then summed into "how much I spent" -- it read the
+# status correctly and the lapse was in never re-checking it before the
+# arithmetic. This note cannot fix a slip that happens after every tool call
+# has already returned; it exists for the ordinary case, where the status is
+# still in front of the model when it reasons about the sum.
+_STATUS_WORDS = re.compile(
+    r"\b(cancell?ed|rejected|declined|deleted|refunded|voided)\b", re.IGNORECASE
+)
+
+
+def status_hint(lines: list[str]) -> str | None:
+    """A short warning when the text just returned names an excluded status.
+
+    Fires on the words themselves, not on a guess at layout, so it costs
+    nothing to compute and nothing when it does not apply -- most pages have
+    none of these words at all. Takes rendered lines rather than raw pairs so
+    one function serves both a diff's `added` list and a plain `get_text`
+    reply -- the position prefix a line carries is invisible to the regex.
+    """
+    seen: set[str] = set()
+    for line in lines:
+        for match in _STATUS_WORDS.finditer(line):
+            seen.add(match.group(1).capitalize())
+    if not seen:
+        return None
+    words = ", ".join(sorted(seen))
+    return (
+        f"this text names a status you may need to exclude ({words}). If you "
+        "are counting or summing across rows, check each row's status before "
+        "including it -- a row already labelled as one of these and then "
+        "summed anyway is the usual way this goes wrong."
+    )
 
 
 def render_text(pairs: list[tuple[str, str]]) -> list[str]:

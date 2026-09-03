@@ -737,3 +737,35 @@ id on the episode so a reset is detectable rather than silent.
 the VPS. The repo copy has none of the campaign's prompt work: no `_ANSWER_MARK`,
 no `_NUDGE`, no `_turn_budget`, no `_playbook_section`, no counts or forms rules.
 Every improvement measured above exists on one server and nowhere else.
+
+### 28. A status word read correctly was still summed anyway -- fixed 2026-09-03
+
+Not a reading failure -- the model's own answer named both facts correctly, in
+the same sentence:
+
+```
+000000149 -- 7/25/22 -- $354.66 (Canceled)
+000000167 -- 7/8/22  -- $40.16  (Complete)
+Summing the order totals for July 2022: 354.66 + 40.16 = 394.82
+```
+
+Gold wanted `40.16` -- the Complete order alone. The lapse happened entirely
+inside the model's own reasoning, after every tool call had already returned;
+there is no op in between where a toolkit response could have intervened.
+
+`diff.status_hint` now scans the text a response is about to return for a
+closed set of past-tense status words -- Canceled, Cancelled, Rejected,
+Declined, Deleted, Refunded, Voided -- and, if any appear, adds a one-line
+`status_hint` reminding the caller to check status before summing. It cannot
+undo a slip that happens after the response is already in hand, so it will not
+catch every instance of this failure; it exists for the ordinary case, where
+the reminder lands in the same response that showed the status.
+
+Matches only the status form, never the imperative: "Canceled" fires, "Cancel"
+does not. That is what keeps it off every Cancel/Delete button on the page --
+a status column and a button use different grammatical forms of the same word,
+so the distinction costs nothing to check and needs no knowledge of where on
+the page the text sat. Wired into both diffed-op responses and `get_text`
+(whole page and `level` reads); a selector-targeted `get_text` stays a bare
+string on purpose and is not touched, so `get_text {"css": "#total"} == "$40.16"`
+keeps holding exactly the value a caller asked for.

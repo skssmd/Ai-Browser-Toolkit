@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .. import diff
 from ..browser import BrowserSession
 from ..diff import diff_actionable, diff_html, diff_text, page_key, page_text
 from ..errors import OpError
@@ -242,6 +243,26 @@ def note_no_change(info: dict, changed_elements: bool) -> None:
     )
 
 
+def note_status(info: dict) -> None:
+    """Flag a status word in the text this response just returned.
+
+    Traced to a real failure: an agent wrote "$354.66 (Canceled)" and then
+    summed that total into "how much I spent" in the same reply -- it read the
+    status correctly and the lapse was never re-checking it before the
+    arithmetic. This cannot fix a slip that happens after every tool call has
+    returned, but it puts the reminder in the same response that showed the
+    status, right where the model is about to reason about it.
+
+    Matches "Canceled" and its kin -- the status form -- never "Cancel", the
+    imperative a button says before you press it. That grammatical split is
+    what keeps this from firing on every Cancel/Delete button on the page.
+    """
+    added = (info.get("text") or {}).get("added") or []
+    hint = diff.status_hint(added)
+    if hint:
+        info["status_hint"] = hint
+
+
 def note_shadow(info: dict, after: dict) -> None:
     """Say how many trees this report did not look into, when that matters.
 
@@ -378,6 +399,7 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
 
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))
+    note_status(info)
     note_shadow(info, after)
     result["dom_diff"] = info
     return result
@@ -432,6 +454,7 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     }
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))
+    note_status(info)
     note_shadow(info, after)
     result["dom_diff"] = info
     return result
