@@ -142,6 +142,12 @@ class BrowserSession:
         self._order: list[str] = []
         self._counter = 0
         self._captured: set[str] = set()  # handles already armed for console
+        # Whether a status_hint has already been shown this session. A status
+        # word that survives one warning is not going to be caught by a second
+        # identical one -- a line repeated on every page read is a line an
+        # agent stops reading, the same reasoning `_ANNOUNCED` uses for
+        # playbook announcements. See `diff.status_hint`.
+        self.status_warned = False
         # The element the command in flight acted on, for the audit frame's
         # highlight box. Set by `targeting.resolve_one`, cleared per command.
         self.last_target = None

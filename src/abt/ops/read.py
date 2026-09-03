@@ -79,12 +79,15 @@ def _tree_text(session: BrowserSession, element=None) -> str:
     pairs = diff.text_with_shadow(session.driver, root=element)
     if pairs:
         lines = diff.render_text(pairs)
-        hint = diff.status_hint(lines)
-        if hint:
-            # Appended as an extra line, the same way the navigation-suppression
-            # note is: this is still the page's own text, plus one line that is
-            # not, and the two must never be confused for each other.
-            lines = [*lines, f"… {hint}"]
+        if not session.status_warned:
+            hint = diff.status_hint(lines)
+            if hint:
+                # Appended as an extra line, the same way the
+                # navigation-suppression note is: this is still the page's own
+                # text, plus one line that is not, and the two must never be
+                # confused for each other.
+                lines = [*lines, f"… {hint}"]
+                session.status_warned = True
         return "\n".join(lines)
     return element.text if element is not None else _body_text(session)
 

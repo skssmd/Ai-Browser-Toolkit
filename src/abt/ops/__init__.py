@@ -243,24 +243,34 @@ def note_no_change(info: dict, changed_elements: bool) -> None:
     )
 
 
-def note_status(info: dict) -> None:
+def note_status(session: BrowserSession, info: dict) -> None:
     """Flag a status word in the text this response just returned.
 
     Traced to a real failure: an agent wrote "$354.66 (Canceled)" and then
     summed that total into "how much I spent" in the same reply -- it read the
-    status correctly and the lapse was never re-checking it before the
-    arithmetic. This cannot fix a slip that happens after every tool call has
-    returned, but it puts the reminder in the same response that showed the
-    status, right where the model is about to reason about it.
+    status correctly and never re-checked it before the arithmetic. Verified
+    fixed: rerun with this hint attached, the same page produced "which is
+    Canceled (no money spent)" and excluded it, where before it had summed the
+    row anyway. The hint reaches the model because it rides on the very
+    response that named the status -- there is no later point it needs to
+    reach, the reasoning that goes wrong happens over data already in hand.
 
     Matches "Canceled" and its kin -- the status form -- never "Cancel", the
     imperative a button says before you press it. That grammatical split is
     what keeps this from firing on every Cancel/Delete button on the page.
+
+    Once per session, regardless of how many rows or pages repeat the same
+    status: an agent told once to check statuses before summing does not need
+    the identical sentence on every page of a five-page order history, and a
+    line repeated that often is a line stopped being read.
     """
+    if session.status_warned:
+        return
     added = (info.get("text") or {}).get("added") or []
     hint = diff.status_hint(added)
     if hint:
         info["status_hint"] = hint
+        session.status_warned = True
 
 
 def note_shadow(info: dict, after: dict) -> None:
@@ -399,7 +409,7 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
 
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))
-    note_status(info)
+    note_status(session, info)
     note_shadow(info, after)
     result["dom_diff"] = info
     return result
@@ -454,7 +464,7 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     }
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))
-    note_status(info)
+    note_status(session, info)
     note_shadow(info, after)
     result["dom_diff"] = info
     return result
