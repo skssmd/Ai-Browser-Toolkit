@@ -341,6 +341,46 @@ table after acting on it, or to look at something a navigation reported as
 unchanged. Levels describe one page: a navigation renumbers them, so use one
 from the result you were last given.
 
+### How it works
+
+**Where the path comes from.** One `TreeWalker` pass over the document produces
+the text track. An element's level is its index among its parent's *element*
+children — counted from `previousElementSibling`, not from the order the walk
+happens to reach text-bearing nodes, so the number means the element's real
+position rather than "the third thing that had words in it". Ancestors are
+cached as the walk descends, so each element pays for its depth once.
+
+**Why letters.** `A`–`Z` then `a`–`z` gives 52 siblings in one character.
+Beyond that the level is written as a decimal number, and digits are kept out of
+the alphabet precisely so a run of them can only ever mean one level: `ABr100C`
+is unambiguously `A B r 100 C`, with nothing escaped or bracketed. Two adjacent
+numeric levels are the one case that would run together, so a dot separates
+those and only those — it takes a 53rd child that itself has a 53rd child, and
+costs a character nowhere else.
+
+**Why the path is written once per group.** Text on a Magento page sits at a
+median DOM depth of 15 and reaches 20. A full path on every string costs more
+characters than the strings it labels — measured at 120–175% overhead. Writing
+it on the parent and giving each member its own letter is the same information
+for about a fifth of the price, and it makes the row boundary explicit instead
+of something you infer from a shared prefix. A group holding a single string
+keeps that string on its own line, so the common case never costs two lines to
+say one thing.
+
+**How the navigation diff decides.** `page_text` receives the outgoing page's
+text and matches against it **on the string, not the path**. That distinction
+matters: paths shift between documents, so matching on position would suppress
+real content any time two pages happened to nest something the same way. What
+repeats is what the agent has already read. The count and a level holding some
+of it travel with the result, because an agent cannot ask for what it does not
+know is missing.
+
+**What it costs.** Paths add tokens to every string; suppression removes the
+chrome. On one admin task the net was 47k tokens per turn down to 33k, with
+`run_js` 8 → 0 and ops 60 → 30. It does not reduce turn counts — a task needing
+thirty decisions still needs thirty — and `find` results still carry no path,
+so an element you located by searching cannot yet be addressed by level.
+
 ## Two ways to read a page
 
 `find` returns element **shells** — each match's own tag and attributes, with all
