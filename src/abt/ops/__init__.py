@@ -344,11 +344,25 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
             # Worth stating outright: the op is being reported as a success
             # *because* it navigated, and the caller's refs are now stale.
             info["navigated_during_op"] = True
+        # Same reasoning as the plain navigation ops: suppress against a
+        # genuinely different page, never against this one. `navigated_away`
+        # only means the execution context was destroyed, which a same-page
+        # form resubmission can also trigger -- so check the URL, not the flag.
+        same_page = page_key(url_before) == page_key(url_after)
         info["note"] = (
-            "the page navigated; text is the new page as its tree -- " + _TREE_LEGEND + " Minus what "
-            "the element track is skipped because the two documents are unrelated"
+            "the page navigated; text is the new page as its tree -- "
+            + _TREE_LEGEND
+            + (
+                ""
+                if same_page
+                else " Minus what the previous page already showed. "
+            )
+            + "The element track is skipped because the two documents are "
+            "unrelated"
         )
-        info["text"] = page_text(after["text"], before["text"], cmd.include_removed)
+        info["text"] = page_text(
+            after["text"], None if same_page else before["text"], cmd.include_removed
+        )
     else:
         info["text"] = diff_text(
             before["text"], after["text"], include_removed=cmd.include_removed
@@ -377,6 +391,7 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     wants is the destination's content, which they would otherwise have to ask
     for in a second round trip.
     """
+    url_before = session.driver.current_url
     before = session.snapshot()
     try:
         result = handler(session, cmd)
@@ -389,14 +404,31 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     if not isinstance(result, dict):
         return result
 
+    url_after = session.driver.current_url
+    # Chrome-suppression compares against a genuinely different page -- the
+    # thing two pages of the same site share is their nav and footer, not their
+    # content. A reload lands on this same page, and back/forward occasionally
+    # do too (a same-page anchor, a history entry that never left). There "the
+    # previous page" and "the one you are looking at" are the same document, so
+    # suppressing against it would hide the very thing the caller reloaded for
+    # -- reported once as a live regression: late-arriving content and a
+    # cross-origin frame both vanished from a reload's answer because they had
+    # already been seen the first time the page loaded.
+    same_page = page_key(url_before) == page_key(url_after)
     info = {
-        "url_after": session.driver.current_url,
+        "url_after": url_after,
         "navigation": True,
         "note": "text is the page you landed on, laid out as its tree -- "
         + _TREE_LEGEND
-        + " Strings the previous page already showed are summarised at the "
-        "end rather than repeated.",
-        "text": page_text(after["text"], before["text"], cmd.include_removed),
+        + (
+            ""
+            if same_page
+            else " Strings the previous page already showed are summarised at "
+            "the end rather than repeated."
+        ),
+        "text": page_text(
+            after["text"], None if same_page else before["text"], cmd.include_removed
+        ),
     }
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))

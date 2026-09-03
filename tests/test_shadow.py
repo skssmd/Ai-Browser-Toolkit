@@ -21,7 +21,7 @@ gives a search a bottom rung, which is what lets the guideline finally say
 from __future__ import annotations
 
 import pytest
-from conftest import texts
+from conftest import texts, values
 
 from abt.errors import OpError
 from abt.ops import dispatch
@@ -56,10 +56,11 @@ def test_shadow_content_stays_out_of_the_diff_tracks(page):
     the diff that every command carries.
     """
     state = page.snapshot()
+    seen = values(state["text"])
 
-    assert "Upload a recent resume" in state["text"]
-    assert "Choose file" not in state["text"]
-    assert "Drop your resume here" not in state["text"]
+    assert "Upload a recent resume" in seen
+    assert "Choose file" not in seen
+    assert "Drop your resume here" not in seen
 
 
 def test_get_text_does_see_open_shadow_content(page):

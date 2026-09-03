@@ -40,6 +40,16 @@ def texts(added: list[str]) -> list[str]:
     return out
 
 
+def values(pairs) -> list[str]:
+    """The strings in a raw `(path, value)` text track, path taken off.
+
+    `session.snapshot()` hands back the walk's own tuples, unrendered -- there
+    is no line to strip a prefix from, just a pair. `texts()` is for what an op
+    response reports; this is for what the walk itself returns.
+    """
+    return [value for _, value in pairs]
+
+
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):  # keep the test output readable
         pass

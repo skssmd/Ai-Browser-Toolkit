@@ -455,6 +455,66 @@ def _blank() -> dict:
     return {"dom": [], "text": [], "actionable": [], "frames": [], "shadow_hosts": 0}
 
 
+# Text only, but it crosses into open shadow roots -- the one thing the shared
+# walk above deliberately does not do. That walk is paid for on every diffed
+# command, so it stays light-DOM-only and cheap; most pages have no shadow
+# roots at all, and charging all of them for the few that do was the reasoning
+# `shadow.py` already settled. `get_text`, called on request rather than on
+# every command, is a different bargain: it is where an open shadow root's
+# text has always surfaced for free, the way a browser's own rendered text
+# would. A closed root stays absent, because `el.shadowRoot` reads null from
+# outside one -- there is nothing here to open it.
+_TEXT_WALK_JS = _PATH_JS + """
+var ROOT = arguments[0] || document.body;
+var out = [];
+var walk = function (root) {
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  var node = walker.currentNode;
+  while (node) {
+    var tag = node.tagName;
+    if (tag && tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'TEMPLATE'
+        && node.getClientRects().length > 0) {
+      var value = null;
+      if (tag === 'INPUT') {
+        var type = (node.type || '').toLowerCase();
+        if (type !== 'password' && type !== 'hidden') value = node.value;
+      } else if (tag === 'TEXTAREA') {
+        value = node.value;
+      } else if (tag === 'SELECT') {
+        var chosen = node.selectedOptions[0];
+        value = chosen ? chosen.textContent : '';
+      } else {
+        value = ownText(node);
+      }
+      if (value === null) value = '';
+      value = String(value).replace(/\\s+/g, ' ').trim();
+      if (value) out.push([pathOf(node), value.slice(0, 400)]);
+    }
+    if (node.shadowRoot) walk(node.shadowRoot);
+    node = walker.nextNode();
+  }
+};
+walk(ROOT);
+return out;
+"""
+
+
+def text_with_shadow(driver, root=None) -> list[tuple[str, str]]:
+    """The text track, with open shadow content included.
+
+    A path computed for something inside a shadow root comes back empty --
+    `pathOf` walks `parentElement`, which is null at a shadow root's own
+    children -- so such a string renders on its own line rather than under a
+    level. It is still there to read; it is just not yet addressable, the way
+    the rest of the tree now is.
+    """
+    try:
+        raw = driver.execute_script(_TEXT_WALK_JS, root)
+    except Exception:
+        return []
+    return _pairs(raw)
+
+
 def snapshot(
     driver,
     max_lines: int = MAX_SNAPSHOT_LINES,
@@ -680,7 +740,15 @@ def diff_text(
     # holding plain strings -- a unit test, an older snapshot -- gets the same
     # answer, rendered without positions rather than crashing on the unpack.
     before, after = _pairs(before), _pairs(after)
-    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    # Aligned on the text alone, not on (path, value). A path is the element's
+    # sibling index, so removing one element renumbers everything after it --
+    # and matching on the pair would then read every surviving element as
+    # deleted-and-reinserted merely because its position shifted, even though
+    # nothing about it actually changed. What "appeared" and "disappeared"
+    # means is about the text, not where it happens to sit this time.
+    before_values = [value for _, value in before]
+    after_values = [value for _, value in after]
+    matcher = difflib.SequenceMatcher(a=before_values, b=after_values, autojunk=False)
     added_pairs: list[tuple[str, str]] = []
     removed_pairs: list[tuple[str, str]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():

@@ -68,12 +68,15 @@ def _tree_text(session: BrowserSession, element=None) -> str:
     view of it: a table came back as a wall of cells with no row boundaries,
     which is exactly what sends it to `run_js` with `querySelectorAll`.
 
+    Reads through `text_with_shadow`, not the shared snapshot walk: that walk
+    is light-DOM-only because it is paid for on every diffed command, but
+    `get_text` is called on request and has always surfaced an open shadow
+    root's text for free, the way a browser's own rendered text would.
+
     Falls back to the element's plain text if the walk finds nothing, so a
     reader is never handed an empty string for a page that has words on it.
     """
-    from .. import diff
-
-    pairs = diff.snapshot(session.driver, root=element).get("text") or []
+    pairs = diff.text_with_shadow(session.driver, root=element)
     if pairs:
         return "\n".join(diff.render_text(pairs))
     return element.text if element is not None else _body_text(session)
@@ -89,8 +92,6 @@ def get_text(session: BrowserSession, cmd) -> str:
     """
     level = getattr(cmd, "level", None)
     if level:
-        from .. import diff
-
         element = diff.element_at(session.driver, level)
         if element is None:
             raise OpError(

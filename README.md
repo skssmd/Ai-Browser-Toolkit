@@ -247,51 +247,6 @@ Every response is `{"ok": true, "result": ...}` or
 Batches stop at the first failure by default. Send
 `{"commands": [...], "continue_on_error": true}` to run them all regardless.
 
-## Messenger
-
-Driving `messenger.com` through the generic ops takes a dozen round trips and
-the order matters — a stale draft glued to your text, an Enter that fires
-before the upload finished. That sequence is packaged as its own endpoints:
-
-```bash
-curl -s localhost:8765/messenger/sendmessage -H 'content-type: application/json' -d '{
-  "thread_url": "https://www.messenger.com/t/927345869967156/",
-  "message": "@Yaleed @Samin here is the capture",
-  "mentions": ["Yaleed", "Samin"],
-  "attachments": ["C:/shots/page.png", "https://example.com/logo.png"],
-  "reply_to": "Step 1/4 DONE"
-}'
-```
-
-`mentions` are real @-mentions: each name must appear in `message` as
-`@<name>`, and that spot is typed through Messenger's suggestion popup, so
-`@Yaleed` lands as `@Yaleed Haque`. `attachments` take local paths or http(s)
-links, which are downloaded first. `reply_to` is a substring of the message
-you are answering, or an index into the thread.
-
-Every failure raises **before** Enter is pressed — an attachment that never
-staged, a mention with no suggestion — so a bad send stays a draft instead of
-going out wrong.
-
-`POST /messenger/sendmessage/async` answers immediately with a `job_id` and
-does the work in a new tab that it closes afterwards, leaving your current tab
-untouched. Poll `GET /messenger/jobs/{id}`.
-
-Reading:
-
-```bash
-curl -s 'localhost:8765/messenger/threads?url=https://www.messenger.com/'
-curl -s 'localhost:8765/messenger/messages?thread_url=…&since_last=true'
-```
-
-`/messenger/threads` gives each thread's name, preview, time, and URL.
-`/messenger/messages` parses rows into `{sender, time, text}`; `since_last=true`
-returns only what arrived since your last read of that thread — matched by
-content, not position, because Messenger trims the top of a long thread as it
-grows.
-
-Full details and the traps behind them: [guidelines/messenger.com/messenger.md](https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/guidelines/messenger.com/messenger.md).
-
 ## Console and network
 
 The DOM cannot tell you why a request failed. These can:
@@ -984,16 +939,6 @@ The CLI once had a subcommand per op. Keeping two spellings in step by hand
 did not work — the ops take `ref/css/xpath/text/index/near` while `click` took
 two of them, and this README's own examples were commands the CLI rejected. It
 also billed a process per op, which quietly taught serial work.
-
-The Messenger endpoints have their own group:
-
-```bash
-abt messenger threads --url https://www.messenger.com/
-abt messenger read -t https://www.messenger.com/t/<id>/ --new
-abt messenger send "@Yaleed here it is" -t <thread-url> -m Yaleed -a C:/shots/page.png
-abt messenger send "step 2 done" -t <thread-url> --async
-abt messenger jobs <job-id>
-```
 
 ## MCP
 

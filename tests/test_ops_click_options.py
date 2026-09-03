@@ -28,11 +28,18 @@ def links(clean_session, base_url):
 # --- force --------------------------------------------------------------------
 
 
-def test_plain_click_reports_interception(overlay):
-    with pytest.raises(OpError) as caught:
-        run(overlay, op="click", css="#link")
-    assert caught.value.type == "not_interactable"
-    assert "hijack" in caught.value.message
+def test_plain_click_dispatches_through_the_cover_and_says_so(overlay):
+    """Since 0.4.1: ordinary overlap is dispatched, not refused.
+
+    A dialog still stops the click -- see test_hit_test.py -- because something
+    there is waiting on an answer. An overlay covering a link is not that: the
+    click was named precisely enough to resolve, and refusing it cost a real
+    episode a turn on a Magento save button covered by its own split-button
+    toggle. So it goes through, and the response says what was in the way.
+    """
+    result = run(overlay, op="click", css="#link")
+    assert result["forced"] is True
+    assert "hijack" in result["forced_past"]
 
 
 def test_the_overlay_really_would_have_stolen_the_click(overlay):

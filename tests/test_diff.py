@@ -165,7 +165,9 @@ def test_removed_text_is_listed_on_request(clean_session):
         include_removed=True,
     )
     text = result["dom_diff"]["text"]
-    assert text["removed"] == ["Cheap Widget", "$4.99"]
+    # Two siblings under one parent group under it, so this reads the values
+    # off the tree rather than the raw lines.
+    assert texts(text["removed"]) == ["Cheap Widget", "$4.99"]
     assert text["removed_count"] == 2
 
 
@@ -333,17 +335,19 @@ def test_back_and_forward_return_their_destination(clean_session, base_url):
 
 
 def test_reload_returns_the_page_it_reloaded(clean_session):
-    """A reload lands on the page it left, so every string repeats.
+    """A reload is the same page, not a different one -- so nothing is withheld.
 
-    Since 0.4.0 a navigation is diffed against the page it came from, and a
-    reload is the extreme case of that: nothing is new, so the text is withheld
-    as unchanged and reported as a count. The page is still readable -- the
-    summary names a level -- but it is no longer restated.
+    Chrome-suppression compares against a genuinely different page: two pages
+    of a site share their nav and footer, not their content. A reload lands
+    back on this same document, so "the page you came from" and "the page you
+    are looking at" are one and the same, and suppressing against it would
+    hide exactly the content the caller reloaded to see. The reload got the
+    full page once, before suppression existed, and gets it again now.
     """
     result = run(clean_session, op="reload")
     text = result["dom_diff"]["text"]
-    assert text["unchanged_count"] > 0
-    assert "Catalogue" not in texts(text["added"])
+    assert "unchanged_count" not in text
+    assert "Catalogue" in texts(text["added"])
 
 
 def test_goto_can_suppress_the_page_text(clean_session, base_url):
