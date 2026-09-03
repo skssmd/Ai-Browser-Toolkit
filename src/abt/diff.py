@@ -63,7 +63,56 @@ MAX_ACTIONABLE_REPORTED = 50
 
 # The snapshot runs in the browser so the dump costs one round trip, no matter
 # how deep the tree is. All three tracks come from the same walk.
-_SNAPSHOT_JS = r"""
+# Where an element sits, and the text it owns. Shared by the snapshot walk and
+# by `find`, so a path means the same thing whichever way you arrived at the
+# element -- an address printed by the text track has to be the address `find`
+# would give the same node, or the scheme is two schemes.
+#
+# One character per level, A-Z then a-z: 52 siblings before the alphabet runs
+# out. Past that the level is a plain number, and digits are deliberately kept
+# out of the alphabet so a run of them can only ever mean one level -- "ABr100C"
+# is A, B, r, 100, C, with nothing escaped. Two adjacent numeric levels are the
+# only ambiguous case, so a dot separates those and only those: it takes a 53rd
+# child that itself has a 53rd child, and costs a character nowhere else.
+#
+# The index comes from previousElementSibling, not from the order a walk reaches
+# nodes: the number has to mean the element's real position, or an address is
+# only true for the walk that produced it.
+_PATH_JS = r"""
+const ALPH = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const seg = (n) => (n <= 52 ? ALPH.charAt(n - 1) : String(n));
+const _path = new Map();
+if (document.body) _path.set(document.body, 'A');
+const pathOf = (el) => {
+  const hit = _path.get(el);
+  if (hit !== undefined) return hit;
+  const par = el.parentElement;
+  if (!par) return '';
+  const base = pathOf(par);
+  if (!base) return '';
+  let i = 1;
+  for (let s = el; (s = s.previousElementSibling); ) i++;
+  let step = seg(i);
+  if (step.charCodeAt(0) < 58 && base.charCodeAt(base.length - 1) < 58) {
+    step = '.' + step;
+  }
+  const p = base + step;
+  _path.set(el, p);
+  return p;
+};
+// The text an element owns: its own child text nodes, not its descendants'.
+// innerText would drag a container's whole subtree in and force a reflow to do
+// it; this is what the element itself says.
+const ownText = (el) => {
+  let s = '';
+  for (const child of el.childNodes) {
+    if (child.nodeType === 3) s += child.textContent;
+  }
+  return s.replace(/\s+/g, ' ').trim();
+};
+"""
+
+_SNAPSHOT_JS = _PATH_JS + r"""
 const MAX = arguments[0] || 8000;
 const MAX_TEXT = arguments[1] || 4000;
 const MAX_ACT = arguments[2] || 300;
@@ -188,43 +237,6 @@ const accName = (el, tag, own) => {
 // a visit-order counter would number them 1,2,3 regardless of where they
 // actually sit, and the number would mean nothing. Ancestors are cached, so
 // each element pays for its own depth once.
-// One character per level, drawn from A-Z then a-z: 52 siblings before the
-// alphabet runs out, which covers all but long lists. Depth 15 costs 15
-// characters where dotted numbers ("0.1.2.3...") cost about 35, and a short run
-// of letters is a token or two where a run of digits and dots is a dozen.
-//
-// Past 52 the index is written as a plain number. Digits are deliberately kept
-// out of the single-character alphabet so that a run of them can only ever mean
-// one level: "ABr100C" is A, B, r, 100, C, and nothing has to be escaped or
-// bracketed to say so. A hundred-row table is exactly the case this must
-// survive, and wrapping the alphabet would silently give two rows the same
-// address -- the one failure that would make the whole scheme lie.
-const ALPH = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-const seg = (n) => (n <= 52 ? ALPH.charAt(n - 1) : String(n));
-const _path = new Map();
-_path.set(document.body, 'A');
-const pathOf = (el) => {
-  const hit = _path.get(el);
-  if (hit !== undefined) return hit;
-  const par = el.parentElement;
-  if (!par) return '';
-  const base = pathOf(par);
-  if (!base) return '';
-  let i = 1;
-  for (let s = el; (s = s.previousElementSibling); ) i++;
-  let step = seg(i);
-  // Two numeric levels in a row would run together -- "100" under "200" reads
-  // as one number. It takes a 53rd child that itself has a 53rd child to
-  // happen, so the dot is paid for almost nowhere, and without it the encoding
-  // would be ambiguous exactly where a long table nests another long table.
-  if (step.charCodeAt(0) < 58 && base.charCodeAt(base.length - 1) < 58) {
-    step = '.' + step;
-  }
-  const p = base + step;
-  _path.set(el, p);
-  return p;
-};
-
 // A root confines the walk to one subtree -- what `get_text` on a selector
 // asks for. Paths stay absolute, measured from body, so a string read this way
 // carries the same address it would have had in a full page read.

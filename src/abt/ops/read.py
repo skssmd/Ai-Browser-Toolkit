@@ -4,18 +4,42 @@ from __future__ import annotations
 
 from itertools import groupby
 
-from .. import shadow
+from .. import diff, shadow
 from ..browser import BrowserSession
 from ..engine import EngineError
+from ..errors import OpError
 from ..targeting import resolve_many, resolve_one
 
-# One round trip for the whole match list. `cloneNode(false)` drops children and
-# text, leaving the element's own tag and attributes -- the "shell" form.
-_SERIALIZE = """
+# One round trip for the whole match list.
+# A match used to be its shell and nothing else -- `cloneNode(false)` drops every
+# child, so `find {"text": "Orders"}` returned three identical `<span></span>`
+# entries and the caller could not tell which was which. Measured across 393
+# benchmark episodes, 231 of 734 `run_js` scripts were agents re-reading with
+# querySelectorAll the text that `find` had just matched and thrown away.
+#
+# Now each match carries the text it owns and where it sits. Own text, not
+# innerText: a container would otherwise drag its whole subtree back, and
+# innerText forces a reflow per candidate on a search that may return a
+# thousand.
+_SERIALIZE = diff._PATH_JS + """
 var els = arguments[0], full = arguments[1];
 return els.map(function (e) {
+  var tag = e.tagName;
+  var value = null;
+  if (tag === 'INPUT') {
+    var type = (e.type || '').toLowerCase();
+    if (type !== 'password' && type !== 'hidden') value = e.value;
+  } else if (tag === 'TEXTAREA') {
+    value = e.value;
+  } else if (tag === 'SELECT') {
+    var chosen = e.selectedOptions[0];
+    value = chosen ? chosen.textContent : '';
+  }
   return {
     html: full ? e.outerHTML : e.cloneNode(false).outerHTML,
+    text: ownText(e).slice(0, 200),
+    value: value === null ? null : String(value).replace(/\\s+/g, ' ').trim().slice(0, 200),
+    path: pathOf(e),
     visible: e.getClientRects().length > 0
   };
 });
@@ -124,6 +148,15 @@ def find(session: BrowserSession, cmd) -> dict:
                     "html": item["html"],
                     "visible": bool(item["visible"]),
                 }
+                # Only when there is something to say. A structural div owns no
+                # text, and an empty key on every match is noise on a search
+                # that can return a thousand of them.
+                if item.get("text"):
+                    found["text"] = item["text"]
+                if item.get("value"):
+                    found["value"] = item["value"]
+                if item.get("path"):
+                    found["path"] = item["path"]
                 # Only worth saying when it is true: it tells the caller this
                 # one was out of reach of an ordinary search.
                 if in_shadow:

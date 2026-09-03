@@ -390,9 +390,14 @@ paying for the content:
 ```json
 {"op": "find", "css": ".card"}
 → {"count": 3, "matches": [
-     {"ref": "el_0", "html": "<div class=\"card\" id=\"p1\"></div>", "visible": true}
+     {"ref": "el_0", "html": "<div class=\"card\" id=\"p1\"></div>",
+      "text": "Cheap Widget", "path": "ACDa", "visible": true}
    ]}
 ```
+
+Each match carries the text it **owns** — its own child text nodes, not its
+descendants' — along with a form control's live value and its `path`, so a
+result can be read straight back with `get_text` at that level.
 
 `find_full` (or `{"mode": "full"}`) returns the same matches with everything inside:
 

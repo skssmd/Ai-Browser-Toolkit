@@ -605,6 +605,16 @@ unmute as the escape hatch.
 
 ### 21. `find` throws away the text it matched
 
+**Status: fixed in 0.4.0.** A match now carries the text it *owns* -- its own
+child text nodes, not its descendants' -- plus a form control's live value and
+the element's path. Own text rather than `innerText` on purpose: a container
+would otherwise drag its whole subtree back, and `innerText` forces a reflow
+per candidate on a search that can return a thousand. The path comes from the
+same helper the snapshot walk uses, so an address printed by the text track is
+the address `find` gives the same node. Empty keys are omitted, so a
+structural div still costs one line.
+
+
 `_SERIALIZE` in `src/abt/ops/read.py` serialises a match as
 
 ```js
