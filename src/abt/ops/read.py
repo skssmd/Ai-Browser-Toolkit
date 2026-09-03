@@ -35,6 +35,26 @@ def _body_text(session: BrowserSession) -> str:
         return ""
 
 
+def _tree_text(session: BrowserSession, element=None) -> str:
+    """Visible text laid out as its tree, the same shape a diff reports.
+
+    A page has one shape however it is read. Before this, a navigation returned
+    grouped text with paths and `get_text` returned one flat blob, so an agent
+    that re-read what it had just been given got a different -- and worse --
+    view of it: a table came back as a wall of cells with no row boundaries,
+    which is exactly what sends it to `run_js` with `querySelectorAll`.
+
+    Falls back to the element's plain text if the walk finds nothing, so a
+    reader is never handed an empty string for a page that has words on it.
+    """
+    from .. import diff
+
+    pairs = diff.snapshot(session.driver, root=element).get("text") or []
+    if pairs:
+        return "\n".join(diff.render_text(pairs))
+    return element.text if element is not None else _body_text(session)
+
+
 def get_text(session: BrowserSession, cmd) -> str:
     """The visible text of the page, frames included.
 
@@ -43,16 +63,33 @@ def get_text(session: BrowserSession, cmd) -> str:
     document a string came from is not something a reader needs to know, and
     inventing a divider would put text on screen that nobody can see.
     """
+    level = getattr(cmd, "level", None)
+    if level:
+        from .. import diff
+
+        element = diff.element_at(session.driver, level)
+        if element is None:
+            raise OpError(
+                "not_found",
+                f"nothing sits at level {level!r}",
+                hint=(
+                    "Levels come from the text track and describe one page: a "
+                    "navigation renumbers them. Read the page again and use a "
+                    "level from the result you were just given."
+                ),
+            )
+        return _tree_text(session, element)
+
     if cmd.has_target:
-        return resolve_one(session, cmd).text
+        return _tree_text(session, resolve_one(session, cmd))
 
     session.leave_frames()
-    parts = [_body_text(session)]
+    parts = [_tree_text(session)]
     try:
         for path in session.frame_paths():
             if not session.enter_frame(path):
                 continue
-            inner = _body_text(session)
+            inner = _tree_text(session)
             if inner:
                 parts.append(inner)
     finally:

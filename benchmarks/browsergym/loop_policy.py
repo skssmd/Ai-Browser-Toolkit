@@ -297,8 +297,15 @@ def _run_openrouter(goal, server, model, max_turns, reference, client, max_token
     from openai import OpenAI
 
     key = os.environ.get("OPENROUTER_API_KEY")
+    # Retry where it can be seen. The client's own retries are silent, so
+    # max_retries=5 at timeout=300 could spend twenty-five minutes inside one
+    # call without printing a line -- an admin episode sat on turn 10 for
+    # twenty of them, its browser op long since returned ok, holding a single
+    # open socket to the API edge. The outer _openrouter_call loop backs off
+    # and logs "upstream busy", so give it the job: fail fast here, retry
+    # loudly there.
     client = client or OpenAI(
-        base_url=_OPENROUTER_BASE, api_key=key, max_retries=5, timeout=300.0
+        base_url=_OPENROUTER_BASE, api_key=key, max_retries=1, timeout=120.0
     )
     messages: list = [
         {"role": "system", "content": SYSTEM},

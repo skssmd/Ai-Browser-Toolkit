@@ -175,7 +175,61 @@ const accName = (el, tag, own) => {
   return clean(el.getAttribute('alt'));
 };
 
-const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+// Positional path per element -- body is "0", then the element's index among
+// its parent's element children. Text arrives flat otherwise, and a flat list
+// cannot say which strings belong to one table row: an agent reading it has to
+// go back with run_js and querySelectorAll to recover the rows it was already
+// given. Measured across a benchmark campaign, that was the single largest use
+// of run_js, and the counting failures that came with it were all off-by-a-few
+// rather than wrong in kind, which is what reading a flat cell stream produces.
+//
+// The index is counted from previousElementSibling rather than from the order
+// this walk happens to visit in: only text-bearing elements ask for a path, so
+// a visit-order counter would number them 1,2,3 regardless of where they
+// actually sit, and the number would mean nothing. Ancestors are cached, so
+// each element pays for its own depth once.
+// One character per level, drawn from A-Z then a-z: 52 siblings before the
+// alphabet runs out, which covers all but long lists. Depth 15 costs 15
+// characters where dotted numbers ("0.1.2.3...") cost about 35, and a short run
+// of letters is a token or two where a run of digits and dots is a dozen.
+//
+// Past 52 the index is written as a plain number. Digits are deliberately kept
+// out of the single-character alphabet so that a run of them can only ever mean
+// one level: "ABr100C" is A, B, r, 100, C, and nothing has to be escaped or
+// bracketed to say so. A hundred-row table is exactly the case this must
+// survive, and wrapping the alphabet would silently give two rows the same
+// address -- the one failure that would make the whole scheme lie.
+const ALPH = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const seg = (n) => (n <= 52 ? ALPH.charAt(n - 1) : String(n));
+const _path = new Map();
+_path.set(document.body, 'A');
+const pathOf = (el) => {
+  const hit = _path.get(el);
+  if (hit !== undefined) return hit;
+  const par = el.parentElement;
+  if (!par) return '';
+  const base = pathOf(par);
+  if (!base) return '';
+  let i = 1;
+  for (let s = el; (s = s.previousElementSibling); ) i++;
+  let step = seg(i);
+  // Two numeric levels in a row would run together -- "100" under "200" reads
+  // as one number. It takes a 53rd child that itself has a 53rd child to
+  // happen, so the dot is paid for almost nowhere, and without it the encoding
+  // would be ambiguous exactly where a long table nests another long table.
+  if (step.charCodeAt(0) < 58 && base.charCodeAt(base.length - 1) < 58) {
+    step = '.' + step;
+  }
+  const p = base + step;
+  _path.set(el, p);
+  return p;
+};
+
+// A root confines the walk to one subtree -- what `get_text` on a selector
+// asks for. Paths stay absolute, measured from body, so a string read this way
+// carries the same address it would have had in a full page read.
+const ROOT = arguments[4] || document.body;
+const walker = document.createTreeWalker(ROOT, NodeFilter.SHOW_ELEMENT);
 let node = walker.currentNode;
 while (node) {
   const el = node;
@@ -231,7 +285,7 @@ while (node) {
       // editor's content lives in descendants that the walk reaches anyway.
       if (value === null) value = own;
       value = String(value).replace(/\s+/g, ' ').trim();
-      if (value) text.push(value.slice(0, 400));
+      if (value) text.push([pathOf(el), value.slice(0, 400)]);
     }
 
     // The actionable track: what of this can actually be operated. An explicit
@@ -395,6 +449,7 @@ def snapshot(
     max_text: int = MAX_TEXT_LINES,
     max_actionable: int = MAX_ACTIONABLE_SCANNED,
     min_frame_px: int = 4,
+    root=None,
 ) -> dict:
     """Return the document as its three tracks, plus the frames it embeds.
 
@@ -409,7 +464,7 @@ def snapshot(
     """
     try:
         raw = driver.execute_script(
-            _SNAPSHOT_JS, max_lines, max_text, max_actionable, min_frame_px
+            _SNAPSHOT_JS, max_lines, max_text, max_actionable, min_frame_px, root
         )
     except Exception:
         return _blank()
@@ -439,7 +494,10 @@ def snapshot(
 
     return {
         "dom": [str(line) for line in raw.get("dom") or []],
-        "text": [str(line) for line in raw.get("text") or []],
+        # (path, value) pairs, as tuples: the diff aligns text with
+        # SequenceMatcher, which indexes its elements and so needs them
+        # hashable. JSON hands lists back, which are not.
+        "text": _pairs(raw.get("text")),
         "actionable": actionable,
         "frames": [int(slot) for slot in raw.get("frames") or []],
         "shadow_hosts": int(raw.get("shadowHosts") or 0),
@@ -449,9 +507,150 @@ def snapshot(
 # --- text track ---------------------------------------------------------------
 
 
+PATH_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+# Walks the indices a decoded path names. Kept here beside the encoder so the
+# two halves of the scheme cannot drift: whatever `seg()` writes, this reads.
+_AT_PATH_JS = """
+var idx = arguments[0], el = document.body;
+for (var i = 0; i < idx.length; i++) {
+  if (!el) return null;
+  el = el.children[idx[i] - 1];
+}
+return el || null;
+"""
+
+
+def decode_path(path: str) -> list[int] | None:
+    """The child indices a path names, or None if it is not one.
+
+    The inverse of the `seg()` encoder in the snapshot walk: a letter is one
+    level, a run of digits is one level past the 52nd sibling, and a dot only
+    ever separates two numeric levels. The leading level is the body itself and
+    is dropped, so what comes back is the walk from body down.
+    """
+    if not path or path[0] not in PATH_ALPHABET:
+        return None
+    levels: list[int] = []
+    index = 0
+    while index < len(path):
+        char = path[index]
+        if char == ".":
+            index += 1
+            continue
+        if char.isdigit():
+            stop = index
+            while stop < len(path) and path[stop].isdigit():
+                stop += 1
+            levels.append(int(path[index:stop]))
+            index = stop
+            continue
+        position = PATH_ALPHABET.find(char)
+        if position < 0:
+            return None
+        levels.append(position + 1)
+        index += 1
+    # The first level is body, which is where the walk starts rather than a
+    # step it takes.
+    return levels[1:] if levels else None
+
+
+def element_at(driver, path: str):
+    """The element a path names, or None if nothing sits there any more."""
+    indices = decode_path(path)
+    if indices is None:
+        return None
+    try:
+        return driver.execute_script(_AT_PATH_JS, indices)
+    except Exception:
+        return None
+
+
+def _split_tail(path: str) -> tuple[str, str]:
+    """Split a path into its parent and its own last level.
+
+    A level is one letter, or -- past the 52nd sibling -- a run of digits. Since
+    digits appear in no other role, a run of them is exactly one level, and
+    neither form has to be escaped for this to be unambiguous.
+    """
+    if not path:
+        return "", ""
+    if path[-1].isdigit():
+        cut = len(path)
+        while cut and path[cut - 1].isdigit():
+            cut -= 1
+        own = path[cut:]
+        # A dot only ever separates two numeric levels, so it belongs to the
+        # parent's side of the split, not to the level it introduces.
+        if cut and path[cut - 1] == ".":
+            cut -= 1
+        return path[:cut], own
+    return path[:-1], path[-1]
+
+
+def _pairs(raw) -> list[tuple[str, str]]:
+    """Normalise the walk's text track to (path, value) tuples."""
+    out: list[tuple[str, str]] = []
+    for item in raw or []:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            out.append((str(item[0]), str(item[1])))
+        else:
+            # A snapshot from an older page script, or a caller passing plain
+            # strings. Pathless entries still render, just without grouping.
+            out.append(("", str(item)))
+    return out
+
+
+def render_text(pairs: list[tuple[str, str]]) -> list[str]:
+    """Lay the text track out as its tree, one line per string.
+
+    Every string carries where it sits, so strings that share a parent are
+    visibly one group -- which is what makes a table row readable as a row.
+    A flat list cannot express that, and an agent handed one goes back with
+    `run_js` and `querySelectorAll` to rebuild what it was already given.
+
+    The path is written once per group rather than once per string. Text on a
+    Magento page sits at a median DOM depth of 15, so repeating the full path on
+    every string costs more characters than the strings themselves; writing it
+    on the group and giving each member its own index is the same information
+    for about a fifth of the price. Nothing is lost: a member's full path is its
+    group's path plus its own index.
+
+    A group holding a single string keeps that string on the group's own line,
+    so the common case never costs two lines to say one thing.
+    """
+    lines: list[str] = []
+    index = 0
+    while index < len(pairs):
+        path, value = pairs[index]
+        parent, own = _split_tail(path)
+        if not parent:
+            lines.append(f"{path} {value}" if path else value)
+            index += 1
+            continue
+
+        run = [(own, value)]
+        probe = index + 1
+        while probe < len(pairs):
+            sibling_path, sibling_value = pairs[probe]
+            sibling_parent, sibling_own = _split_tail(sibling_path)
+            if sibling_parent != parent:
+                break
+            run.append((sibling_own, sibling_value))
+            probe += 1
+
+        if len(run) == 1:
+            lines.append(f"{path} {value}")
+        else:
+            lines.append(parent)
+            lines.extend(f"  {own} {value}" for own, value in run)
+        index = probe
+    return lines
+
+
 def diff_text(
-    before: list[str],
-    after: list[str],
+    before: list[tuple[str, str]],
+    after: list[tuple[str, str]],
     include_removed: bool = False,
     max_chars: int = MAX_TEXT_DIFF_CHARS,
 ) -> dict:
@@ -466,17 +665,17 @@ def diff_text(
     every "Add to cart" on a results page -- as noise and drop real changes.
     """
     matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
-    added: list[str] = []
-    removed: list[str] = []
+    added_pairs: list[tuple[str, str]] = []
+    removed_pairs: list[tuple[str, str]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag in ("replace", "delete"):
-            removed.extend(before[i1:i2])
+            removed_pairs.extend(before[i1:i2])
         if tag in ("replace", "insert"):
-            added.extend(after[j1:j2])
+            added_pairs.extend(after[j1:j2])
 
-    removed_count = len(removed)
-    if not include_removed:
-        removed = []
+    removed_count = len(removed_pairs)
+    added = render_text(added_pairs)
+    removed = render_text(removed_pairs) if include_removed else []
 
     added, removed, truncated = _cap(added, removed, max_chars)
     out = {"added": added, "removed_count": removed_count, "truncated": truncated}
@@ -491,23 +690,79 @@ def page_text(
     include_removed: bool = False,
     max_chars: int = MAX_TEXT_DIFF_CHARS,
 ) -> dict:
-    """Every visible string on the page, reported as `added`.
+    """The new page, with what the last one already showed you taken out.
 
-    After a navigation there is nothing to diff against -- the old document is
-    gone -- so the whole new page is what appeared. Returning it here saves the
-    agent a separate read: land on a page and its content is already in hand,
-    in the same shape a diff would have used.
+    Landing on a page puts its content straight in hand, which saves a separate
+    read. It used to put *all* of it in hand: the old document is gone, so the
+    reasoning went, the two documents are unrelated and there is nothing to diff
+    against.
 
-    `before` is the outgoing page's text. It is never diffed against -- the two
-    documents are unrelated -- but it is counted, so `removed_count` still tells
-    you how much text you left behind, and the strings themselves are there on
-    request.
+    That holds between sites and is false within one. Consecutive pages of the
+    same site share their nav, header, footer and grid furniture, and measured
+    across a benchmark campaign the repetition was 38% of admin page text, 47%
+    of the forum's and 60% of the storefront's -- about half of every character
+    delivered, re-sent on each navigation and then carried in the conversation
+    for every turn that followed.
+
+    So `before` is now diffed against, on the string rather than on the path:
+    paths shift between documents, and matching on them would suppress real
+    content whenever a page happened to nest it the same way. What repeats is
+    what the agent has already read.
+
+    Suppressed text is summarised, never silently dropped. An agent cannot ask
+    for what it does not know is missing, so the count and the way to get it
+    back both travel with the result.
     """
+    pairs = _pairs(text)
     removed = list(before) if before is not None else []
+
+    kept = pairs
+    unchanged = 0
+    if before:
+        seen: dict[str, int] = {}
+        for _, value in _pairs(before):
+            seen[value] = seen.get(value, 0) + 1
+        kept = []
+        hidden_parents: dict[str, int] = {}
+        for path, value in pairs:
+            left = seen.get(value, 0)
+            if left:
+                # Repeat of something the previous page showed. Counted here so
+                # the total is honest even when several copies survive, and its
+                # parent is remembered so the note below can cite a level that
+                # actually holds some of what was withheld.
+                seen[value] = left - 1
+                unchanged += 1
+                parent, _ = _split_tail(path)
+                if parent:
+                    hidden_parents[parent] = hidden_parents.get(parent, 0) + 1
+                continue
+            kept.append((path, value))
+        example = max(hidden_parents, key=hidden_parents.get) if hidden_parents else ""
+
+    added = render_text(kept)
+    if unchanged:
+        # Says plainly what was withheld and how to get it, because the levels
+        # are the answer: the agent saw them on the page it came from, and an
+        # unchanged subtree still sits at the level it sat at then. So this is
+        # not "some text is missing" -- it is "the parts you already read are
+        # where you left them", which is a fact it can act on.
+        where = example or "the level it was at"
+        added.append(
+            f"… {unchanged} string{'s' if unchanged != 1 else ''} identical to "
+            f"the previous page {'are' if unchanged != 1 else 'is'} not "
+            f"repeated here -- only what changed is shown above. To read any of "
+            f"them again, ask for the level: "
+            f'{{"op": "get_text", "level": "{where}"}} returns that subtree and '
+            f"nothing else."
+        )
+
     added, removed_kept, truncated = _cap(
-        list(text), removed if include_removed else [], max_chars
+        added, render_text(_pairs(removed)) if include_removed else [], max_chars
     )
     out = {"added": added, "truncated": truncated}
+    if unchanged:
+        out["unchanged_count"] = unchanged
     if before is not None:
         out["removed_count"] = len(before)
         if include_removed:
@@ -581,7 +836,13 @@ def merge_frame(state: dict, sub: dict, path: tuple[int, ...]) -> None:
     controls instead of collapsing into one.
     """
     state["dom"].extend(sub.get("dom") or [])
-    state["text"].extend(sub.get("text") or [])
+    # A frame's paths start at its own body, so they would read as host paths
+    # and collide with them. The frame's position goes in front, which keeps
+    # every path in the merged track pointing at exactly one element.
+    tag_path = "".join(f"[f{index}]" for index in path)
+    state["text"].extend(
+        (tag_path + item_path, value) for item_path, value in _pairs(sub.get("text"))
+    )
     # A frame's unwalked roots are unwalked places too, so they add up.
     state["shadow_hosts"] = state.get("shadow_hosts", 0) + sub.get("shadow_hosts", 0)
     tag = ".".join(str(index) for index in path)

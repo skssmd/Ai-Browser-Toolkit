@@ -97,8 +97,9 @@ def diff(session: BrowserSession, cmd) -> dict:
     if navigated:
         payload["navigation"] = True
         payload["note"] = (
-            "the page changed since the baseline; text is the new page in full, "
-            "not a diff, and the element track is skipped"
+            "the page changed since the baseline; text is the new page as its "
+            "tree, minus what the previous one already showed, and the "
+            "element track is skipped"
         )
         payload["text"] = page_text(
             after["text"], entry["text"], include_removed=cmd.include_removed

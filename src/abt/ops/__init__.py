@@ -88,6 +88,17 @@ NO_HEALTH_CHECK = frozenset(
 )
 
 
+# Said with the payload rather than in the op reference, because the
+# reference is bare types -- {"type": "str"} -- and carries no prose at all.
+# An agent that is handed "AEDBAAAA" with no legend reads it as an opaque
+# ref, which is what one benchmark run did: it quoted the path back in its
+# own reasoning to identify a button, then re-read the whole page anyway,
+# because nothing connected the prefix to the level argument.
+_TREE_LEGEND = (
+    "each line begins with where it sits on the page: a letter per level, so a longer prefix is deeper and two lines sharing one sit in the same container (AEDBa and AEDBb are siblings; AEDB is what holds them). That prefix is an address -- read one part of the page again with {\"op\": \"get_text\", \"level\": \"AEDB\"} instead of re-reading all of it."
+)
+
+
 def dispatch(session: BrowserSession, cmd) -> Any:
     handler = REGISTRY.get(cmd.op)
     if handler is None:
@@ -306,7 +317,7 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
             # *because* it navigated, and the caller's refs are now stale.
             info["navigated_during_op"] = True
         info["note"] = (
-            "the page navigated; text is the new page in full, not a diff, and "
+            "the page navigated; text is the new page as its tree -- " + _TREE_LEGEND + " Minus what "
             "the element track is skipped because the two documents are unrelated"
         )
         info["text"] = page_text(after["text"], before["text"], cmd.include_removed)
@@ -351,7 +362,10 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
     info = {
         "url_after": session.driver.current_url,
         "navigation": True,
-        "note": "text is the full page you landed on, not a diff",
+        "note": "text is the page you landed on, laid out as its tree -- "
+        + _TREE_LEGEND
+        + " Strings the previous page already showed are summarised at the "
+        "end rather than repeated.",
         "text": page_text(after["text"], before["text"], cmd.include_removed),
     }
     note_shadow(info, after)

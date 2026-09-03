@@ -153,8 +153,58 @@ per element, plus form-control values. Read this first; on most pages it is the
 whole answer.
 
 ```json
-"text": {"added": ["Widgets", "Gadgets"], "removed_count": 1, "truncated": false}
+"text": {"added": ["ACBa Widgets", "ACBb Gadgets"], "removed_count": 1,
+         "truncated": false}
 ```
+
+### Every string says where it sits
+
+The letters in front of each string are not a ref. They are the element's
+**position in the page**, one letter per level down from the body:
+
+```
+AEDBAAAB
+  a 000000192
+  b Sep 3, 2022
+  c $109.00
+AEDBAAAC
+  a 000000174
+  b May 2, 2022
+```
+
+Read it this way:
+
+- **A longer prefix is deeper.** `AEDB` sits inside `AED`, which sits inside `AE`.
+- **A shared prefix means a shared container.** `AEDBAAABa` and `AEDBAAABb` are
+  siblings — the same table row, the same form group, the same list item. This
+  is how you tell which cells belong together, and it is the thing a flat list
+  of strings cannot tell you. Counting rows, matching a value to its label and
+  reading a table all depend on it.
+- **Past the 52nd sibling the level is a number** (`AB53`), and a dot only ever
+  separates two numbers (`AB100.200`). Nothing else uses dots.
+
+**The prefix is an address.** Give it back to read that part of the page and
+nothing else:
+
+```json
+{"op": "get_text", "level": "AEDBAAAB"}
+```
+
+That returns one subtree. It is how you re-read a table after acting on it, and
+how you look at something a navigation reported as unchanged — the page told you
+where it was, and it is still there. Prefer it over `get_text {"css": "body"}`,
+which pulls the whole document to answer a question about one part of it.
+
+Levels describe **one page**. A navigation renumbers them, so use a level from
+the result you were most recently given, not one you remember from earlier.
+
+### What a navigation leaves out
+
+Landing on a page hands you its text. Strings identical to the page you came
+from are **not repeated** — the nav, header, footer and other furniture you have
+already read. A line at the end says how many were held back and names a level
+that holds some of them, so nothing is hidden from you: ask for that level if
+you need it. What is shown is what changed.
 
 Only *rendered* text counts, so a hover that reveals a menu reads as its items
 appearing, and an attribute-only change (`aria-expanded`, a class flip) shows as

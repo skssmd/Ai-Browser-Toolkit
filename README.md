@@ -307,6 +307,40 @@ page logged while loading — uncaught errors and unhandled rejections included.
 `failures_only` keeps the 4xx/5xx and anything the browser would not disclose.
 Both take a `pattern` regex.
 
+## Levels: every string says where it sits
+
+Text comes back with its position in the page in front of it — one letter per
+level down from the body, so `AEDB` sits inside `AED`, which sits inside `AE`:
+
+```
+AEDBAAAB
+  a 000000192
+  b Sep 3, 2022
+  c $109.00
+AEDBAAAC
+  a 000000174
+  b May 2, 2022
+```
+
+Two strings sharing a prefix sit in the same container — the same table row, the
+same form group. That is what a flat list of strings cannot say, and what
+counting rows and matching a value to its label depend on.
+
+Past the 52nd sibling a level is a number (`AB53`); a dot separates two numbers
+(`AB100.200`) and appears nowhere else.
+
+**The prefix is an address.** Give it back to read one part of the page:
+
+```json
+{"op": "get_text", "level": "AEDBAAAB"}
+→ "AEDBAAAB\n  a 000000192\n  b Sep 3, 2022\n  c $109.00"
+```
+
+That returns one subtree rather than the whole document — the way to re-read a
+table after acting on it, or to look at something a navigation reported as
+unchanged. Levels describe one page: a navigation renumbers them, so use one
+from the result you were last given.
+
 ## Two ways to read a page
 
 `find` returns element **shells** — each match's own tag and attributes, with all
@@ -384,17 +418,16 @@ There are three tracks, and they answer different questions.
 
 ### The text track — always on
 
-**What appeared on screen.** Every element's own text plus every form control's
-live value, collected in document order as separate entries. One element, one
-entry: two adjacent labels stay two strings and never merge into a blob, so you
-can tell which text belongs to which thing without any markup being present.
+**What appeared on screen, and where it sits.** Every element's own text plus
+every form control's live value, in document order, each carrying its position
+in the page.
 
 ```json
 {"op": "click", "css": "#products"}
 → {"clicked": "css='#products'", "forced": false, …,
    "dom_diff": {
      "url_before": "https://shop.example/", "url_after": "https://shop.example/",
-     "text": {"added": ["Widgets", "Gadgets", "3 items"],
+     "text": {"added": ["ACBa Widgets", "ACBb Gadgets", "ACD 3 items"],
               "removed_count": 1,
               "truncated": false}
    }}
@@ -440,10 +473,20 @@ costs `--settle-timeout` and then proceeds, because a late diff beats no diff.
 {"op": "goto", "url": "https://shop.example/cart"}
 → {"url": "…/cart", "title": "Your cart",
    "dom_diff": {"navigation": true,
-                "note": "text is the full page you landed on, not a diff",
-                "text": {"added": ["Your cart", "2 items", "Total: $42", "Checkout"],
+                "note": "text is the page you landed on, laid out as its tree — …",
+                "text": {"added": ["ABa Your cart", "ACD",
+                                   "  a 2 items", "  b Total: $42",
+                                   "ACF Checkout",
+                                   "… 41 strings identical to the previous page are not "
+                                   "repeated here — …{\"op\": \"get_text\", \"level\": \"AB\"}…"],
+                         "unchanged_count": 41,
                          "removed_count": 18, "truncated": false}}}
 ```
+
+Strings the page you came from already showed are **not repeated** — the nav,
+header and footer you have read once are summarised in that last line instead.
+On a Magento admin page that is a third of the payload, re-sent on every
+navigation and then carried in the conversation for every turn after it.
 
 This covers `goto` `back` `forward` `reload` and any interactive op that
 redirected — a `click` that leaves the page returns the page it arrived at. The

@@ -142,7 +142,20 @@ class GetHtml(OptionalTarget):
 
 
 class GetText(OptionalTarget):
+    """Visible text, laid out as the tree it sits in.
+
+    `level` reads one subtree by the path the text track already prints -- the
+    same "AEDBAAAB" that labelled those strings when you last saw them. It is
+    how you look at what a navigation reported as unchanged: the page told you
+    where the table was, and asking for that level again brings it back without
+    the rest of the document coming with it.
+
+    Not a selector, so it does not compete with css/xpath/text/ref: those name
+    an element by what it is, `level` names one by where it sits.
+    """
+
     op: Literal["get_text"]
+    level: str | None = None
 
 
 class ShadowSearch(Target):

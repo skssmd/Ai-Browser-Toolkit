@@ -299,6 +299,81 @@ the scripted clear and forcing the keystroke retry).
 The wider lesson, and the reason this one was expensive: the op returned
 `ok: true` with the corrupted value in `value`. Nothing downstream could tell.
 
+### 16. A native dialog killed the Playwright driver -- fixed 2026-09-03
+
+Nothing in the toolkit listened for `dialog`, so Playwright's own auto-dismiss
+ran, and that dismiss rejected inside the Node driver and took the process down:
+
+```
+Dialog._dismiss -> Page.handleJavaScriptDialog -> unhandled rejection
+Node.js v24.18.1
+```
+
+Python survived, holding a driver that no longer existed. `/health` kept
+answering because it never touches the driver, while `/status` hung for ever, so
+the server looked alive and was not. One `confirm()` on a Magento admin page put
+a benchmark worker into a two-minute crash loop that ran for hours before anyone
+read the server log.
+
+`_watch` in `src/abt/pwdriver.py` now attaches a handler to every page,
+including ones the site opens itself, which records the dialog and dismisses it
+inside `try/except`. Dismiss is the safe default: accepting a `confirm()` agrees
+to something nobody asked for. Shipped in 0.3.6.
+
+### 17. A dead attached browser advised a restart that cannot work -- fixed 2026-09-03
+
+In attach mode (`ABT_CDP_URL`) the browser belongs to whoever launched it: a
+harness owns the launch and the scoring, the toolkit only drives the pages. So
+there is no relaunching it from inside the session. When the endpoint died, the
+failure still offered the generic remedy, restart it.
+
+A benchmark agent spent twenty of its thirty turns and 640k tokens cycling
+`browser_start` / `browser_stop` / `browser_restart` against a socket that was
+never going to answer, then guessed at an answer it could no longer check.
+
+The attach failure now carries a terminal hint: externally owned, cannot be
+started or restarted from here, retrying will fail the same way, report what you
+have and stop. Shipped in 0.3.6.
+
+### 18. Silent client retries stalled an episode for 25 minutes -- fixed 2026-09-03
+
+Benchmark harness, not the toolkit. The model client was built with
+`max_retries=5, timeout=300.0`, and the client's own retries print nothing, so a
+stalled request could spend twenty-five minutes inside one call while the outer
+retry loop -- the one that logs `upstream busy` and backs off -- never got
+control.
+
+Observed: an admin episode sat on turn 10 for twenty minutes, its browser op
+long since returned `ok`, holding a single open socket to the API edge. Across
+every sweep the outer loop had logged `upstream busy` exactly zero times, which
+is what gave it away.
+
+Now `max_retries=1, timeout=120.0`: fail fast in the client, retry loudly in the
+loop.
+
+### 19. The answer nudge fired only once -- fixed 2026-09-03
+
+Benchmark harness. An episode that ends with text and no tool calls has that
+text scored as its answer. A nudge existed for the case where no `ANSWER:`
+marker was emitted, but it was one-shot:
+
+```python
+if not nudged and not _ANSWER_MARK.search(reply or "") and turns < max_turns:
+    nudged = True
+```
+
+A second narrated reply therefore broke the loop, and a sentence about what the
+agent was *about to* do became the scored answer.
+
+Measured over 393 episodes: 26 (6.8%) were scored on narration, 21 of them
+failed, together 10.2M tokens -- about a tenth of the run's spend. Nine of the
+26 had the complete gold answer in their own transcript and never stated it.
+Several stopped at turn 3 or 4 with twenty-six turns unspent.
+
+Replaced with a consecutive-stall counter, capped at 3 and reset by any turn
+that calls a tool, with a firmer second message that forbids narrating or
+running more ops and asks for a defensible answer from the evidence in hand.
+
 ## Open
 
 ### 15. The shared test browser sometimes dies partway through a full run
@@ -393,3 +468,262 @@ replaced.
 **The agent's own shortcoming stands separately**: it retried an identical
 command instead of reading the diff from `#110`, which had already reported the
 dialog and its controls. No error message prevents that.
+
+
+## Open -- found by the WebArena campaign, 2026-09-03
+
+Measured over 393 episodes across three sites (shopping, shopping_admin,
+reddit): 6,367 ops, 4,239 responses carrying page text, and 734 `run_js` scripts
+recovered from the session logs. `run_js` is 9.1% of all ops and appears in 34%
+of episodes -- 27% of shopping episodes, 47% of admin ones. Entries are ordered
+by measured cost.
+
+### 20. Page text arrives as a flat string list, so structure is lost
+
+**Status: fixed in 0.4.0.** The text track carries a position per string and
+groups siblings under their parent; a navigation is diffed against the page it
+came from, so repeated chrome is summarised rather than re-sent. Measured on
+one admin task, `run_js` went 8 to 0 and `find` 13 to 7. It did not move turn
+counts, and one counting failure became a pass.
+
+
+This is the root cause behind several of the entries below, and it is worth
+stating first because the obvious suspect is innocent: **the text is not
+truncated**. Of 4,239 responses carrying page text, 2 were truncated (0.0%).
+Median payload is 1,848 characters, p99 is 26,332. A navigation really does hand
+back the whole page, exactly as `dom_diff.text` promises with its note, "text is
+the full page you landed on, not a diff".
+
+The problem is the shape. `goto` on `localhost:7780/admin/catalog/product/`
+returns **3,241 separate flat strings**, beginning:
+
+```
+'Marketing'  'Marketing'  'Promotions'  'Catalog Price Rule'  'Cart Price Rules'
+'Communications'  'Email Templates'  ...  'Reports'  'Reports'  'Marketing'
+'Products in Cart'  'Search Terms'  ...  'Sales'  'Orders'  'Tax'  'Invoiced'
+```
+
+Three consequences:
+
+**No hierarchy.** No rows, no columns, no containment. A grid's cells arrive as
+a bare sequence with no row boundary, so there is no reliable way to tell which
+cells belong together. This is the likeliest explanation for the counting
+failures, which are consistently off by a small amount rather than wrong in
+kind: `webarena.128` answered 8 against a gold of 9, `.130` 17 against 18, `.131`
+19 against 25.
+
+**No separation of chrome from content.** Roughly the first hundred items of
+every Magento admin page are the same navigation menu. It is paid for in tokens
+on every navigation, and the data has to be found inside it.
+
+**The menu repeats itself.** 'Marketing' twice, 'Reports' twice, 'Content'
+twice, 'Orders' under both Sales and Reports. That is why `webarena.64` found
+three elements reading "Orders" and had to walk parent chains to tell the
+customer sidebar tab from two menu entries.
+
+An agent that cannot recover table structure from the stream goes to `run_js`
+with `querySelectorAll` to get rows back, which is the single largest use of it.
+
+#### What to do about it
+
+Three changes, measured, in the order they pay:
+
+**a. Diff a navigation against the page it came from.** `page_text()` in
+`src/abt/diff.py` already receives `before`, the outgoing page's text, and
+already counts it for `removed_count`. It is deliberately not diffed against, on
+the stated reasoning that "the two documents are unrelated". That holds between
+sites and is false within one: the nav, header, footer and grid furniture are
+identical from page to page.
+
+Measured over the campaign, suppressing strings the agent was shown on the
+immediately preceding page of the same site would remove:
+
+| site | chars kept | suppressed |
+|---|---|---|
+| shopping (7770) | 1.08M / 2.69M | **60%** |
+| shopping_admin (7780) | 1.79M / 2.88M | **38%** |
+| reddit (9999) | 606k / 1.14M | **47%** |
+| map (3000) | 1,892 / 5,594 | 66% |
+
+About **3.2M of 6.7M characters** delivered in the whole run -- roughly half --
+is text the agent had already been given on the page it just left. It compounds,
+because page text enters the message history and is re-sent on every later turn.
+
+The suppressed part must be summarised, not silently dropped ("nav: 122 items
+unchanged"), with a way to ask for it back. Hiding content an agent cannot know
+is missing is the one way this change could do harm.
+
+**b. Number the tree, and group by prefix.** Give every element a positional
+path (`0`, `0.1`, `0.1.2`) and attach each string to its own. Shared prefix then
+means shared parent, which is what recovers rows, pagination groups and "these
+cells belong together" -- the thing a flat list cannot express.
+
+Emitting a full path on every text node is too expensive: text on the Magento
+storefront sits at median DOM depth 15 and up to 20, so full paths add 120-175%
+to the payload -- more than the text they label. Emit the path **once per group,
+prefix-compressed against the previous group**, and let each string carry only
+its own index:
+
+```
+0.1.2.3        table row
+   .1          "000000192"
+   .2          "Sep 3, 2022"
+   .3          "$109.00"
+0.1.2.4        (next row -- only the tail changed)
+```
+
+Measured, that is about 4.5x cheaper than a path per node, and it makes the row
+boundary explicit instead of inferred. Two things come free with it: the path is
+a stable *address*, usable where a `ref` cannot be (in prose, across turns); and
+it resolves entry 23 outright, since three elements reading "Orders" now differ
+visibly by their subtree.
+
+Combined with (a), an unchanged subtree collapses to a single line:
+
+```
+0.1.1  nav -- 122 items, unchanged
+0.2.3  table -- 20 rows, NEW
+```
+
+**c. Remember what is chrome, per site.** 43 distinct strings appear on >=80% of
+shopping pages; 122 on shopping_admin; 10 on reddit -- 32-34% of Magento page
+text, and it lines up with cost, since reddit has the fewest and is both the
+cheapest site per task and the highest scoring.
+
+Key this on *content*, not on path. Paths are not stable across pages: `0.1.1`
+is the nav on one Magento page and something else on the next, so a mute keyed
+to a path would start hiding real content after a navigation -- and the agent
+could not tell. Depth-based truncation fails the same way: shallow text includes
+`records found`, counts and titles, so a filter tuned to skip chrome throws away
+answers.
+
+The natural home for the learned part is the playbook system already shipped:
+"on this host these strings are chrome" is a site-level fact worth persisting
+across sessions rather than rediscovering every run. An agent-declared mute is
+worth having as an override for what the heuristic misses, with an explicit
+unmute as the escape hatch.
+
+### 21. `find` throws away the text it matched
+
+`_SERIALIZE` in `src/abt/ops/read.py` serialises a match as
+
+```js
+html: full ? e.outerHTML : e.cloneNode(false).outerHTML,
+visible: e.getClientRects().length > 0
+```
+
+`cloneNode(false)` drops every child, so in the default `shell` mode the text is
+deleted. `find {"text": "Orders"}` matching three spans returns three entries
+that are identical apart from their ref:
+
+```
+{ref: el_1, html: "<span></span>", visible: true}
+{ref: el_2, html: "<span></span>", visible: true}
+{ref: el_3, html: "<span></span>", visible: true}
+```
+
+**231 of 734 `run_js` scripts (31.5%)** are the agent re-reading with `innerText`
+or `textContent` what `find` had just matched and discarded. The alternative,
+`mode: "full"`, returns the entire subtree per match, which is unusable on a
+table or a container.
+
+Fix is one line: a `text` field carrying trimmed, length-capped visible text.
+`innerText` forces layout, so cap it (~120 chars) and fall back to `textContent`.
+
+### 22. Nothing reads what is currently typed into a field
+
+**Status: fixed in 0.4.0.** `get_text` now reads through the snapshot walk
+rather than `body.text`, and that walk has always collected form-control
+values. So a field's live value arrives with the page, and `level` reads one
+form without the rest of the document.
+
+
+An input's `value` is a property, not an attribute: it does not appear in
+`outerHTML` once anything has typed into it. `get_text` returns nothing for
+inputs, because they hold no text node. So no op answers "what is in this box
+right now".
+
+Agents reach for `run_js`: `document.querySelector('#comment').value`,
+`f.querySelector('#name')?.value`. This is a large part of the 250-script
+(34.1%) "other DOM" bucket, and it is also why form tasks are hard to verify --
+the agent cannot read back what it just wrote without JS.
+
+Fix: serialise `value`, and `checked` for checkboxes and radios, alongside the
+text from entry 21.
+
+### 23. A match carries no context, so identical elements cannot be told apart
+
+**Status: half fixed in 0.4.0.** Text now carries positions, so three strings
+reading "Orders" are visibly in different subtrees. `find` results still do
+not: a match is still a ref plus a stripped shell. And `level` is accepted only
+by `get_text` -- an agent that tried `click {"ref": "AEDBAAAAAAAA"}` was
+refused, and thought the limitation worth warning its successor about.
+
+
+There is no ancestry anywhere in a `find` result. When several elements share
+text, nothing distinguishes them, and the only op that can walk a parent chain
+is `run_js`.
+
+`webarena.64` is the clean example. At turn 22 the agent tried
+`find {"css": "a[href='#orders']"}` and `find {"css": "[data-ui-id*='orders']"}`,
+both guesses at DOM structure, both empty. Turns 23 to 25 enumerate the spans
+reading "Orders", walk each parent chain to find the one inside
+`li.admin__page-nav-item` rather than the top menu, and dispatch a click. That
+episode ran 26 turns and 1,091,337 tokens and was then scored on a sentence of
+narration.
+
+**43 scripts (5.9%) walk ancestors; 16 (2.2%) dispatch clicks `find` could not
+reach.** Smaller than the entries above, but it is the difference between one
+`find` plus one `click` and five turns of JS.
+
+Fix: a `path` field -- a `parentElement` walk up four or five levels emitting
+`tag#id.class`. Cheap, and it needs no layout.
+
+### 24. Reading many pages costs a turn each, so agents write crawlers instead
+
+**194 of 734 scripts (26.4%), averaging 707 characters**, do not touch the
+current page at all. They are `XMLHttpRequest` / `fetch` / `DOMParser` loops over
+*other* URLs: `/catalogsearch/result/?q=...&p=1..4`, or forty order pages by id,
+fetched and parsed inside the page and reduced to a summary.
+
+The agent does this because the alternative is forty `goto` + `get_text` round
+trips against a thirty-turn budget. It is not a targeting failure; it is routing
+around a missing capability, and it is the main reason admin episodes (47%
+`run_js` use, 357k tokens each) cost roughly double shopping's.
+
+A design question rather than a one-line fix. Whatever shape it takes -- a batch
+read over a list of URLs, or one selector extracted across pages -- this is where
+the token cost concentrates.
+
+### 25. An episode record cannot distinguish "knew it" from "never found it"
+
+Harness-side. When an episode ends without an `ANSWER:` marker the runner falls
+back to scoring the whole reply, so `answer_sent` and `reply` become the same
+string. Nothing in the record holds what the agent had actually concluded.
+
+Separating the two cases meant grepping 26 trace files for the gold strings.
+Nine of those episodes had the complete answer in their own transcript and never
+stated it; ten genuinely had not found it. That distinction decides whether a
+failure is a prompting problem or a capability problem, and it should be
+readable from `episodes.jsonl`.
+
+Fix: record the last reasoning block, or a `final_answer_candidate`, in the
+episode record.
+
+### 26. The ops counter goes negative across a server restart
+
+`ops` is a delta against a counter held by the abt server. When the server
+restarts mid-episode the counter resets and the delta comes out negative:
+`webarena.494` recorded `ops=-15`, `webarena.402` `ops=-35`. Two episodes in 393,
+so aggregates barely move, but every percentile and per-task average has to
+filter them out, and nothing in the record says why the number is impossible.
+
+Fix: read the counter as a monotonic session-scoped value, or record the session
+id on the episode so a reset is detectable rather than silent.
+
+### 27. The harness prompt work lives only on the benchmark host
+
+`benchmarks/browsergym/loop_policy.py` is 438 lines in this repository and 867 on
+the VPS. The repo copy has none of the campaign's prompt work: no `_ANSWER_MARK`,
+no `_NUDGE`, no `_turn_budget`, no `_playbook_section`, no counts or forms rules.
+Every improvement measured above exists on one server and nowhere else.
