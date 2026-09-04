@@ -1,77 +1,232 @@
-# AI Browser Toolkit
+```
+ █████╗ ██████╗ ████████╗
+██╔══██╗██╔══██╗╚══██╔══╝
+███████║██████╔╝   ██║
+██╔══██║██╔══██╗   ██║
+██║  ██║██████╔╝   ██║
+╚═╝  ╚═╝╚═════╝    ╚═╝
+```
 
-**Give your coding agent a real browser.** `abt` is a JSON-over-HTTP server
-that owns one long-lived Chrome or Edge window and hands an agent back what
-changed after every action — not a page to re-read, a diff to act on.
+# AI Browser Toolkit (ABT)
 
-## The goal
+A local HTTP server that gives an LLM agent a real browser — driven by
+descriptions, not screenshots or snapshot indices.
 
-An agent driving a browser through raw WebDriver calls spends most of its
-turns re-establishing where it is: re-reading the whole page after every
-click, guessing at selectors, falling back to hand-written JavaScript when a
-selector fails to say why. `abt` exists to make browsing something an agent
-does with the same confidence it edits a file — one action, one honest report
-of the consequence, on a browser that keeps its logins between sessions
-instead of starting cold every time.
+One persistent browser profile per server instance. Send it JSON ops —
+`goto`, `find`, `click`, `input`, `run_js` — one at a time or twenty at once.
+Every op that changes the page returns a diff of what changed, so the agent
+never re-reads state it already has.
 
 Built for agent harnesses — **Claude Code, Codex, OpenCode, Cursor, Gemini
 CLI, Copilot**, or anything you write yourself — over **CLI**, **MCP**, or
 plain **HTTP**. Same browser behind all three.
 
+---
+
+## The problem
+
+An agent driving a browser spends most of its budget on one thing: figuring
+out what the page looks like now.
+
+The usual loop is act → observe → interpret → decide → act. The observe step
+re-sends page state on every turn, whether anything changed or not. The
+interpret step often needs a second model pass to reduce that state into
+something the planner can use. And because each action is addressed against
+whatever snapshot the agent last read, the agent can only ever commit to
+**one action at a time** — the moment the page re-renders, its references are
+meaningless and it has to look again before it can move.
+
+That last constraint is the expensive one. It means a task with twenty
+near-identical steps costs twenty full observe-interpret-decide cycles, even
+after the agent has completely understood the pattern on step one.
+
+ABT is built to remove that constraint.
+
+---
+
+## What ABT does differently
+
+### Late-bound addressing
+
+Ops carry a *description* of their target, not a handle to it:
+
+```json
+[
+  { "op": "click",  "text": "Edit", "near": "SKU-4471" },
+  { "op": "input",  "label": "Price", "value": "249.00" },
+  { "op": "select", "label": "Status", "choose": "Active" },
+  { "op": "click",  "text": "Save" }
+]
+```
+
+Each target is resolved server-side at the moment that op runs — against the
+page as it exists then, not as it existed when the agent wrote the list. A
+re-render between op 2 and op 3 is expected, not a hazard.
+
+This is the root capability. Everything below follows from it.
+
+### Batched sequential ops
+
+Because targets resolve late, an agent can plan a whole sequence up front.
+Find the pattern once, emit the list, get one response back.
+
+The planning cost is paid **once by the model**. The resolution cost is paid
+**twenty times by the server** — and server-side resolution is not a model
+call. On bulk operations this is the difference between a handful of turns
+and several dozen.
+
+### Diffs that carry actionables
+
+Every interactive and navigation op returns what changed: text that
+appeared, text that disappeared, and the interactive elements now available.
+
+Tracking *disappearance* matters as much as appearance. A modal closing, a
+spinner clearing, an item leaving a cart — these are how an agent confirms an
+action actually landed. ABT reports them mechanically, in the response
+payload. No second pass, no summarizer, no inference.
+
+Quiet turns cost close to nothing, because nothing changed and so nothing is
+sent.
+
+### Survey before you pay
+
+`find` returns element shells — structure without content. `find_full`
+returns the content. An agent can map a page's shape cheaply, then pay for
+detail only where it decided to look.
+
+### Halt with a ledger
+
+When an op in a batch fails, execution stops there and the response carries
+three things:
+
+- which ops completed
+- which op failed, and which error type (`element_not_found`,
+  `not_interactable`, `stale_ref`, …)
+- which ops were never attempted
+
+Plus the diff of the page at the point of failure. The agent knows exactly
+where it is in its own plan and what the page looks like — enough to patch
+the failing op and resubmit from that index. No replaying completed writes.
+
+Batches can also be set to continue past failures, which is the right mode
+for reads and for genuinely optional steps.
+
+Errors are a closed set, not free text. An agent consuming this API can
+branch on failure instead of parsing prose.
+
+### Guidelines that carry forward
+
+When asked, an agent can write down what it learned about a site: which
+selectors held, which flows broke, what the retry looked like. Guidelines
+are dated.
+
+The next agent reads the date and decides how much to trust it. Recent —
+commit directly. Old — verify the structure cheaply, then commit. Stale —
+re-explore, but from a map rather than from nothing, because a site redesign
+rarely moves everything. The nav holds, the flow order holds, one selector
+moved.
+
+These are written by something that actually failed at the task and then
+succeeded, which makes them different from human-authored instructions: they
+record what actually mattered, not what someone guessed would.
+
+Guidelines can be rewritten and updated as sites change. Each revision adds
+signal about which parts of a site churn and which are stable.
+
+---
+
 ## Architecture
 
-### One browser, kept alive
-
-`abt serve` owns exactly one browser on a persistent profile — the opposite of
-a headless scraper's throwaway one. Log into Gmail, a CRM, a ticket system
-once, by hand; every agent session after that is already signed in, and the
-window outlives your editor.
-
 ```
-abt up  ──starts──>  server :8765  ──owns──>  Chrome/Edge (your profile)
-                          ^
-   abt CLI  /  abt mcp  /  your HTTP client
+┌───────────────────────────────────────────────┐
+│  Agent                                        │
+│  any model, any framework                     │
+└───────────────────────┬───────────────────────┘
+                        │  JSON over HTTP
+                        │  single op or batch
+┌───────────────────────▼───────────────────────┐
+│  Op executor                                  │
+│  runs the whole op list sequentially in one   │
+│  call, resolving each target at execution     │
+│  time — one agent turn, many actions          │
+└───────────────────────┬───────────────────────┘
+                        │
+┌───────────────────────▼───────────────────────┐
+│  Playwright                                   │
+│  persistent browser profile                   │
+└───────────────────────┬───────────────────────┘
+                        │  raw page state
+┌───────────────────────▼───────────────────────┐
+│  Data curation layer                          │
+│                                               │
+│    Level tree     structural view of the      │
+│                   page, addressable by depth  │
+│    Diff engine    appeared / disappeared /    │
+│                   actionables                 │
+└───────────────────────┬───────────────────────┘
+                        │
+┌───────────────────────▼───────────────────────┐
+│  Session log                                  │
+│  JSONL, written as it runs, crash-safe        │
+└───────────────────────┬───────────────────────┘
+                        │
+                        ▼
+              response to the agent
+        diff + ledger + error type, if any
 ```
 
-### Diff, not re-read
+The agent never touches raw page state. Everything the browser produces
+passes through curation before it reaches the model — the level tree gives
+it structure, the diff engine gives it change. What comes back is only what
+the agent did not already know.
 
-Every interactive command snapshots the page before and after and reports
-what changed, instead of leaving the caller to go find out. A click that adds
-three lines of text returns exactly those three lines — not the whole
-document, and not a second round trip to fetch it. Navigation is settled
-first (no request in flight, a DOM that has stopped changing) so the diff
-reports the destination rather than its loading spinner. This is the whole
-feedback loop: read the diff, act on it, and reach for a fresh read only when
-the diff itself says it hasn't looked somewhere — a frame it entered, a
-shadow root it counted but didn't walk.
+The turn saving lives in the executor. A batch of twenty ops is one request,
+one loop through the browser, one response — not twenty round trips through
+the model. The agent spends a turn on the plan; the executor spends none on
+carrying it out.
 
-### Structure, not a wall of text
+Stateless from the agent's side. There is no snapshot the agent must hold
+and re-sync; there is no index space that expires. The agent describes
+intent, the server resolves it against reality.
 
-Page text used to arrive as a flat list of strings — every word on the page,
-with no way to tell which cells belonged to one table row. That is what sent
-agents to hand-written JavaScript to reconstruct a table they had already been
-handed. Every string now carries its position in the page, so two strings
-sharing a prefix are visibly in the same container — and the position doubles
-as an address: ask for one part of the page again by it, instead of
-re-reading all of it. A navigation is diffed against the page it came from, so
-the chrome already read once — nav, header, footer — is summarised rather
-than repeated on every page.
+A log viewer ships with the server.
 
-### Refs, not selectors typed twice
+Purpose-built endpoints sit on top of the generic ops for specific targets
+where the generic path would be needlessly indirect.
 
-`find` hands back a stable `ref` for each match, good until the tab navigates
-or the element leaves the DOM. Act on it directly instead of writing a second
-selector for what the first one already found. A dead ref fails loudly
-(`stale_ref`) rather than silently retargeting whatever now sits in that spot.
+---
 
-### Nothing invisible on purpose
+## Where it stands
 
-Frames and, on request, shadow roots are read straight through — the same
-`find`, `get_text`, and diff that cover the main document cover an embedded
-sign-in widget or a web component too, because the alternative is a confident
-answer with the page's actual control quietly missing from it. A frame or
-shadow root that exists but wasn't looked at is reported as a count, never as
-silence, so an agent can tell "nothing is there" from "I didn't look".
+**Efficiency.** The unit of work is a batch, not an action. Once a pattern
+is known, the model plans once and the server executes the rest. Approaches
+that ground actions to a snapshot cannot express a multi-target sequence at
+all — their references die on the first re-render — so they pay a full
+model turn per action regardless of how well they understand the task.
+
+**Automatability.** Late-bound addressing is what makes real automation
+possible rather than supervised stepping. A twenty-product update is one
+plan. Failure is recoverable at op granularity instead of task granularity,
+so a partial run is a resumable run.
+
+**Context.** Diffs mean the agent's context accumulates changes, not
+repeated snapshots of an unchanged page. `find` vs `find_full` keeps
+surveying cheap. Guidelines move knowledge *out* of the context window
+entirely and onto disk, where it survives the session and the agent.
+
+**Cost.** Three mechanisms, three different axes:
+
+| | what it cuts |
+|---|---|
+| Diffing | cost within a turn |
+| Batching | turns within a task |
+| Guidelines | exploration across tasks |
+
+They compound. A first run on an unfamiliar site pays for exploration and
+benefits mainly from diffing and mid-task batching. A repeat run reads a
+guideline, skips discovery, and executes in a few turns. Cost per task
+**declines with use** rather than staying flat — and each re-discovery after
+a site change leaves the next run better informed than the last.
 
 ## Three ways in
 
