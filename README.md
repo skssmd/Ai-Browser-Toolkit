@@ -114,6 +114,28 @@ agent's account of itself. Full table, honest caveats about what these numbers
 do and don't mean, and the sweep runner for all 125 tasks: see
 [docs/reference.md](docs/reference.md#benchmark).
 
+### WebArena
+
+475 tasks across shopping, the Magento admin back office, and reddit
+(Postmill), driven by **z-ai/glm-5.3-flash** through `abt`, one fresh agent
+process per task, 30-turn ceiling.
+
+| | tasks | passed, as the harness scored it | final (+ fuzzy judging) | did the task (correctness) |
+|---|---|---|---|---|
+| shopping | 187 | 98 — 52.4% | 109 — 58.3% | 124 — 66.3% |
+| admin | 182 | 95 — 52.2% | 108 — 59.3% | 118 — 64.8% |
+| reddit | 106 | 87 — 82.1% | 89 — 84.0% | 95 — 89.6% |
+| **combined** | **475** | **280 — 58.9%** | **306 — 64.4%** | **337 — 70.9%** |
+
+"Did the task" is a second, separate measure kept apart from the score: an
+episode counts correct there when everything the evaluator required actually
+appears in what the agent produced, even when the harness's exact string, URL,
+or subreddit case didn't match it. Full per-task tables, what each task's
+evaluator actually checks, and why each failure happened:
+[shopping](benchmarks/browsergym/results/shopping/REPORT.md),
+[admin](benchmarks/browsergym/results/admin/REPORT.md),
+[reddit](benchmarks/browsergym/results/reddit/REPORT.md).
+
 ## Tests
 
 ```bash
