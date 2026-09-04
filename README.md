@@ -252,6 +252,7 @@ a site change leaves the next run better informed than the last.
 
 ```bash
 pip install ai-browser-toolkit
+# Windows: py -m pip install ai-browser-toolkit
 abt doctor          # what browsers are installed, and where
 ./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
 ```
@@ -274,16 +275,7 @@ MCP, and the mechanics behind the diff and the text track — are in
 
 ## Benchmark
 
-Four MiniWoB++ tasks, driven end to end by **Claude Haiku 4.5** through the
-`abt` CLI, told nothing but the task and the port: **46 ops, 174,167 tokens,
-0.90 average reward** — MiniWoB's own scoring, read off the page, not the
-agent's account of itself. Full table, honest caveats about what these numbers
-do and don't mean, and the sweep runner for all 125 tasks: see
-[docs/reference.md](docs/reference.md#benchmark).
-
-### WebArena
-
-475 tasks across shopping, the Magento admin back office, and reddit
+475 WebArena tasks across shopping, the Magento admin back office, and reddit
 (Postmill), driven by **z-ai/glm-5.3-flash** through `abt`, one fresh agent
 process per task, 30-turn ceiling.
 
@@ -325,14 +317,15 @@ in [docs/reference.md](docs/reference.md#tests).
 
 [Apache License 2.0](LICENSE) — © the Ai-Browser-Toolkit contributors.
 
-You may use, modify, and redistribute this code, including commercially. In
-return the licence asks for three things, and they are not optional:
+You may use, modify, and redistribute this code, including commercially. The
+licence's actual conditions:
 
-1. **Credit the project.** Mention this repository in your own README, or cite
-   it, with a link to <https://github.com/skssmd/Ai-Browser-Toolkit>.
-2. **Ship the licence.** Keep `LICENSE` and the copyright and attribution
-   notices with any copy or derivative work.
-3. **Say what you changed.** Mark modified files as modified.
+1. **Keep the licence and notices.** Include a copy of `LICENSE` with any
+   redistribution, and preserve existing copyright, patent, trademark, and
+   attribution notices.
+2. **Mark what you changed.** Files you modify must carry a notice saying so.
+3. **No trademark grant.** The licence does not give you rights to the
+   project's names, logos, or marks.
 
-Taking the code without the credit is not "borrowing" — it is using it outside
-the terms that made it available to you.
+It does not require you to mention this project in your own README or link
+back to it — that is not a term Apache 2.0 imposes.

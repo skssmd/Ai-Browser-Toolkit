@@ -44,9 +44,12 @@ private/
 !/benchmarks/browsergym/results/shopping
 !/benchmarks/browsergym/results/admin
 !/benchmarks/browsergym/results/reddit
+!/benchmarks/browsergym/results/multisite
 /benchmarks/browsergym/results/shopping/*
 !/benchmarks/browsergym/results/shopping/REPORT.md
 /benchmarks/browsergym/results/admin/*
 !/benchmarks/browsergym/results/admin/REPORT.md
 /benchmarks/browsergym/results/reddit/*
 !/benchmarks/browsergym/results/reddit/REPORT.md
+/benchmarks/browsergym/results/multisite/*
+!/benchmarks/browsergym/results/multisite/REPORT.md
