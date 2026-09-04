@@ -127,6 +127,14 @@ process per task, 30-turn ceiling.
 | reddit | 106 | 87 — 82.1% | 89 — 84.0% | 95 — 89.6% |
 | **combined** | **475** | **280 — 58.9%** | **306 — 64.4%** | **337 — 70.9%** |
 
+| | turns | ops | tokens (cached) | wall time |
+|---|---|---|---|---|
+| shopping | 1,601 | 2,088 | 34,636,273 (26,290,560, 76%) | 11.1 h |
+| admin | 2,564 | 3,736 | 72,962,196 (57,100,928, 78%) | 21.1 h |
+| reddit | 1,183 | 1,582 | 27,444,731 (19,492,544, 71%) | 10.3 h |
+| **combined** | **5,348** | **7,406** | **135,043,200 (102,884,032, 76%)** | **42.5 h** |
+| mean per task | 11 | 16 | 284,302 | 322 s |
+
 "Did the task" is a second, separate measure kept apart from the score: an
 episode counts correct there when everything the evaluator required actually
 appears in what the agent produced, even when the harness's exact string, URL,
