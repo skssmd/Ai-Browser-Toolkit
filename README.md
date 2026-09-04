@@ -175,6 +175,18 @@ signal about which parts of a site churn and which are stable.
         diff + ledger + error type, if any
 ```
 
+**Diff engine.** Every interactive command snapshots the page before and
+after and reports only what changed — text that appeared, text that
+disappeared, the interactive elements now available. Navigation is settled
+first, so the diff reports the destination, not its loading spinner.
+
+**Level tree.** Page text carries its position in the page, so a table comes
+back with its row and column boundaries intact instead of as a flat list of
+strings with no structure. The position doubles as an address: re-read one
+part of the page by it, instead of re-reading all of it. A navigation is
+diffed against the page it came from, so the chrome already read once — nav,
+header, footer — is summarised rather than repeated on every page.
+
 The agent never touches raw page state. Everything the browser produces
 passes through curation before it reaches the model — the level tree gives
 it structure, the diff engine gives it change. What comes back is only what

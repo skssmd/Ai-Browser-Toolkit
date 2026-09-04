@@ -34,4 +34,19 @@ dist/
 # Local-only playbooks: client material and sites not worth shipping.
 private/
 /results
-/benchmarks
+
+# Benchmark harness and raw episode data stay local; the written-up reports ship.
+/benchmarks/*
+!/benchmarks/browsergym
+/benchmarks/browsergym/*
+!/benchmarks/browsergym/results
+/benchmarks/browsergym/results/*
+!/benchmarks/browsergym/results/shopping
+!/benchmarks/browsergym/results/admin
+!/benchmarks/browsergym/results/reddit
+/benchmarks/browsergym/results/shopping/*
+!/benchmarks/browsergym/results/shopping/REPORT.md
+/benchmarks/browsergym/results/admin/*
+!/benchmarks/browsergym/results/admin/REPORT.md
+/benchmarks/browsergym/results/reddit/*
+!/benchmarks/browsergym/results/reddit/REPORT.md
