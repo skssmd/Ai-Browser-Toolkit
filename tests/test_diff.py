@@ -354,9 +354,13 @@ def test_a_page_with_nothing_new_still_says_where_its_controls_are(
 
     addresses = [line for line in added if "#lnk" in line]
     assert addresses, "no controls to act on"
-    # Address and role, with the text and the href left off.
-    assert all("→" not in line for line in addresses)
-    assert all(line == line.split(" ")[0] for line in addresses)
+    # With their names. An address alone would be useless: levels are positional
+    # and renumber per page, so the address handed back now was never attached
+    # to that text on any earlier visit -- it would say only that a link exists
+    # somewhere. The href is what goes instead, being the expensive half and the
+    # half already delivered in full when the page was first read.
+    assert all(" " in line for line in addresses), "a control with no name"
+    assert all("→" not in line for line in addresses), "href not dropped"
 
 
 def test_a_small_page_is_not_worth_withholding(clean_session, base_url):
@@ -539,3 +543,21 @@ def test_text_diff_has_a_safety_ceiling():
     result = diff_text([], ["x" * 100 for _ in range(50)], max_chars=1000)
     assert result["truncated"] is True
     assert "more, text diff hit its safety ceiling" in result["added"][-1]
+
+
+def test_a_line_that_moved_is_reported_again(clean_session, base_url):
+    """Position is half of what a line says, so a move is a change.
+
+    Matching on the words alone would call a shifted line already-read and
+    withhold it, leaving the caller holding the address it used to sit at --
+    which now points at whatever moved into that slot. Inserting one row
+    renumbers every sibling below it, so this is not a rare shape.
+    """
+    run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/heavy_shifted.html")
+
+    body = texts(result["dom_diff"]["text"]["added"])
+    assert "NEW BANNER" in body, "the inserted row itself"
+    # Same words as before, one slot lower, so they come back with the address
+    # they sit at now.
+    assert "Issue list for alpha" in body, "a line that moved was withheld"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import time
 from pathlib import Path
 
@@ -157,8 +156,8 @@ class BrowserSession:
         # from what the diff printed: the diff suppresses what has not changed,
         # and a handle must outlive the turn that first reported it.
         self.level_marks: dict[str, str] = {}
-        # Every string this session has already put in front of the caller, and
-        # the most copies of it any one page held. Navigation used to report
+        # Every (level, string) this session has already put in front of the
+        # caller. Navigation used to report
         # against the page just left, which is one page deep: go A to B and B's
         # shared furniture is rightly withheld, come back to A and the whole of
         # A returns as "new" though it was read two turns ago. Measured over 61
@@ -168,12 +167,11 @@ class BrowserSession:
         # Built from full snapshots rather than from what was printed -- a line
         # withheld from B's report is still on B, so it has to count as seen for
         # C. Same reasoning as `level_marks` above.
-        self.seen_text: Counter[str] = Counter()
-        # string -> the URL it was first shown from. A withheld line is only
-        # useful to an agent that can find it again, and "you have read this"
-        # is not findable -- "you read this on /dashboard/issues" is. Kept
-        # alongside rather than inside the Counter so the counting stays cheap.
-        self.seen_from: dict[str, str] = {}
+        self.seen_text: set[tuple[str, str]] = set()
+        # (level, string) -> the URL it was first shown from. A withheld line is
+        # only useful to an agent that can find it again, and "you have read
+        # this" is not findable -- "you read this on /dashboard/issues" is.
+        self.seen_from: dict[tuple[str, str], str] = {}
         # The element the command in flight acted on, for the audit frame's
         # highlight box. Set by `targeting.resolve_one`, cleared per command.
         self.last_target = None
@@ -830,28 +828,28 @@ class BrowserSession:
         report that nothing was new. That is exactly what happened the first
         time this was wired up.
 
-        The count kept is the most copies any one page held, not the running
-        total: a table of twelve "0" cells must not teach the session that
-        twelve zeroes are spent forever, or a later page's thirteenth would be
-        the only one reported. Whatever a page can show at once, it may show
-        again.
+        Keyed on the level *and* the text, never the text alone. A level is
+        positional, so inserting one row renumbers every sibling below it: those
+        lines keep their words and move. Matching on words alone would call them
+        already-read and withhold them, and the caller would go on holding the
+        address they used to sit at -- pointing, now, at whatever moved into
+        that slot. Anything that moved in the tree has to show. It also means a
+        set will do rather than counts: a level appears once per page, so a
+        (level, text) pair cannot repeat within one snapshot.
         """
-        page: Counter[str] = Counter()
-        for pair in state.get("text", []) or []:
-            if not pair:
-                continue
-            value = pair[1] if isinstance(pair, (list, tuple)) and len(pair) > 1 else pair
-            if isinstance(value, str) and value:
-                page[value] += 1
         try:
             here = self.driver.current_url
         except Exception:
             here = ""
-        for value, count in page.items():
-            if value not in self.seen_text:
-                self.seen_from[value] = here
-            if count > self.seen_text[value]:
-                self.seen_text[value] = count
+        for pair in state.get("text", []) or []:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            key = (pair[0], pair[1])
+            if not isinstance(key[1], str) or not key[1]:
+                continue
+            if key not in self.seen_text:
+                self.seen_from[key] = here
+            self.seen_text.add(key)
 
     def set_baseline(self, state: dict | None = None) -> dict:
         """Record the current page as the state to diff the next command against.

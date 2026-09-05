@@ -54,6 +54,10 @@ MAX_TEXT_LINES = 4000
 # body cannot return a response measured in megabytes.
 MAX_TEXT_DIFF_CHARS = 40_000
 
+# What separates a link's text from its target on a tree line. Spelled here and
+# again in the walk's JS, which cannot import it -- keep the two in step.
+HREF_ARROW = " → "
+
 # Interactive elements collected per snapshot. Only the "after" snapshot ships
 # the elements themselves back over the wire, so this bounds one payload per op.
 MAX_ACTIONABLE_SCANNED = 300
@@ -936,7 +940,7 @@ def page_text(
     before: list[str] | None = None,
     include_removed: bool = False,
     max_chars: int = MAX_TEXT_DIFF_CHARS,
-    seen: dict | None = None,
+    seen: set | None = None,
     seen_from: dict | None = None,
 ) -> dict:
     """The new page, with what the last one already showed you taken out.
@@ -967,8 +971,8 @@ def page_text(
 
     kept = pairs
     unchanged = 0
-    # `seen` is everything the session has already delivered, not merely the
-    # page just left. One page deep was the old behaviour and it only held while
+    # `seen` is every (level, text) the session has already delivered, not
+    # merely the page just left. One page deep was the old behaviour and it only held while
     # you kept moving forward: A to B withheld the furniture correctly, B back
     # to A returned the whole of A as though it were new, because relative to B
     # it was. Over 61 gitlab episodes that re-sent 21.6% of every character
@@ -978,27 +982,21 @@ def page_text(
     sources: dict[str, int] = {}
     against = seen if seen is not None else None
     if against is None and before:
-        against = {}
-        for _, value in _pairs(before):
-            against[value] = against.get(value, 0) + 1
+        against = set(_pairs(before))
     if against:
-        seen = dict(against)
         kept = []
         hidden_parents: dict[str, int] = {}
         for path, value in pairs:
-            left = seen.get(value, 0)
-            if left:
-                # Something this session has already been given -- on the page
-                # just left, or five pages ago. Counted here so the total is
-                # honest even when several copies survive, and its parent is
-                # remembered so the note below can cite a level that actually
+            if (path, value) in against:
+                # This exact string, at this exact level, has already been
+                # given -- on the page just left, or five pages ago. Its parent
+                # is remembered so the note below can cite a level that really
                 # holds some of what was withheld.
-                seen[value] = left - 1
                 unchanged += 1
                 parent, _ = _split_tail(path)
                 if parent:
                     hidden_parents[parent] = hidden_parents.get(parent, 0) + 1
-                origin = (seen_from or {}).get(value)
+                origin = (seen_from or {}).get((path, value))
                 if origin:
                     sources[origin] = sources.get(origin, 0) + 1
                 continue
@@ -1017,12 +1015,29 @@ def page_text(
     # act on. That is worse than repeating the text: the only move left is to
     # read the whole page, which costs a turn *and* the full payload.
     #
-    # So when nothing survived, the page still answers with its controls:
-    # address and role, no text, no href. Around ten characters a line instead
-    # of sixty, and every one of them is actionable.
+    # So when nothing survived, the page still answers with its controls.
+    #
+    # With their text. The first version of this sent the address and role
+    # alone -- `ABBAACAAA#btn` -- on the reasoning that the caller had read the
+    # text before and could pair the two up. It cannot: addresses are
+    # positional and renumber per page, so the address it is being handed now
+    # was never attached to that text on any earlier visit. What it received
+    # was the news that a button exists somewhere, which is not something
+    # anyone can act on. Watched an episode go to a page deliberately to re-read
+    # it, get 179 nameless addresses, and spend the next two turns on a `find`
+    # and a `reload` trying to recover what it had asked for.
+    #
+    # The href is what goes instead. It is the expensive half of a link line --
+    # 39% of everything delivered across 61 gitlab episodes -- and the one part
+    # that is genuinely redundant here, since a page you have already read is a
+    # page whose links you have already been given in full.
     nothing_new = bool(unchanged) and not kept
     if nothing_new:
-        added = [path for path, _ in pairs if "#" in path]
+        added = [
+            path if not value else f"{path} {value.split(HREF_ARROW)[0].rstrip()}"
+            for path, value in pairs
+            if "#" in path
+        ]
 
     if nothing_new:
         # Not "some text is missing" but "you have read all of this already,
