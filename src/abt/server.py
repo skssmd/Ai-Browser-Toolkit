@@ -398,9 +398,19 @@ def create_app(
         guess, and guessed `js` for `script`. `?names=true` keeps the old
         shape for anything that only wanted the list.
         """
+        # An op the server will refuse has no business in the list it publishes.
+        # Agents build their whole vocabulary from this: advertising run_js on a
+        # server that has it closed spends turns on a refusal, and the point of
+        # closing it is to find out what the ops cannot express, not to watch
+        # something discover a locked door.
+        hidden = () if session.run_js_enabled else ("run_js",)
         if names:
-            return ok(OP_NAMES)
-        return ok(op_signatures())
+            return ok([name for name in OP_NAMES if name not in hidden])
+        return ok({
+            name: signature
+            for name, signature in op_signatures().items()
+            if name not in hidden
+        })
 
     # --- playbooks ------------------------------------------------------------
     #

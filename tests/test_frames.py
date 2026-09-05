@@ -120,9 +120,9 @@ def test_a_frame_is_entered_by_document_position_not_context_position(swapped):
 
 def test_a_ref_lands_in_the_right_document_when_the_orders_disagree(swapped):
     """And acting on it hits the button, not whatever else was at that index."""
-    ref = run(swapped, op="find", css="#google")["matches"][0]["ref"]
+    level = run(swapped, op="find", css="#google")["matches"][0]["level"]
 
-    assert "Signed in as Shahariar" in added(run(swapped, op="click", ref=ref))
+    assert "Signed in as Shahariar" in added(run(swapped, op="click", level=level))
 
 
 # --- the reported bug ---------------------------------------------------------
@@ -172,9 +172,9 @@ def test_a_ref_from_a_frame_can_be_clicked(cross):
     The ref names an element in another document, so the click has to remember
     which frame that was and go back to it.
     """
-    ref = run(cross, op="find", css="#google")["matches"][0]["ref"]
+    level = run(cross, op="find", css="#google")["matches"][0]["level"]
 
-    result = run(cross, op="click", ref=ref)
+    result = run(cross, op="click", level=level)
 
     assert result["clicked"]
     assert "Signed in as Shahariar" in added(result)
@@ -188,74 +188,11 @@ def test_a_frame_can_be_clicked_by_text_without_a_ref(framed):
     assert "Signed in as Shahariar" in added(result)
 
 
-def test_a_ref_from_a_frame_still_dies_when_the_page_navigates(cross, base_url):
-    """The stale_ref guarantee is not weaker inside a frame."""
-    ref = run(cross, op="find", css="#google")["matches"][0]["ref"]
-    run(cross, op="goto", url=f"{base_url}/cards.html")
-
-    with pytest.raises(OpError) as caught:
-        run(cross, op="click", ref=ref)
-    assert caught.value.type == "stale_ref"
-
-
-# --- the actionable track -----------------------------------------------------
-
-
-# Give the 0x0 frame a size. Its document is already loaded, so its controls
-# become reachable the moment it is on screen -- which is how a dialog or a
-# dropdown drawn in a frame arrives in practice.
-_REVEAL = (
-    "const f = document.getElementById('preload');"
-    "f.style.width = '420px'; f.style.height = '60px';"
-)
-
 
 def _controls(result):
     return result["dom_diff"].get("actionable", {}).get("added", [])
 
 
-def test_a_control_inside_a_frame_reaches_the_actionable_track(framed):
-    """Text says what appeared; actionable says which of it can be clicked."""
-    result = run(framed, op="run_js", script=_REVEAL)
-
-    assert "Continue with Google" in [e["name"] for e in _controls(result)]
-
-
-def test_a_control_replaced_by_its_twin_in_a_frame_is_still_reported(
-    one_tab, base_url
-):
-    """Which document a control is in is part of what identifies it.
-
-    The page drops its own button and reveals the widget's identical one. Role,
-    name and tag are the same on both, so if the key stops there the two are
-    one control that never changed -- the diff reports nothing, hands out no
-    ref, and the only button on the page is one the agent was never told about.
-
-    Silence is the failure mode that matters here, which is why this asserts on
-    a swap rather than on an appearance: revealing a second control alongside
-    the first reports correctly either way, and proves nothing.
-    """
-    run(one_tab, op="goto", url=f"{base_url}/frames_swap.html")
-
-    controls = _controls(run(one_tab, op="run_js", script="window.swap();"))
-
-    ref = next(
-        (e["ref"] for e in controls if e["name"] == "Continue with Google"), None
-    )
-    assert ref is not None, "the swap went unreported"
-    # And the ref has to be the frame's button, not the one just removed.
-    assert "Signed in as Shahariar" in added(run(one_tab, op="click", ref=ref))
-
-
-def test_a_ref_from_the_actionable_track_clicks_the_right_element(framed):
-    """A frame ref handed out by the diff must act like one handed out by find."""
-    revealed = _controls(run(framed, op="run_js", script=_REVEAL))
-    ref = next(e["ref"] for e in revealed if e["name"] == "Continue with Google")
-
-    assert "Signed in as Shahariar" in added(run(framed, op="click", ref=ref))
-
-
-# --- what must not be walked --------------------------------------------------
 
 
 def test_a_zero_sized_frame_is_not_walked(framed):
@@ -318,3 +255,5 @@ def test_frames_can_be_turned_off(framed):
         assert run(framed, op="find", text="Continue with Google")["count"] == 0
     finally:
         framed.frames_enabled = True
+
+

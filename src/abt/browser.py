@@ -14,7 +14,6 @@ from . import diff as diff_util
 from . import frames as frame_util
 from .errors import OpError
 from .launch import LaunchConfig
-from .refs import RefCache
 
 # How long the DOM must hold still before a freshly loaded page counts as
 # settled, and how often to look.
@@ -103,6 +102,7 @@ class BrowserSession:
         settle_network_grace: float = _SETTLE_NETWORK_GRACE,
         interaction_settle: float = 1.0,
         frames_enabled: bool = True,
+        run_js_enabled: bool = True,
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
         engine: str = "playwright",
@@ -124,6 +124,11 @@ class BrowserSession:
         # every click pays it. See `_run_with_diff`.
         self.interaction_settle = interaction_settle
         self.frames_enabled = frames_enabled
+        # Whether the escape hatch is open. run_js exists for what the ops
+        # cannot express, and it is also the thing an agent reaches for instead
+        # of learning them -- so it can be closed, and the refusal names what to
+        # use instead.
+        self.run_js_enabled = run_js_enabled
         self.max_frames = max_frames
         self.max_frame_depth = max_frame_depth
         self.diff_enabled = diff_enabled
@@ -135,7 +140,6 @@ class BrowserSession:
         if engine not in ("selenium", "playwright"):
             raise ValueError(f"unknown engine {engine!r}")
         self._engine = engine
-        self.refs = RefCache()
         self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
         self._driver: webdriver.Chrome | webdriver.Edge | None = None
         self._handles: dict[str, str] = {}  # tab_id -> window handle
@@ -148,6 +152,10 @@ class BrowserSession:
         # agent stops reading, the same reasoning `_ANNOUNCED` uses for
         # playbook announcements. See `diff.status_hint`.
         self.status_warned = False
+        # level -> role token, from the last full snapshot of the page. Not
+        # from what the diff printed: the diff suppresses what has not changed,
+        # and a handle must outlive the turn that first reported it.
+        self.level_marks: dict[str, str] = {}
         # The element the command in flight acted on, for the audit frame's
         # highlight box. Set by `targeting.resolve_one`, cleared per command.
         self.last_target = None
@@ -279,7 +287,6 @@ class BrowserSession:
         self._counter = 0
         self._captured.clear()
         self._baselines.clear()
-        self.refs = RefCache()
         self.last_target = None
         self._in_frame = False
 
@@ -478,7 +485,6 @@ class BrowserSession:
         for tab_id in [t for t, h in self._handles.items() if h not in live]:
             del self._handles[tab_id]
             self._order.remove(tab_id)
-            self.refs.drop_tab(tab_id)
             self._baselines.pop(tab_id, None)
         for handle in live:
             if handle not in known:
@@ -555,7 +561,6 @@ class BrowserSession:
         position = self._order.index(target)
         self.driver.switch_to.window(self._handles[target])
         self.driver.close()
-        self.refs.drop_tab(target)
         self._baselines.pop(target, None)
         del self._handles[target]
         self._order.remove(target)
@@ -608,8 +613,6 @@ class BrowserSession:
                     "navigation_failed", f"could not load {url!r}: {exc.msg or exc}"
                 ) from exc
             overran = True
-
-        self.refs.invalidate(self.active_tab)
         code = self.error_page_code()
         if code:
             raise OpError(
@@ -750,20 +753,8 @@ class BrowserSession:
             self.leave_frames()
         return found
 
-    def resolve_ref(self, ref: str):
-        """A ref's element, with the driver switched into the document holding it.
-
-        Both halves matter and in this order: the staleness check inside the
-        cache asks the element a question, and asking it from the wrong document
-        answers "stale" for an element that is perfectly alive.
-        """
-        self.enter_frame(self.refs.frame_of(self.active_tab, ref))
-        return self.refs.get(self.active_tab, ref)
-
-    # --- DOM diff baselines ----------------------------------------------------
-
     def snapshot(self) -> dict:
-        """The active tab's state as its dom, text, and actionable tracks.
+        """The active tab's state as its dom and text tracks.
 
         The host document first, then each frame in reading order, folded into
         one set of tracks. A frame is a separate document that no amount of
@@ -803,78 +794,6 @@ class BrowserSession:
             self.leave_frames()
         return state
 
-    def actionable_elements(self, entries: list[dict], indices: list[int]) -> list:
-        """Live handles for the entries a diff picked, in the order it picked them.
-
-        Entries carry the frame they were collected in, so the picks are grouped
-        by document and each group fetched from inside its own -- the array the
-        walk parked belongs to that document's window and exists nowhere else.
-        """
-        if not indices:
-            return []
-        groups: dict[tuple[int, ...], list[tuple[int, int]]] = {}
-        for position, index in enumerate(indices):
-            if index >= len(entries):
-                return []
-            entry = entries[index]
-            home = tuple(entry.get("frame") or ())
-            groups.setdefault(home, []).append((entry.get("slot", index), position))
-
-        found: list = [None] * len(indices)
-        try:
-            for home, picks in groups.items():
-                if not self.enter_frame(home):
-                    return []
-                handles = diff_util.actionable_elements(
-                    self.driver, [slot for slot, _ in picks]
-                )
-                if len(handles) != len(picks):
-                    return []
-                for (_slot, position), handle in zip(picks, handles):
-                    found[position] = handle
-        finally:
-            self.leave_frames()
-        if any(handle is None for handle in found):
-            return []
-        return found
-
-    def actionable_context(self, entries: list[dict], indices: list[int]) -> list:
-        """Disambiguating text for the entries a diff picked, in that order.
-
-        Grouped by frame for the same reason `actionable_elements` is: the
-        parked array belongs to one document's window and does not exist in any
-        other. Best effort throughout -- a control that cannot be qualified is
-        reported without a qualifier, never as a failure, because this is a
-        decoration on a diff that has already succeeded.
-        """
-        if not indices:
-            return []
-        groups: dict[tuple[int, ...], list[tuple[int, int]]] = {}
-        for position, index in enumerate(indices):
-            if index >= len(entries):
-                return [None] * len(indices)
-            entry = entries[index]
-            home = tuple(entry.get("frame") or ())
-            groups.setdefault(home, []).append((entry.get("slot", index), position))
-
-        found: list = [None] * len(indices)
-        try:
-            for home, picks in groups.items():
-                if not self.enter_frame(home):
-                    continue
-                context = diff_util.actionable_context(
-                    self.driver, [slot for slot, _ in picks]
-                )
-                if len(context) != len(picks):
-                    continue
-                for (_slot, position), value in zip(picks, context):
-                    found[position] = value
-        except WebDriverException:
-            return [None] * len(indices)
-        finally:
-            self.leave_frames()
-        return found
-
     def baseline(self) -> dict | None:
         """The stored (url, dom, text, actionable) state for the active tab."""
         return self._baselines.get(self.active_tab)
@@ -889,6 +808,20 @@ class BrowserSession:
         """
         if state is None:
             state = self.snapshot()
+        # Every control the page holds right now, whether or not the diff will
+        # mention it. A handle has to stay usable across the turns where its
+        # element sat there unchanged and was rightly left unsaid.
+        marks: dict[str, str] = {}
+        for pair in state.get("text", []) or []:
+            if not pair:
+                continue
+            path = pair[0] if isinstance(pair, (list, tuple)) else ""
+            cut = path.find("#") if isinstance(path, str) else -1
+            if cut >= 0:
+                token = path[cut + 1 :]
+                dash = token.find("-")
+                marks[path[:cut]] = token if dash < 0 else token[:dash]
+        self.level_marks = marks
         entry = {
             "url": self.driver.current_url,
             "dom": state.get("dom", []),

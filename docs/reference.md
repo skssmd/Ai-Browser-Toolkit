@@ -208,7 +208,7 @@ A list, run in order:
 curl -s localhost:8765/command-list -H 'content-type: application/json' -d '[
   {"op":"goto","url":"https://example.com"},
   {"op":"find","css":"a"},
-  {"op":"click","ref":"el_0"},
+  {"op":"click","level":"AEDBa"},
   {"op":"get_text","css":"h1"}
 ]'
 ```
@@ -255,6 +255,45 @@ counting rows and matching a value to its label depend on.
 
 Past the 52nd sibling a level is a number (`AB53`); a dot separates two numbers
 (`AB100.200`) and appears nowhere else.
+
+**A `#` marks something you can operate, and the same address acts on it.**
+
+```
+AEDBa#btn         Save changes
+AEDBb#lnk         Issues → /dashboard/issues?assignee_username=byteblaze
+AEDBc#inp-q       laptop
+AEDBd#sel-country United Kingdom
+AEDBe#lnk         → /notifications
+```
+
+| mark | what |
+|---|---|
+| `#btn` | button, or anything behaving as one — `role="button"`, a focusable div |
+| `#lnk` | link; its target follows the text after `→` |
+| `#inp` | text input or textarea |
+| `#sel` | select, or a custom `role="combobox"` widget |
+| `#chk` `#rad` `#opt` `#file` | checkbox, radio, option, file input |
+
+For `#inp` and `#sel` the **name rides in the mark** (`#inp-q`) and the line's
+text is the **current value** — which is what you want to read back, and what
+makes a field changing value show up in a diff at all.
+
+The last line is a link with no text: an icon. Its target is all it has to say,
+and before this it appeared nowhere.
+
+Act on it with the same address:
+
+```json
+{"op": "click", "level": "AEDBa"}
+{"op": "input", "level": "AEDBc", "value": "laptop pro"}
+```
+
+A `#` line is interactable and is an edge: everything inside it is on that one
+line.
+
+A level is positional, so it is checked before it acts: if the page re-rendered
+and something else now sits at that address, the op fails with `stale_ref`
+rather than clicking the wrong control.
 
 **The prefix is an address.** Give it back to read one part of the page:
 
@@ -317,7 +356,7 @@ paying for the content:
 ```json
 {"op": "find", "css": ".card"}
 → {"count": 3, "matches": [
-     {"ref": "el_0", "html": "<div class=\"card\" id=\"p1\"></div>",
+     {"level": "AEDBa", "html": "<div class=\"card\" id=\"p1\"></div>",
       "text": "Cheap Widget", "path": "ACDa", "visible": true}
    ]}
 ```
@@ -330,28 +369,25 @@ result can be read straight back with `get_text` at that level.
 
 ```json
 {"op": "find_full", "css": ".card"}
-→ {"matches": [{"ref": "el_0", "html": "<div class=\"card\" id=\"p1\"><h2>Cheap Widget</h2>…"}]}
+→ {"matches": [{"level": "AEDBa", "html": "<div class=\"card\" id=\"p1\"><h2>Cheap Widget</h2>…"}]}
 ```
 
-## Element refs
+## Element addresses
 
-Every `find` match gets a `ref` (`el_0`, `el_1`, …). Act on it directly instead of
-writing another selector:
+Every `find` match gets a `level` — the same address the text track prints. Act
+on it directly instead of writing another selector:
 
 ```json
 {"op": "find",  "css": "button.buy"}
-{"op": "click", "ref": "el_0"}
+{"op": "click", "level": "AEDBa"}
 ```
 
-Refs die when the tab navigates or the element leaves the DOM. Using a dead ref
-returns `stale_ref` telling you to search again — it never quietly hits a different
-element. Each tab keeps its own refs.
+A level names a position, so it is checked before it acts: if the page changed
+and something else now sits there, the op fails with `stale_ref` rather than
+quietly hitting a different element.
 
-Numbering does **not** restart after a navigation: the counter runs for the tab's
-life, so `el_0` never means two different elements. That is what makes the
-guarantee above true — if numbering restarted, the new page's `el_0` would answer
-to a handle you were still holding for the old one. Expect the numbers to climb
-over a long session.
+Levels describe one page — a navigation renumbers them, so use one from the
+result you were most recently given.
 
 ## Targeting
 
@@ -498,83 +534,29 @@ never asked for is a typo.
 {"op": "click", "css": "#menu", "include_removed": true}    // list what left too
 {"op": "click", "css": "#menu", "element_diff": true}       // both tracks
 {"op": "click", "css": "#menu", "diff_max_tokens": 20000}   // both, generous budget
-{"op": "click", "css": "#menu", "actionable": false}        // skip refs and roles
 ```
 
-### The actionable track — on by default
+### Controls arrive on the text track
 
-**Which of what appeared you can actually click.** The text track hands you
-strings. A string is not addressable, so acting on one used to mean a `find` to
-turn it back into an element. This closes that gap: the interactive elements
-among the additions come back with their role, their name, and a **ref**.
+There is no separate actionable block. A control appears as a line whose
+address carries `#role`, and that address acts on it — see **Levels** above.
 
 ```json
 {"op": "click", "css": "#insert-menu"}
-→ {…, "dom_diff": {
-     "text": {"added": ["Chart", "Pivot table", "Macro"], "removed_count": 0},
-     "actionable": {"added": [
-       {"ref": "el_7", "role": "menuitem", "name": "Chart"},
-       {"ref": "el_8", "role": "menuitem", "name": "Pivot table"},
-       {"ref": "el_9", "role": "button", "name": "Macro", "disabled": true}
-     ], "truncated": false}
-   }}
+→ {…, "dom_diff": {"text": {"added": [
+     "AEDBa#btn Chart",
+     "AEDBb#btn Pivot table",
+     "AEDBc#btn Macro"
+   ], "removed_count": 0}}}
 
-{"op": "click", "ref": "el_8"}     ← act on it directly; no find in between
+{"op": "click", "level": "AEDBb"}     ← act on it directly; no find in between
 ```
 
-`role` is the ARIA role, explicit if the element declares one and implicit from
-the tag otherwise. `name` is the accessible name — `aria-label`, then
-`aria-labelledby`, then the associated `<label>`, then the element's own text.
-`disabled` appears only when the control is disabled, so you can tell "it showed
-up but you cannot use it yet" from "it is ready".
-
-**Text is the anchor.** Every entry's `name` is a string the text track reported
-in the same response, so the two always line up. A control with **no** accessible
-name is dropped entirely rather than handed back as a nameless ref — an entry
-you cannot tie to something you have read is noise.
-
-**Repeated names arrive qualified.** A `name` identifies a control only while
-it is unique — a table whose every row carries an `Edit` button gives you N refs
-and nothing to choose between them. When a name appears more than once in one
-diff, each entry gains `near`: the nearest text that is not the control's own.
-
-```json
-"actionable": {"added": [
-  {"ref": "el_9",  "role": "button", "name": "Edit", "near": "Medication"},
-  {"ref": "el_10", "role": "button", "name": "Edit", "near": "Passport"},
-  {"ref": "el_11", "role": "button", "name": "Save Changes"}
-]}
-```
-
-The walk climbs ancestors until something else has something to say, which on a
-row is its first cell and on a card is its heading — it knows nothing about rows
-or cards. `Save Changes` gets nothing because nothing else is called that.
-
-This is **conditional by construction**: no repeated name means no extra work
-and a response identical to before. It exists because the alternative is
-`run_js` DOM-walking to match a button to its row, which is what once clicked
-the wrong row's Edit and reported success.
-
-**It does not run after a navigation.** On a new document every control is new,
-so the diff would degenerate into an inventory of the whole page — which the
-text track already returned in full, and which would burn a ref on every control
-to say it. Use `find` when you land somewhere; use this when something appeared.
-
-**Uploads are the one exception to "must be rendered".** The standard pattern
-hides the real `<input type=file>` behind a custom control that validates or
-resizes, so the element you must send a path to is never the one on screen. File
-inputs are therefore reported even when invisible, with `role: "file"`, a name
-taken from their `<label>` (falling back to `name` or `id`), and `multiple: true`
-when they accept more than one. `input` writes to them hidden:
-
-```json
-{"op": "input", "css": "#upload", "value": "C:/shots/page.png"}
-```
-
-**What it costs.** Unlike the text track this one is not free: about a quarter
-again on top of a diffed op, and more when controls actually appear. Turn it off
-per command with `"actionable": false` for the steps in a batch whose new
-controls you will never click.
+This used to be two tracks: the words on one, and a separate role-and-handle
+object for the same control on the other. Sending both cost twice for one
+thing, and a control with no accessible name was dropped entirely — it had no
+text line to decorate, so an icon-only button appeared on neither track. Both
+problems were the same problem, and merging the tracks settles them together.
 
 ### Frames — on by default
 
@@ -644,7 +626,7 @@ To look inside, ask:
 
 ```json
 {"op": "find", "css": "input[type=file]", "shadow": true}
-→ {"count": 1, "matches": [{"ref": "el_12", "html": "…", "shadow": true}]}
+→ {"count": 1, "matches": [{"level": "AEDCb", "html": "…", "shadow": true}]}
 ```
 
 Refs from a shadow root click like any other. `css` and `text` only — the walk
@@ -917,7 +899,7 @@ abt shutdown
 # one page action
 abt command-list '{"op":"goto","url":"https://example.com"}'
 abt command-list '{"op":"find","css":"a.product","limit":20}'
-abt command-list '{"op":"click","ref":"el_0"}'
+abt command-list '{"op":"click","level":"AEDBa"}'
 ```
 
 **A sequence you already know is one round trip, not six.** This is the

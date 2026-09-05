@@ -39,7 +39,7 @@ def locator(cmd) -> tuple[str, str]:
 
 
 def describe(cmd) -> str:
-    for field in ("ref", "css", "xpath", "text"):
+    for field in ("css", "xpath", "text"):
         value = getattr(cmd, field, None)
         if value is not None:
             return f"{field}={value!r}"
@@ -190,6 +190,87 @@ def pick_near(session, elements: list, cmd):
     return elements[ranked[0][2]]
 
 
+def resolve_level(session: BrowserSession, level: str):
+    """The element a level names, checked against what was reported there.
+
+    A level is positional: it re-resolves against whatever now sits there. That
+    is harmless for reading a subtree and is not harmless for a click, since
+    after a re-render the same address can name a different control and the
+    click would land silently on the wrong thing.
+
+    So a level that was reported as a control is checked against what was
+    reported. The record comes from the last snapshot of the whole page, never
+    from what the diff chose to print: the diff suppresses what has not changed,
+    so a button reported once and then correctly left unmentioned must stay
+    usable. A handle dies when its element is gone or something else has taken
+    the position, and at no other time.
+    """
+    from . import diff as _diff
+
+    session.leave_frames()
+    inner = level
+    frame_path: list[int] = []
+    while inner.startswith("[f"):
+        close = inner.find("]")
+        if close < 0:
+            break
+        try:
+            frame_path.append(int(inner[2:close]))
+        except ValueError:
+            break
+        inner = inner[close + 1 :]
+    if frame_path:
+        # The address names its document, so there is nothing to search: go
+        # there and resolve inside it.
+        if session.enter_frame(tuple(frame_path)):
+            element = _diff.element_at(session.driver, inner)
+        else:
+            element = None
+    else:
+        element = _diff.element_at(session.driver, inner)
+    if element is None and not frame_path and session.frames_enabled:
+        # A frame is its own document with its own body, so a path from inside
+        # one names nothing at the top. Selectors already look frame by frame
+        # for exactly this reason; an address has to do the same or half the
+        # page is addressable and the other half silently is not.
+        for path in session.frame_paths():
+            if not session.enter_frame(path):
+                continue
+            element = _diff.element_at(session.driver, level)
+            if element is not None:
+                break
+        if element is None:
+            session.leave_frames()
+    if element is None:
+        raise OpError(
+            "element_not_found",
+            f"nothing sits at level {level!r}",
+            hint=(
+                "Levels describe one page and a navigation renumbers them. "
+                "Read the page again and use a level from what you were just "
+                "given."
+            ),
+        )
+    expected = (session.level_marks or {}).get(_diff.bare(level))
+    if expected:
+        actual = _diff.mark_of(session.driver, element)
+        # Not `if actual and ...`: an address that now holds something which is
+        # not a control at all comes back empty, and that is the case most worth
+        # refusing -- the page was replaced under the handle and the click would
+        # land on whatever text happens to sit there.
+        if actual != expected:
+            raise OpError(
+                "stale_ref",
+                f"level {level!r} held {expected!r} and now holds {actual!r}",
+                hint=(
+                    "The page changed after you read it, so this address no "
+                    "longer names what it named. Read the page again and use "
+                    "the level from the new result."
+                ),
+            )
+    return element
+
+
 def resolve_one(
     session: BrowserSession,
     cmd,
@@ -226,8 +307,9 @@ def _resolve_one(
     state: str = "present",
     timeout: float | None = None,
 ) -> Element:
-    if getattr(cmd, "ref", None) is not None:
-        element = session.resolve_ref(cmd.ref)
+    level = getattr(cmd, "level", None)
+    if level:
+        element = resolve_level(session, level)
         if state in _NEEDS_VIEWPORT:
             scroll_into_view(session, element)
         return element
@@ -354,9 +436,11 @@ def resolve_many(
     shadow roots, so "the whole page" means every tree reachable from it. That
     is what lets an empty result be reported as an answer instead of a shrug.
     """
-    if getattr(cmd, "ref", None) is not None:
-        home = session.refs.frame_of(session.active_tab, cmd.ref)
-        return [(session.resolve_ref(cmd.ref), home, False)], False
+    if getattr(cmd, "level", None):
+        # One address names one element, so a search over it is a search of
+        # size one. Kept here so every targeted op speaks the same language
+        # rather than levels working on some and not others.
+        return [(resolve_level(session, cmd.level), (), False)], False
 
     pierce = bool(getattr(cmd, "shadow", False))
     by, selector = locator(cmd)

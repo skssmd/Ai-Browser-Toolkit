@@ -145,11 +145,16 @@ def get_text(session: BrowserSession, cmd) -> str:
 
 
 def find(session: BrowserSession, cmd) -> dict:
-    """Matches anywhere on the page, each with a ref that acts where it lives.
+    """Matches anywhere on the page, each with the address that acts on it.
 
-    Serialisation and ref allocation happen inside the document each group came
-    from: a WebElement only answers from its own frame, so both have to be done
-    before moving on to the next one.
+    Serialisation happens inside the document each group came from: a
+    WebElement only answers from its own frame, so it has to be done before
+    moving on to the next one.
+
+    A match carries its `level`, which is the same address the text track
+    prints and the same one `click` and `input` take. There is nothing to
+    allocate and nothing to hold: where a thing sits is already a way to name
+    it.
     """
     mode = getattr(cmd, "mode", "full" if cmd.op == "find_full" else "shell")
     pairs, truncated = resolve_many(session, cmd, cmd.limit, cmd.visible_only)
@@ -161,13 +166,11 @@ def find(session: BrowserSession, cmd) -> dict:
             elements = [element for element, _, _ in batch]
             if not session.enter_frame(home):
                 continue
-            refs = session.refs.allocate(session.active_tab, elements, home)
             serialized = session.driver.execute_script(
                 _SERIALIZE, elements, mode == "full"
             )
-            for (_el, _home, in_shadow), ref, item in zip(batch, refs, serialized):
+            for (_el, _home, in_shadow), item in zip(batch, serialized):
                 found = {
-                    "ref": ref,
                     "html": item["html"],
                     "visible": bool(item["visible"]),
                 }
@@ -179,7 +182,13 @@ def find(session: BrowserSession, cmd) -> dict:
                 if item.get("value"):
                     found["value"] = item["value"]
                 if item.get("path"):
-                    found["path"] = item["path"]
+                    # A frame's paths start at its own body, so bare they would
+                    # read as host paths and resolve against the wrong
+                    # document. The text track already writes the frame in
+                    # front; a match has to agree with it or the two are two
+                    # schemes again.
+                    tag = "".join(f"[f{index}]" for index in (home or ()))
+                    found["level"] = tag + item["path"]
                 # Only worth saying when it is true: it tells the caller this
                 # one was out of reach of an ordinary search.
                 if in_shadow:

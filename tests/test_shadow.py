@@ -140,11 +140,11 @@ def test_find_reaches_into_an_open_shadow_root(page):
     assert result["matches"][0]["shadow"] is True
 
 
-def test_a_shadow_ref_can_be_acted_on(page):
+def test_a_shadow_match_can_be_acted_on(page):
     """Finding it is half a fix; a ref that cannot be clicked is no fix at all."""
-    ref = run(page, op="find", css="#pick", shadow=True)["matches"][0]["ref"]
+    level = run(page, op="find", css="#pick", shadow=True)["matches"][0]["level"]
 
-    result = run(page, op="click", ref=ref)
+    result = run(page, op="click", level=level)
 
     assert result["clicked"]
 

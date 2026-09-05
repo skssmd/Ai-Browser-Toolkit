@@ -99,11 +99,6 @@ def test_status_reports_the_session(client):
     assert body["result"]["headless"] is True
 
 
-def test_status_counts_live_refs(client):
-    assert client.get("/status").json()["result"]["refs_valid"] == 0
-    client.post("/command-list", json={"op": "find", "css": ".card"})
-    assert client.get("/status").json()["result"]["refs_valid"] == 3
-
 
 def test_ops_endpoint_gives_every_op_its_parameters(client):
     """It returned bare names while the help promised "every op and its exact
@@ -124,11 +119,11 @@ def test_ops_endpoint_keeps_the_old_shape_on_request(client):
     assert client.get("/ops?names=true").json()["result"] == sorted(REGISTRY)
 
 
-def test_find_then_click_by_ref_over_http(client, base_url):
+def test_find_then_click_by_level_over_http(client, base_url):
     client.post("/command-list", json={"op": "goto", "url": f"{base_url}/form.html"})
     found = client.post("/command-list", json={"op": "find", "css": "#go"}).json()
-    ref = found["result"]["matches"][0]["ref"]
-    body = client.post("/command-list", json={"op": "click", "ref": ref}).json()
+    level = found["result"]["matches"][0]["level"]
+    body = client.post("/command-list", json={"op": "click", "level": level}).json()
     assert body["ok"] is True
 
 

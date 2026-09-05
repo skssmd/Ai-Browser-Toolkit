@@ -83,14 +83,6 @@ def test_a_near_that_matches_nothing_says_what_was_there(rows):
     assert "Medication" in message.lower() or "medication" in message.lower()
 
 
-def test_near_is_refused_on_a_ref(rows):
-    """A ref already names one element; qualifying it is a contradiction, and
-    silently ignoring the field would hide a real misunderstanding."""
-    ref = run(rows, op="find", css="#save")["matches"][0]["ref"]
-    with pytest.raises(OpError) as caught:
-        run(rows, op="click", ref=ref, near="Medication")
-    assert caught.value.type == "invalid_op"
-
 
 def test_near_combines_with_css_too(rows):
     """Not just text targeting -- any selector that matches too much."""

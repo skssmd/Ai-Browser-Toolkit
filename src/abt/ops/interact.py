@@ -207,7 +207,7 @@ def _require_hit(session: BrowserSession, element, cmd) -> None:
     # command opened it, and that command's diff already reported its controls.
     #
     # Seen in a real session: an agent clicked Approve, which opened a
-    # confirmation dialog, then clicked the same ref twice more. The refusal was
+    # confirmation dialog, then clicked the same target twice more. The refusal was
     # correct both times -- but it said "covered by
     # div.data-[state=open]:animate-in.data-[state=closed]:animate-out", which
     # names a Tailwind animation and gives a reader nothing to do.
@@ -518,8 +518,8 @@ def input(session: BrowserSession, cmd) -> dict:
         pass
 
     # Every file input goes through the staged writer, however it was targeted.
-    # A `ref` resolves straight out of the cache without a visibility check, so
-    # a hidden upload reaches here rather than raising -- which meant the ref
+    # A `level` resolves by position without a visibility check, so a hidden
+    # upload reaches here rather than raising -- which meant the address
     # the actionable track hands out for an upload was the one way of reaching
     # it that did not work.
     if field_type == "file":
@@ -669,9 +669,9 @@ def scroll(session: BrowserSession, cmd) -> dict:
 
 def wait_for(session: BrowserSession, cmd) -> dict:
     if cmd.state == "absent":
-        if cmd.ref is not None:
+        if cmd.level is not None:
             raise OpError(
-                "invalid_op", "wait_for state 'absent' needs a selector, not a ref"
+                "invalid_op", "wait_for state 'absent' needs a selector, not a level"
             )
         by, selector = locator(cmd)
         try:

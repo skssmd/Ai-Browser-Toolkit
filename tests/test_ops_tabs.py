@@ -38,18 +38,6 @@ def test_switch_between_tabs(clean_session, base_url):
     assert run(clean_session, op="tab_switch", tab_id=second)["title"] == "Form"
 
 
-def test_each_tab_keeps_its_own_refs(clean_session, base_url):
-    first = clean_session.active_tab
-    ref = run(clean_session, op="find", css="#p1")["matches"][0]["ref"]
-    second = run(clean_session, op="tab_new", url=f"{base_url}/form.html")["tab_id"]
-
-    with pytest.raises(OpError):  # the ref belongs to the other tab
-        run(clean_session, op="get_html", ref=ref)
-
-    run(clean_session, op="tab_switch", tab_id=first)
-    assert 'id="p1"' in run(clean_session, op="get_html", ref=ref)
-    run(clean_session, op="tab_switch", tab_id=second)
-
 
 def test_close_tab_activates_a_neighbour(clean_session, base_url):
     second = run(clean_session, op="tab_new", url=f"{base_url}/form.html")["tab_id"]

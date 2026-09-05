@@ -11,7 +11,7 @@ browser stays up between commands, so tabs, logins and focus persist.
 
 ```bash
 # lifecycle -- these are the only subcommands
-abt status                            # a server up? usually yes. URL, tabs, refs
+abt status                            # a server up? usually yes. URL and tabs
 abt up                                # start one if not; returns immediately
 abt browser start                     # a SEPARATE step from starting the server
 abt ops                               # every op and its exact parameters
@@ -23,12 +23,12 @@ abt guidelines search <domain>        # a playbook for the site you are on?
 abt command-list '[{"op":"goto","url":"https://example.com/login"},
                    {"op":"find","css":"input"}]'
 
-# find gave you refs. Act on all of them in the NEXT single call --
+# find gave you levels. Act on all of them in the NEXT single call --
 # this is the shape almost every task has, and the one most often
 # paid for as three round trips instead of one:
-abt command-list '[{"op":"input","ref":"el_0","value":"me@example.com"},
-                   {"op":"input","ref":"el_1","value":"hunter2"},
-                   {"op":"click","ref":"el_2"}]'
+abt command-list '[{"op":"input","level":"AEBCa","value":"me@example.com"},
+                   {"op":"input","level":"AEBCb","value":"hunter2"},
+                   {"op":"click","level":"AEBCc"}]'
 
 # a lone op is just a list of one, and is the exception, not the habit
 abt command-list '{"op":"reload"}'
@@ -56,7 +56,7 @@ for each: typing a value and pressing Enter, billed twice, in a pair that was
 never in doubt.
 
 The rule is simple: **before you send, ask what else you already know.** You
-know the whole form once you have its refs. You know `press Enter` follows
+know the whole form once you have its levels. You know `press Enter` follows
 `input`. You know the click that follows the select. Those go in the same
 call. What you cannot know yet — which product the search returns — is where
 a batch legitimately ends.
@@ -95,7 +95,7 @@ replacement: when one does not fit what you need, drive the page with the ops
 directly. Which sites have them, and what they do, belongs in that site's
 playbook — `abt guidelines search <domain>`.
 
-## Targeting and refs
+## Targeting
 
 - **`near` qualifies a selector that matches too much.** A table whose every
   row has an `Edit` button is the case: `text` alone matches all of them, and
@@ -115,18 +115,18 @@ playbook — `abt guidelines search <domain>`.
   tells you what to ask for instead.
 
 - Ops that touch an element take exactly **one** of `css`, `xpath`, `text`
-  (exact visible text), or `ref`. An `index` picks the Nth match.
+  (exact visible text), or `level`. An `index` picks the Nth match.
 - `find` returns compact element **shells** (tag + attributes, no children) —
   perfect for surveying a page cheaply. `find_full` returns inner content.
-- Every match carries a `ref`. Act on it directly:
-  `find` then `click {"ref": "el_0"}` — no re-selecting.
-- Refs die on navigation or when the element leaves the DOM. A dead ref returns
-  `stale_ref`, never silently hits a different element.
-- Numbering never restarts, so ref numbers climb through a session. That is
-  deliberate: a reused name would let a new page's `el_0` answer to a handle you
-  were holding for the old one. Do not read meaning into the numbers.
-- The `actionable` track on a diff also hands out refs — see below. Reaching for
-  `find` right after a click is usually a wasted round trip.
+- Every match carries its `level`. Act on it directly:
+  `find` then `click {"level": "AEDBa"}` — no re-selecting.
+- A level names a position, and it is checked before it acts: if the page
+  changed and something else now sits there, the op fails rather than clicking
+  the wrong thing.
+- Levels describe one page. A navigation renumbers them, so use a level from
+  the result you were most recently given.
+- **A control the page just revealed already carries its level in the diff.**
+  Reaching for `find` right after a click is usually a wasted round trip.
 
 ## Diffs: your primary feedback loop
 
@@ -159,7 +159,7 @@ whole answer.
 
 ### Every string says where it sits
 
-The letters in front of each string are not a ref. They are the element's
+The letters in front of each string are the element's
 **position in the page**, one letter per level down from the body:
 
 ```
@@ -182,6 +182,34 @@ Read it this way:
   reading a table all depend on it.
 - **Past the 52nd sibling the level is a number** (`AB53`), and a dot only ever
   separates two numbers (`AB100.200`). Nothing else uses dots.
+
+**A `#` line is interactable, and the same address acts on it.** It is also an
+edge: everything inside it is on that one line.
+
+```
+AEDBa#btn         Save changes
+AEDBb#lnk         Issues → /dashboard/issues?assignee_username=byteblaze
+AEDBc#inp-q       laptop
+AEDBd#sel-country United Kingdom
+AEDBe#lnk         → /notifications
+```
+
+`#btn` button · `#lnk` link, target after the arrow · `#inp` text field ·
+`#sel` select · `#chk` `#rad` `#opt` `#file`.
+
+On `#inp` and `#sel` the **name is in the mark** and the line's text is the
+**current value** — so a field you typed into shows its new value on the next
+diff.
+
+```json
+{"op": "click", "level": "AEDBa"}
+{"op": "input", "level": "AEDBc", "value": "laptop pro"}
+```
+
+This is the cheapest way to act on something you have just read: no `find` in
+between, because the line already carries the address. Use a selector when you
+are looking for something by what it is; use a level when you are acting on
+something you can already see.
 
 **The prefix is an address.** Give it back to read that part of the page and
 nothing else:
@@ -217,43 +245,32 @@ whole old document. Add `"include_removed": true` when the count says it matters
 they landed on. So you never need a `find` or `get_text` merely to see what is
 on a page you just opened. The element track is skipped there.
 
-**`actionable` — on by default.** The controls among those additions, each with
-a **ref you can act on immediately**. This is the shortest path in the toolkit:
-click, read what appeared, click what appeared — no `find` in between.
+**Controls arrive on the text track itself.** A line whose address carries
+`#role` is something you can operate, and that same address acts on it — click,
+read what appeared, click what appeared, with no `find` in between:
 
 ```json
 {"op": "click", "css": "#insert-menu"}
-→ "text":       {"added": ["Chart", "Pivot table", "Macro"]},
-  "actionable": {"added": [
-     {"ref": "el_7", "role": "menuitem", "name": "Chart"},
-     {"ref": "el_9", "role": "button",   "name": "Macro", "disabled": true}]}
+→ "text": {"added": [
+     "AEDBa#btn Chart",
+     "AEDBb#btn Pivot table",
+     "AEDBc#btn Macro"]}
 
-{"op": "click", "ref": "el_7"}
+{"op": "click", "level": "AEDBa"}
 ```
 
-Every `name` is also a string in `text.added`, so the two line up: read the text
-to decide, use the ref to act. `role` disambiguates, `disabled` warns you off.
+`#btn` button · `#lnk` link, target after the arrow · `#inp` text field ·
+`#sel` select · `#chk` `#rad` `#opt` `#file`. On `#inp` and `#sel` the name is
+in the mark and the line's text is the current value, so a field you typed into
+shows its new value on the next diff.
 
-When several controls share a name each carries `near` — the nearest text that
-is not its own label, so a row of identical `Edit` buttons tells you which row
-it belongs to: `{"ref": "el_9", "name": "Edit", "near": "Medication"}`. **This
-exists so you do not reach for `run_js` to match a button to its row.** That
-DOM-walking is expensive and wrong more often than it looks — it has opened the
-wrong row's dialog and returned `ok: true`.
-
-It skips navigations (on a new page every control is "new") and drops controls
-with no accessible name, so you never get a ref you cannot tie to something you
-read. **Exception: file inputs are reported even when invisible**, because sites
-hide the real `<input type=file>` behind a custom uploader. Look for
-`role: "file"` and write the path straight to it — `input` handles the hiding:
+**A hidden file input is still reported**, because sites hide the real
+`<input type=file>` behind a custom uploader. Look for `#file` and write the
+path straight to it — `input` handles the hiding:
 
 ```json
-{"op": "input", "ref": "el_4", "value": "C:/shots/page.png"}
+{"op": "input", "level": "AEDBd", "value": "C:/shots/page.png"}
 ```
-
-Unlike the text track this one is not free — roughly a quarter again on a diffed
-op. Pass `"actionable": false` on batch steps whose new controls you will never
-click.
 
 **`elements` — pass `element_diff: true`.** A line-per-element unified diff with
 tags, ids, classes and attributes. For a change with no visible text, or when
@@ -292,7 +309,7 @@ inside them act normally; you never switch frames yourself.
 and exports lag; the diff is live.
 
 **The loop, in one line:** act, read `dom_diff.text.added` to see what appeared,
-act on `dom_diff.actionable.added[].ref` to use it. A `find` between those steps
+act on the level the diff reported. A `find` between those steps
 is usually a round trip you did not need.
 
 ## Searching for something that should be there
@@ -313,7 +330,7 @@ believe it:
 | 1 | **Re-read the response you have** | A navigation already returned the whole page in `text.added` |
 | 2 | **`find`** — `css`, then `text` | The document and every frame |
 | 3 | **`get_text`** | Rendered text, *including open shadow roots* |
-| 4 | **`find` with `"shadow": true`** | Turns shadow content into a ref you can act on |
+| 4 | **`find` with `"shadow": true`** | Turns shadow content into a level you can act on |
 | 5 | **Stop** | It is not there |
 
 Step 3 follows the composed tree, so a component's internals are in it with no
@@ -438,7 +455,7 @@ abt command-list '{"op":"input","css":"#flight-from","value":"ACV"}'
 ```
 
 Suggestions in `text.added` after typing means the field is a chooser. Click
-the one you want — it is in `actionable` with a ref — or press `Down` then
+the one you want — its line carries a level — or press `Down` then
 `Enter`. Then check that the field holds the *full* suggestion text, not what
 you typed.
 
@@ -462,7 +479,7 @@ instead of quietly emptying itself.
 are plain text inputs marked `readonly` and driven by a JavaScript calendar.
 Nothing can be typed into one, and `input` says so: *"is readonly, so nothing
 can be typed into it"*. Click it instead, and the calendar's controls arrive
-in `dom_diff.actionable` with refs.
+on the text track, each carrying its level.
 
 Then **read the calendar's header before clicking anything in it**. It tells
 you which month is showing, and that decides which of three routes is right:
@@ -504,7 +521,7 @@ Once it has happened, send `{"op": "browser_restart"}`. Like `status` and
 `shutdown` it skips the health check, so it works precisely when everything else
 returns `browser_dead`. The server stays up, the session log continues, and you
 get a fresh browser on the same profile — so you are still logged in, but
-**every tab and every ref is gone** and you must navigate back.
+**every tab is gone** and you must navigate back.
 
 You no longer have to check by hand that nothing else holds the profile: `stop`
 waits for the old browser to release it, and `start` probes the new session and

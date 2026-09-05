@@ -75,8 +75,8 @@ def test_a_button_below_the_fold_is_scrolled_to_and_clicked(page):
 
 def test_a_ref_below_the_fold_is_also_scrolled_to(page):
     found = page.post("/command-list", json={"op": "find", "css": "#low"}).json()
-    ref = found["result"]["matches"][0]["ref"]
-    assert page.post("/command-list", json={"op": "click", "ref": ref}).json()["ok"] is True
+    level = found["result"]["matches"][0]["level"]
+    assert page.post("/command-list", json={"op": "click", "level": level}).json()["ok"] is True
 
 
 def test_present_does_not_scroll(page):

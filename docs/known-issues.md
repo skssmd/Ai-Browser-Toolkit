@@ -769,3 +769,52 @@ the page the text sat. Wired into both diffed-op responses and `get_text`
 (whole page and `level` reads); a selector-targeted `get_text` stays a bare
 string on purpose and is not touched, so `get_text {"css": "#total"} == "$40.16"`
 keeps holding exactly the value a caller asked for.
+
+### 29. Controls appeared on neither track when they had no name — fixed 2026-09-05
+
+The toolkit reported a page on two tracks that never met. The **text track**
+gave every visible string an address; the **actionable track** gave controls a
+role and a `ref`, described in its own docstring as "a decoration on what the
+text track already reported".
+
+Three costs followed from the split.
+
+The same control was paid for twice: its words as a line, its role and ref as a
+separate JSON object beside it.
+
+Controls with no accessible name were dropped entirely — `diff.py` said so
+outright: *"A control with no name gives the agent nothing to tie a ref back
+to, so it is noise."* An icon-only link therefore appeared on **neither**
+track. Not that the agent could not read icons; from where it sat, those
+elements did not exist. Measured across 180 gitlab episodes, **99 of 641
+`find` calls (15%)** existed only to recover link targets already seen as
+text, including blind guesses like
+`find {'css': 'a[href*="/a11y-syntax-highlighting/issue…"]'}`.
+
+An input's value was invisible: the actionable block carried its *name*, the
+text track carried neither name nor value, so a field the agent typed into
+produced no observable change at all.
+
+All three are the same problem. The tracks are now one: a control is a line
+whose address carries `#role`, and that address acts on it —
+`{"op": "click", "level": "AEDBa"}`. Inputs and selects put their name in the
+mark and their **value** in the line, so a value change is a changed line and
+the diff reports it for free. Links carry their href, which is the only thing
+an icon-only link has to say. The name filter is gone, because a control with
+no words now has somewhere to say so.
+
+Refs were removed with it. Every `find` match returns its `level`, which is the
+same address, so nothing needed a second handle scheme — and there is no
+allocation, no per-tab table, and nothing to hold between turns.
+
+Two things the change forced, both caught by tests rather than by reading:
+
+**Grouped rendering broke the promise.** `render_text` folds siblings under a
+shared parent and prints each member as only its own index. A control rendered
+that way carried half an address, which acts on nothing. Controls now never
+join a group.
+
+**Shadow content became unaddressable.** `pathOf` climbs `parentElement`, which
+is null at a shadow root, so shadow elements had no path — with refs gone they
+would have been unreachable. A path now crosses the boundary via the host and
+marks the crossing with `/`, carried to the resolver as a negative index.

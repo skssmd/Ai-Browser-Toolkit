@@ -54,30 +54,6 @@ def test_starting_a_running_browser_is_refused(session):
     assert "browser_restart" in exc.value.message
 
 
-def test_reset_state_clears_everything_tied_to_a_driver(session):
-    session._handles = {"tab_0": "h0", "tab_1": "h1"}
-    session._order = ["tab_0", "tab_1"]
-    session._counter = 7
-    session._captured = {"h0"}
-    session._baselines = {"tab_0": {"url": "x"}}
-    session.last_target = object()
-    session._in_frame = True
-    previous_refs = session.refs
-
-    session._reset_state()
-
-    assert session._handles == {}
-    assert session._order == []
-    assert session._counter == 0
-    assert session._captured == set()
-    assert session._baselines == {}
-    assert session.last_target is None
-    assert session._in_frame is False
-    # A whole new cache, not the old one emptied -- refs hold WebElements that
-    # belong to a browser that no longer exists.
-    assert session.refs is not previous_refs
-    assert session.refs.count("tab_0") == 0
-
 
 def test_stopping_a_stopped_session_is_harmless(session):
     result = session.stop()

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .errors import OpError
 
-TARGET_FIELDS = ("ref", "css", "xpath", "text")
+TARGET_FIELDS = ("css", "xpath", "text", "level")
 
 
 class Base(BaseModel):
@@ -18,10 +18,15 @@ class Base(BaseModel):
 class Target(Base):
     """Targeting fields shared by every op that acts on an element."""
 
-    ref: str | None = None
     css: str | None = None
     xpath: str | None = None
     text: str | None = None
+    # The address the text track prints. A selector names an element by what it
+    # is; a level names one by where it sits -- and since a control's line now
+    # carries its own address, the thing you just read is the thing you act on
+    # without a search in between. Everything after a `#` is a label the reader
+    # is meant to see and the resolver ignores.
+    level: str | None = None
     index: int = 0
     # Not a selector -- a qualifier on one. `text: "Edit"` names a dozen
     # buttons on a table of documents; `near: "Medication"` says which. Kept
@@ -39,11 +44,6 @@ class Target(Base):
             raise ValueError(f"supply only one of {', '.join(TARGET_FIELDS)}, got {given}")
         if not given and self.target_required:
             raise ValueError(f"one of {', '.join(TARGET_FIELDS)} is required")
-        if self.near is not None and self.ref is not None:
-            raise ValueError(
-                "near qualifies a selector that matches several elements; a ref "
-                "already names exactly one"
-            )
         if self.near is not None and not given:
             # Silently the most expensive mistake here. On an op where no
             # target means "the whole document", `near` alone used to fall
@@ -86,16 +86,11 @@ class Diffable(Base):
     `diff_max_tokens` budgets that element diff, and supplying it implies
     `element_diff` since a budget for something you did not ask for is a typo.
 
-    `actionable` is the ref-and-role decoration on the text track, on by
-    default. Unlike the text track it is not free -- it costs roughly a quarter
-    again on top of a diffed op -- so it can be switched off for the commands in
-    a batch whose new controls you are never going to click.
     """
 
     diff: bool | None = None
     include_removed: bool = False
     element_diff: bool = False
-    actionable: bool = True
     diff_max_tokens: int | None = Field(default=None, ge=1, le=100_000)
 
     @model_validator(mode="after")
@@ -150,12 +145,11 @@ class GetText(OptionalTarget):
     where the table was, and asking for that level again brings it back without
     the rest of the document coming with it.
 
-    Not a selector, so it does not compete with css/xpath/text/ref: those name
+    Not a selector, so it does not compete with css/xpath/text: those name
     an element by what it is, `level` names one by where it sits.
     """
 
     op: Literal["get_text"]
-    level: str | None = None
 
 
 class ShadowSearch(Target):
@@ -175,10 +169,10 @@ class ShadowSearch(Target):
 
     @model_validator(mode="after")
     def _shadow_needs_a_reachable_selector(self):
-        if self.shadow and (self.xpath is not None or self.ref is not None):
+        if self.shadow and self.xpath is not None:
             raise ValueError(
                 "shadow search takes css or text; xpath cannot cross a shadow "
-                "boundary and a ref already names an element"
+                "boundary"
             )
         return self
 
@@ -365,7 +359,6 @@ class Diff(Base):
     reset: bool = False
     include_removed: bool = True
     element_diff: bool = True
-    actionable: bool = True
     max_tokens: int = Field(default=1000, ge=1, le=100_000)
 
 

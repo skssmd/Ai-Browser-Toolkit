@@ -1,4 +1,4 @@
-"""Navigation ops. Each one invalidates the active tab's refs."""
+"""Navigation ops. Each one lands the tab somewhere new."""
 
 from __future__ import annotations
 
@@ -136,7 +136,6 @@ def _history(session: BrowserSession, action: str) -> dict:
         getattr(session.driver, action)()
     except EngineError as exc:
         raise OpError("navigation_failed", f"{action} failed: {exc.msg or exc}") from exc
-    session.refs.invalidate(session.active_tab)
     code = session.error_page_code()
     if code:
         raise OpError("navigation_failed", f"{action} landed on a chrome error: {code}")

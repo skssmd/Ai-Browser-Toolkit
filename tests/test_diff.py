@@ -10,6 +10,11 @@ from __future__ import annotations
 import pytest
 from conftest import texts
 
+
+def words(added):
+    """Link lines carry their target after an arrow; this is the text alone."""
+    return [t.split(" → ")[0] for t in texts(added)]
+
 from abt.ops import dispatch
 from abt.schema import OP_NAMES, parse_command
 
@@ -50,7 +55,7 @@ def test_diff_detects_added_element(clean_session):
         "d.textContent='hello'; document.body.appendChild(d);",
     )
     result = run(clean_session, op="diff")
-    assert texts(result["text"]["added"]) == ["hello"]
+    assert words(result["text"]["added"]) == ["hello"]
     assert result["elements"]["added"] >= 1
     assert "div#fresh" in result["elements"]["diff"]
 
@@ -65,9 +70,9 @@ def test_diff_detects_attribute_and_text_change(clean_session):
     result = run(clean_session, op="diff")
     assert result["elements"]["added"] >= 1 and result["elements"]["removed"] >= 1
     assert "data-x" in result["elements"]["diff"]
-    assert texts(result["text"]["added"]) == ["X"]
+    assert words(result["text"]["added"]) == ["X"]
     # The manual diff is explicit, so it lists removals by default.
-    assert texts(result["text"]["removed"]) == ["Cheap Widget"]
+    assert words(result["text"]["removed"]) == ["Cheap Widget"]
 
 
 def test_manual_diff_can_skip_the_element_track(clean_session):
@@ -115,7 +120,7 @@ def test_auto_diff_is_text_only_by_default(clean_session):
         "document.body.appendChild(d); return 7;",
     )
     assert result["value"] == 7
-    assert texts(result["dom_diff"]["text"]["added"]) == ["appeared"]
+    assert words(result["dom_diff"]["text"]["added"]) == ["appeared"]
     assert "elements" not in result["dom_diff"]
 
 
@@ -167,7 +172,7 @@ def test_removed_text_is_listed_on_request(clean_session):
     text = result["dom_diff"]["text"]
     # Two siblings under one parent group under it, so this reads the values
     # off the tree rather than the raw lines.
-    assert texts(text["removed"]) == ["Cheap Widget", "$4.99"]
+    assert words(text["removed"]) == ["Cheap Widget", "$4.99"]
     assert text["removed_count"] == 2
 
 
@@ -186,7 +191,7 @@ def test_hidden_text_does_not_count_as_on_screen(clean_session):
         op="run_js",
         script="document.getElementById('ghosty').style.display=''; return 1;",
     )
-    assert texts(shown["dom_diff"]["text"]["added"]) == ["ghost"]
+    assert words(shown["dom_diff"]["text"]["added"]) == ["ghost"]
 
 
 def test_each_element_contributes_its_own_text_separately(clean_session):
@@ -198,7 +203,7 @@ def test_each_element_contributes_its_own_text_separately(clean_session):
         "w.innerHTML='<span>alpha</span><span>beta</span>';"
         "document.body.appendChild(w); return 1;",
     )
-    assert texts(result["dom_diff"]["text"]["added"]) == ["alpha", "beta"]
+    assert words(result["dom_diff"]["text"]["added"]) == ["alpha", "beta"]
 
 
 def test_text_track_reports_typed_input_values(clean_session, base_url):
@@ -243,7 +248,7 @@ def test_auto_diff_shows_spa_click_change(clean_session, base_url):
 def test_hover_revealing_a_menu_shows_up_as_added_text(clean_session, base_url):
     clean_session.goto(f"{base_url}/nav.html")
     result = run(clean_session, op="hover", css="#products")
-    assert "Widgets" in texts(result["dom_diff"]["text"]["added"])
+    assert "Widgets" in words(result["dom_diff"]["text"]["added"])
 
 
 def test_per_command_diff_false_suppresses(clean_session):
@@ -301,7 +306,7 @@ def test_goto_returns_the_whole_page_text(clean_session, base_url):
     result = run(clean_session, op="goto", url=f"{base_url}/links.html")
     text = result["dom_diff"]["text"]
     assert result["dom_diff"]["navigation"] is True
-    assert texts(text["added"]) == ["Links", "Cards", "Form"]
+    assert words(text["added"]) == ["Links", "Cards", "Form"]
 
 
 def test_goto_counts_the_text_it_left_behind(clean_session, base_url):
@@ -331,7 +336,7 @@ def test_back_and_forward_return_their_destination(clean_session, base_url):
     back = run(clean_session, op="back")
     assert "Catalogue" in texts(back["dom_diff"]["text"]["added"])
     forward = run(clean_session, op="forward")
-    assert texts(forward["dom_diff"]["text"]["added"]) == ["Links", "Cards", "Form"]
+    assert words(forward["dom_diff"]["text"]["added"]) == ["Links", "Cards", "Form"]
 
 
 def test_reload_returns_the_page_it_reloaded(clean_session):

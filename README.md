@@ -75,10 +75,12 @@ The planning cost is paid **once by the model**. The resolution cost is paid
 call. On bulk operations this is the difference between a handful of turns
 and several dozen.
 
-### Diffs that carry actionables
+### Diffs that carry handles
 
-Every interactive and navigation op returns what changed: text that
-appeared, text that disappeared, and the interactive elements now available.
+Every interactive and navigation op returns what changed: text that appeared,
+text that disappeared, and — on the same lines — the things you can operate.
+A control's address carries what it is, and that address acts on it, so
+reading a page and acting on it use one vocabulary rather than two.
 
 Tracking *disappearance* matters as much as appearance. A modal closing, a
 spinner clearing, an item leaving a cart — these are how an agent confirms an
@@ -160,9 +162,9 @@ signal about which parts of a site churn and which are stable.
 │  Data curation layer                          │
 │                                               │
 │    Level tree     structural view of the      │
-│                   page, addressable by depth  │
-│    Diff engine    appeared / disappeared /    │
-│                   actionables                 │
+│                   page; every line an address │
+│                   that also acts              │
+│    Diff engine    appeared / disappeared      │
 └───────────────────────┬───────────────────────┘
                         │
 ┌───────────────────────▼───────────────────────┐
@@ -177,13 +179,15 @@ signal about which parts of a site churn and which are stable.
 
 **Diff engine.** Every interactive command snapshots the page before and
 after and reports only what changed — text that appeared, text that
-disappeared, the interactive elements now available. Navigation is settled
-first, so the diff reports the destination, not its loading spinner.
+disappeared. Navigation is settled first, so the diff reports the destination,
+not its loading spinner.
 
 **Level tree.** Page text carries its position in the page, so a table comes
 back with its row and column boundaries intact instead of as a flat list of
 strings with no structure. The position doubles as an address: re-read one
-part of the page by it, instead of re-reading all of it. A navigation is
+part of the page by it, instead of re-reading all of it — and where that line
+is something you can operate, the same address clicks it or types into it, so
+there is no second handle to fetch and nothing to hold between turns. A navigation is
 diffed against the page it came from, so the chrome already read once — nav,
 header, footer — is summarised rather than repeated on every page.
 

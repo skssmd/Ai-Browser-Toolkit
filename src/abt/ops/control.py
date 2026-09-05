@@ -26,6 +26,18 @@ def run_js(session: BrowserSession, cmd) -> dict:
     contain `return` may still legitimately produce null, and guessing at that
     would be worse than staying quiet.
     """
+    if not session.run_js_enabled:
+        raise OpError(
+            "invalid_op",
+            "run_js is disabled on this server",
+            hint=(
+                "Read the page with get_text and act on the address each line "
+                "carries: a line whose address holds # is a control, and "
+                '{"op": "click", "level": "AEDBa"} operates it. `find` returns '
+                "a level per match for anything you need to search for."
+            ),
+        )
+
     try:
         value = session.driver.execute_script(cmd.script, *cmd.args)
     except ScriptError as exc:
@@ -111,14 +123,6 @@ def diff(session: BrowserSession, cmd) -> dict:
         if cmd.element_diff:
             payload["elements"] = diff_html(entry["dom"], after["dom"], cmd.max_tokens)
 
-        # Imported here: the op registry imports this module, so importing
-        # the registry at module scope would close the loop.
-        from . import actionable_report
-
-        if cmd.actionable:
-            controls = actionable_report(session, entry.get("actionable", []), after)
-            if controls is not None:
-                payload["actionable"] = controls
     return payload
 
 
@@ -230,7 +234,6 @@ def session_status(session: BrowserSession) -> dict:
         "title": session.driver.title,
         "active_tab": active,
         "tabs": tabs,
-        "refs_valid": session.refs.count(active),
         "headless": session.headless,
         "profile": str(session.profile),
     }

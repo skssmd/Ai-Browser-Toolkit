@@ -52,16 +52,20 @@ list stops at the first failure and tells you which operation failed, so a long
 list is never a blind leap.
 
 Read what you are given. Every operation that changes the page returns a
-`dom_diff`: `text.added` is what appeared on screen, and `actionable.added`
-lists the controls that appeared with a `ref` for each. Act on those refs
-directly. Running a search to find something you were just handed is the most
-expensive habit available to you.
+`dom_diff`, and `text.added` is what appeared on screen. Each line starts with
+where it sits: a line whose address carries `#` is something you can operate,
+and that same address acts on it -- `AEDBa#btn Save` is clicked with
+{"op": "click", "level": "AEDBa"}. `#btn` button, `#lnk` link with its target
+after the arrow, `#inp` field with its name in the mark and its current value
+as the text, `#sel` select. Act on what you were just handed. Running a search
+to find something already in front of you is the most expensive habit
+available to you.
 
 Finding things:
 - `get_text` tells you what a page says. It is how you learn a page you have
   not seen. Reach for it before guessing selectors.
 - `find` is for when you already know what you are looking for. It returns a
-  `ref` for each match.
+  `level` for each match, which is the same address you act on.
 - A `count` of 0 means the element is not there -- do not retry with a wider
   selector. An invalid selector is reported as an error instead, so the two
   are never confused.

@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from .. import diff
 from ..browser import BrowserSession
-from ..diff import diff_actionable, diff_html, diff_text, page_key, page_text
+from ..diff import diff_html, diff_text, page_key, page_text
 from ..errors import OpError
 from . import control, inspect, interact, navigate, read, tabs
 
@@ -96,7 +96,9 @@ NO_HEALTH_CHECK = frozenset(
 # own reasoning to identify a button, then re-read the whole page anyway,
 # because nothing connected the prefix to the level argument.
 _TREE_LEGEND = (
-    "each line begins with where it sits on the page: a letter per level, so a longer prefix is deeper and two lines sharing one sit in the same container (AEDBa and AEDBb are siblings; AEDB is what holds them). That prefix is an address -- read one part of the page again with {\"op\": \"get_text\", \"level\": \"AEDB\"} instead of re-reading all of it."
+    "each line begins with where it sits on the page: a letter per level, so a longer prefix is deeper and two lines sharing one sit in the same container (AEDBa and AEDBb are siblings; AEDB is what holds them). That prefix is an address -- read one part of the page again with {\"op\": \"get_text\", \"level\": \"AEDB\"} instead of re-reading all of it. "
+    "A line whose address carries # is interactable and is an edge -- everything inside it is on that one line -- and the same address acts on it: #btn #lnk #inp #sel #chk #rad #file. Click it with {\"op\": \"click\", \"level\": \"AEDBa\"}, type with {\"op\": \"input\", \"level\": \"AEDBc\", \"value\": \"...\"}. "
+    "A link shows its target after an arrow; an input shows its name in the mark (#inp-q) and its current value as the text."
 )
 
 
@@ -123,96 +125,6 @@ def dispatch(session: BrowserSession, cmd) -> Any:
     if cmd.op in DOM_TOUCHING_OPS:
         session.set_baseline()
     return result
-
-
-def actionable_report(
-    session: BrowserSession,
-    before: list[dict],
-    after: dict,
-) -> dict | None:
-    """Refs and roles for the controls that just appeared, or None if none did.
-
-    This decorates the text track, it does not compete with it: every entry
-    carries the same string the text diff already reported, plus the role that
-    says what it is and the ref that acts on it. Controls with no name never
-    reach here -- the snapshot drops them -- so nothing is handed back that the
-    agent cannot tie to something it has read.
-
-    Deliberately not run after a navigation. On a new document every control is
-    "new", so the diff degenerates into a full inventory of the page -- which
-    the text track already handed over in full, and which would spend a ref on
-    every control to say it. The value here is precision: you clicked, three
-    things appeared, here they are.
-    """
-    entries, indices, truncated = diff_actionable(before, after["actionable"])
-    if not entries:
-        return None
-
-    # Only now, knowing the handful that matter, are live handles fetched.
-    elements = session.actionable_elements(after["actionable"], indices)
-    if not elements:
-        return None
-
-    # Ref allocation is a convenience, never the point of the command: a driver
-    # that will not hand back handles must not turn a successful click into a
-    # failure.
-    #
-    # Allocated one frame at a time, because a ref carries the document its
-    # element lives in and a single diff can pick up controls from several --
-    # the page's own and two widgets', all in the same click.
-    try:
-        refs: list[str] = []
-        for entry, element in zip(entries, elements):
-            refs.extend(
-                session.refs.allocate(
-                    session.active_tab, [element], tuple(entry.get("frame") or ())
-                )
-            )
-    except Exception:
-        return None
-
-    # A `name` identifies a control only while it is unique. Twelve buttons all
-    # called "Edit" hand back twelve refs and nothing to choose between them,
-    # which is the one place this track stops being an answer -- and the
-    # DOM-walking that replaces it is what once opened the wrong row's dialog
-    # while reporting success.
-    #
-    # So only the collisions are qualified, and only they cost anything: no
-    # repeated name means no extra round trip, which is every ordinary page.
-    seen: dict[str, int] = {}
-    for entry in entries:
-        seen[entry["name"]] = seen.get(entry["name"], 0) + 1
-    ambiguous = [
-        position
-        for position, entry in enumerate(entries)
-        if seen[entry["name"]] > 1
-    ]
-
-    context: dict[int, str] = {}
-    if ambiguous:
-        values = session.actionable_context(
-            after["actionable"], [indices[position] for position in ambiguous]
-        )
-        for position, value in zip(ambiguous, values):
-            if value:
-                context[position] = value
-
-    added = []
-    for position, (entry, ref) in enumerate(zip(entries, refs)):
-        item = {"ref": ref, "role": entry["role"], "name": entry["name"]}
-        if entry.get("disabled"):
-            item["disabled"] = True
-        if entry.get("multiple"):
-            item["multiple"] = True
-        # Never the name it qualifies: a `near` that repeats the label
-        # distinguishes nothing and is pure payload.
-        near = context.get(position)
-        if near and near != entry["name"]:
-            item["near"] = near
-        added.append(item)
-    if not added:
-        return None
-    return {"added": added, "truncated": truncated}
 
 
 def note_no_change(info: dict, changed_elements: bool) -> None:
@@ -402,10 +314,13 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
             budget = cmd.diff_max_tokens or session.diff_max_tokens
             info["elements"] = diff_html(before["dom"], after["dom"], budget)
 
-        if getattr(cmd, "actionable", True):
-            controls = actionable_report(session, before["actionable"], after)
-            if controls is not None:
-                info["actionable"] = controls
+        # The actionable track used to ride here as its own block: a ref, a role
+        # and a name for each control that appeared, beside the text line that
+        # had already reported the same words. It is now on that line -- the
+        # address carries #role and acts directly -- so sending it twice is
+        # what this removal stops. Controls with no name are no longer dropped
+        # either: an unlabelled icon had nothing to decorate before and has its
+        # own line now.
 
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))

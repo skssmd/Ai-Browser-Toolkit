@@ -426,6 +426,13 @@ def serve(
         help="Stop reading inside iframes. Frames cost nothing on a page that has "
         "none, so turn this off only for a page whose frames are all ads.",
     ),
+    no_run_js: bool = typer.Option(
+        False,
+        "--no-run-js/--run-js",
+        help="Refuse the run_js op. The escape hatch is also the thing an agent "
+        "reaches for instead of learning the ops; closing it forces the page to "
+        "be driven by what it reports.",
+    ),
     max_frames: int = typer.Option(
         8, "--max-frames", help="Most frames to read per snapshot."
     ),
@@ -497,6 +504,7 @@ def serve(
         settle_network_grace=settle_network_grace,
         interaction_settle=interaction_settle,
         frames_enabled=not no_frames,
+        run_js_enabled=not no_run_js,
         max_frames=max_frames,
         max_frame_depth=max_frame_depth,
         engine=engine,
@@ -680,7 +688,7 @@ def doctor(
 
 @app.command()
 def status(port: int = _port_option()) -> None:
-    """Show current URL, tabs, and live refs."""
+    """Show current URL and tabs."""
     _call(port, "/status", method="GET")
 
 

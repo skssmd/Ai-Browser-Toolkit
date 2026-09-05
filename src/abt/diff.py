@@ -87,17 +87,27 @@ if (document.body) _path.set(document.body, 'A');
 const pathOf = (el) => {
   const hit = _path.get(el);
   if (hit !== undefined) return hit;
-  const par = el.parentElement;
+  let par = el.parentElement;
+  let cross = '';
+  if (!par) {
+    // A shadow root ends the parentElement chain, so without this every
+    // element inside a web component is unaddressable -- and an address is now
+    // the only way to act on one. Continue from the host and mark the crossing
+    // with a '/', which is in neither the alphabet nor the digits, so a path
+    // still parses one way only.
+    const root = el.getRootNode();
+    if (root && root.host) { par = root.host; cross = '/'; }
+  }
   if (!par) return '';
   const base = pathOf(par);
   if (!base) return '';
   let i = 1;
   for (let s = el; (s = s.previousElementSibling); ) i++;
   let step = seg(i);
-  if (step.charCodeAt(0) < 58 && base.charCodeAt(base.length - 1) < 58) {
+  if (!cross && step.charCodeAt(0) < 58 && base.charCodeAt(base.length - 1) < 58) {
     step = '.' + step;
   }
-  const p = base + step;
+  const p = base + cross + step;
   _path.set(el, p);
   return p;
 };
@@ -158,6 +168,54 @@ const INTERACTIVE = {button: 1, link: 1, checkbox: 1, radio: 1, textbox: 1,
   treeitem: 1, file: 1};
 
 const clean = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+
+// The short token written after the # on a control's line. Short because it is
+// paid for on every control on every diff; unambiguous because the agent reads
+// it to decide what the thing is.
+const ROLE_TOKEN = {button: 'btn', link: 'lnk', textbox: 'inp', searchbox: 'inp',
+  combobox: 'sel', listbox: 'sel', checkbox: 'chk', radio: 'rad', option: 'opt',
+  file: 'file', slider: 'inp', spinbutton: 'inp', switch: 'chk', tab: 'btn',
+  menuitem: 'btn', menuitemcheckbox: 'chk', menuitemradio: 'rad',
+  treeitem: 'btn', focusable: 'btn'};
+
+// Controls are edges on the tree: what is inside one belongs to it, so the walk
+// must not give a button's inner span a line of its own. Memoised the same way
+// pathOf is, so the ancestor check costs one map read per element rather than a
+// climb per element.
+const _inCtl = new Map();
+const markControl = (el) => { _inCtl.set(el, true); };
+const insideControl = (el) => {
+  const par = el.parentElement;
+  if (!par) return false;
+  const hit = _inCtl.get(par);
+  if (hit !== undefined) {
+    // Once inside, everything below is inside: record it so siblings deeper in
+    // the subtree settle on their parent's answer instead of climbing again.
+    if (hit) _inCtl.set(el, true);
+    return hit;
+  }
+  const up = insideControl(par);
+  _inCtl.set(par, up ? true : false);
+  if (up) _inCtl.set(el, true);
+  return up;
+};
+
+// What of this can be operated, as the token the line will carry. An explicit
+// role wins over the implicit one, exactly as ARIA resolves it -- which is what
+// makes a role="button" div and a custom role="combobox" widget arrive as
+// controls without the walk knowing anything about the framework that built
+// them.
+const controlRole = (el, tag) => {
+  const roleAttr = el.getAttribute('role');
+  let role = roleAttr ? roleAttr.trim().toLowerCase() : '';
+  if (!role) role = implicitRole(el, tag);
+  if (role) return INTERACTIVE[role] === 1 ? (ROLE_TOKEN[role] || 'btn') : '';
+  // No role at all: the div a framework wired a handler onto and made
+  // focusable, or something the user can type into.
+  if (el.getAttribute('contenteditable') !== null && el.isContentEditable) return 'inp';
+  if (el.hasAttribute('tabindex') && el.tabIndex >= 0) return 'btn';
+  return '';
+};
 
 const implicitRole = (el, tag) => {
   if (tag === 'A' || tag === 'AREA') return el.hasAttribute('href') ? 'link' : '';
@@ -282,7 +340,12 @@ while (node) {
     // this says how many places were not looked at, never what is in them.
     if (el.shadowRoot) shadowHosts++;
 
-    if (text.length < MAX_TEXT && rendered) {
+    if (text.length < MAX_TEXT && rendered && !insideControl(el)) {
+      // What this element is, if it is anything a person can operate. Resolved
+      // here rather than in the actionable pass below because the text track is
+      // now where a control is reported: the line that carries its words also
+      // carries the handle that acts on them.
+      const ctlRole = controlRole(el, tag);
       let value = null;
       if (tag === 'INPUT') {
         const type = (el.type || '').toLowerCase();
@@ -293,12 +356,43 @@ while (node) {
       } else if (tag === 'SELECT') {
         const chosen = el.selectedOptions[0];
         value = chosen ? chosen.textContent : '';
+      } else if (ctlRole) {
+        // A control is an edge on the tree: everything inside it belongs to it.
+        // <button><span>Save</span> <b>now</b></button> is one thing you click,
+        // so it is one line -- and the thing carrying the words is the thing
+        // that acts on them. Descendants are suppressed by insideControl.
+        value = el.textContent;
       }
       // Everything else, contenteditable included, reports its own text. A rich
       // editor's content lives in descendants that the walk reaches anyway.
       if (value === null) value = own;
       value = String(value).replace(/\s+/g, ' ').trim();
-      if (value) text.push([pathOf(el), value.slice(0, 400)]);
+
+      if (ctlRole) {
+        markControl(el);
+        // A link's target is the half of it that is not written on the page,
+        // and for an icon-only link it is the only half there is. Carrying it
+        // here is what makes such an element visible at all: before this it
+        // appeared on neither track.
+        if (ctlRole === 'lnk') {
+          const href = el.getAttribute('href');
+          if (href) value = value ? value + ' → ' + href : '→ ' + href;
+        }
+        // A control with nothing to say is still worth reporting now that it
+        // has somewhere to say it -- an unlabelled icon button is a thing you
+        // can press, and its address is what the agent needs.
+        if (!value) value = '□';
+        let mark = '#' + ctlRole;
+        // name and value are different things on these three, so the name
+        // rides in the mark and the line's text stays the value you read back.
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+          const nm = clean(el.getAttribute('name') || el.id);
+          if (nm) mark += '-' + nm.slice(0, 40);
+        }
+        text.push([pathOf(el) + mark, value.slice(0, 400)]);
+      } else if (value) {
+        text.push([pathOf(el), value.slice(0, 400)]);
+      }
     }
 
     // The actionable track: what of this can actually be operated. An explicit
@@ -378,12 +472,6 @@ return {dom: dom, text: text, actionable: actionable, frames: frames,
 
 # Pulls back only the positions the diff picked -- no re-walk, so the predicate
 # that decides what counts as a control exists in exactly one place.
-_ACTIONABLE_ELEMENTS_JS = """
-const stash = window.__abtActionable;
-if (!stash) { return []; }
-return arguments[0].map((i) => stash[i] || null);
-"""
-
 # The nearest text that tells two identically-named controls apart.
 #
 # Climbs from the control until an ancestor holds text that is not the
@@ -393,65 +481,6 @@ return arguments[0].map((i) => stash[i] || null);
 #
 # Only ever asked for repeated names, so the walk runs on a handful of elements
 # and never on an ordinary page. See `ops.actionable_report`.
-_ACTIONABLE_CONTEXT_JS = r"""
-const stash = window.__abtActionable;
-if (!stash) { return []; }
-const CAP = 80;
-// Text inside these is source, not content. The snapshot walk skips them for
-// the same reason.
-const SKIP = {SCRIPT: 1, STYLE: 1, TEMPLATE: 1, NOSCRIPT: 1};
-const tidy = (s) => s.replace(/\s+/g, ' ').trim();
-
-function firstTextBeside(root, inner) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  let node;
-  while ((node = walker.nextNode())) {
-    // The control's own label is what we are trying to qualify, so it can
-    // never be the qualifier.
-    if (inner.contains(node)) { continue; }
-    const parent = node.parentElement;
-    if (!parent || SKIP[parent.tagName]) { continue; }
-    const text = tidy(node.textContent);
-    if (text) { return text; }
-  }
-  return '';
-}
-
-return arguments[0].map(function (slot) {
-  const el = stash[slot];
-  if (!el) { return null; }
-  const own = tidy(el.innerText || el.textContent || '');
-  let node = el.parentElement;
-  let depth = 0;
-  // Six is past a table row and a card without reaching the page shell, where
-  // the first text is a nav item and identical for every control on screen.
-  while (node && depth < 6) {
-    const found = firstTextBeside(node, el);
-    if (found && found.toLowerCase() !== own.toLowerCase()) {
-      return found.length > CAP ? found.slice(0, CAP) : found;
-    }
-    node = node.parentElement;
-    depth += 1;
-  }
-  return null;
-});
-"""
-
-
-def actionable_context(driver, slots: list[int]) -> list:
-    """The disambiguating text for each parked element, or None where there is
-    none to be had. Never raises: a missing qualifier is a smaller loss than a
-    failed command."""
-    if not slots:
-        return []
-    try:
-        found = driver.execute_script(_ACTIONABLE_CONTEXT_JS, list(slots))
-    except Exception:
-        return [None] * len(slots)
-    if not isinstance(found, list) or len(found) != len(slots):
-        return [None] * len(slots)
-    return found
-
 def _blank() -> dict:
     return {"dom": [], "text": [], "actionable": [], "frames": [], "shadow_hosts": 0}
 
@@ -588,10 +617,70 @@ _AT_PATH_JS = """
 var idx = arguments[0], el = document.body;
 for (var i = 0; i < idx.length; i++) {
   if (!el) return null;
-  el = el.children[idx[i] - 1];
+  var step = idx[i];
+  // A negative index is a shadow crossing: descend into this element's own
+  // shadow root before taking the child position.
+  if (step < 0) {
+    if (!el.shadowRoot) return null;
+    el = el.shadowRoot.children[(-step) - 1];
+    continue;
+  }
+  el = el.children[step - 1];
 }
 return el || null;
 """
+
+
+_MARK_OF_JS = """
+const el = arguments[0];
+const tag = el.tagName;
+const roleAttr = el.getAttribute('role');
+let role = roleAttr ? roleAttr.trim().toLowerCase() : '';
+if (!role) {
+  if (tag === 'A' || tag === 'AREA') role = el.hasAttribute('href') ? 'link' : '';
+  else if (tag === 'BUTTON' || tag === 'SUMMARY') role = 'button';
+  else if (tag === 'SELECT') role = el.multiple ? 'listbox' : 'combobox';
+  else if (tag === 'TEXTAREA') role = 'textbox';
+  else if (tag === 'OPTION') role = 'option';
+  else if (tag === 'INPUT') {
+    const t = (el.type || 'text').toLowerCase();
+    role = t === 'checkbox' ? 'checkbox' : t === 'radio' ? 'radio'
+      : t === 'file' ? 'file' : t === 'search' ? 'searchbox'
+      : (t === 'button' || t === 'submit' || t === 'reset' || t === 'image')
+        ? 'button' : 'textbox';
+  }
+}
+const TOK = {button: 'btn', link: 'lnk', textbox: 'inp', searchbox: 'inp',
+  combobox: 'sel', listbox: 'sel', checkbox: 'chk', radio: 'rad',
+  option: 'opt', file: 'file'};
+return role ? (TOK[role] || 'btn') : '';
+"""
+
+
+def mark_of(driver, element) -> str:
+    """The role token an element would carry now, for the staleness check.
+
+    Deliberately the same resolution the walk uses -- explicit role first, then
+    the tag -- so a check can never disagree with the line that was reported
+    for reasons of its own.
+    """
+    try:
+        return driver.execute_script(_MARK_OF_JS, element) or ""
+    except Exception:  # noqa: BLE001 - a check that cannot run must not block
+        return ""
+
+
+def bare(path: str) -> str:
+    """The address, with any `#role` annotation stripped.
+
+    The mark is a reading aid, never part of the address: `AEDBa`, `AEDBa#`,
+    `AEDBa#btn` and `AEDBa#inp-q` all name the same element. That is deliberate
+    -- the path alone is already unique, so an agent that writes `#btn` on what
+    was actually a link is still understood, and a whole class of transcription
+    slip stops being an error.
+    """
+    cut = path.find("#")
+    return path if cut < 0 else path[:cut]
 
 
 def decode_path(path: str) -> list[int] | None:
@@ -602,26 +691,37 @@ def decode_path(path: str) -> list[int] | None:
     ever separates two numeric levels. The leading level is the body itself and
     is dropped, so what comes back is the walk from body down.
     """
+    path = bare(path)
     if not path or path[0] not in PATH_ALPHABET:
         return None
     levels: list[int] = []
     index = 0
+    # A '/' says the next level is inside the previous element's shadow root.
+    # Carried as a negative index so the resolver needs no second argument and
+    # a path stays one list of steps.
+    crossing = False
     while index < len(path):
         char = path[index]
         if char == ".":
+            index += 1
+            continue
+        if char == "/":
+            crossing = True
             index += 1
             continue
         if char.isdigit():
             stop = index
             while stop < len(path) and path[stop].isdigit():
                 stop += 1
-            levels.append(int(path[index:stop]))
+            levels.append(-int(path[index:stop]) if crossing else int(path[index:stop]))
+            crossing = False
             index = stop
             continue
         position = PATH_ALPHABET.find(char)
         if position < 0:
             return None
-        levels.append(position + 1)
+        levels.append(-(position + 1) if crossing else position + 1)
+        crossing = False
         index += 1
     # The first level is body, which is where the walk starts rather than a
     # step it takes.
@@ -646,8 +746,17 @@ def _split_tail(path: str) -> tuple[str, str]:
     digits appear in no other role, a run of them is exactly one level, and
     neither form has to be escaped for this to be unambiguous.
     """
+    # A control's line carries `#role` after its address. Grouping is about
+    # where a thing sits, so the mark is set aside for the split and put back
+    # on the level it belongs to: siblings still group whether or not one of
+    # them happens to be a button.
+    mark = ""
+    cut = path.find("#")
+    if cut >= 0:
+        mark = path[cut:]
+        path = path[:cut]
     if not path:
-        return "", ""
+        return "", mark
     if path[-1].isdigit():
         cut = len(path)
         while cut and path[cut - 1].isdigit():
@@ -657,8 +766,8 @@ def _split_tail(path: str) -> tuple[str, str]:
         # parent's side of the split, not to the level it introduces.
         if cut and path[cut - 1] == ".":
             cut -= 1
-        return path[:cut], own
-    return path[:-1], path[-1]
+        return path[:cut], own + mark
+    return path[:-1], path[-1] + mark
 
 
 def _pairs(raw) -> list[tuple[str, str]]:
@@ -744,10 +853,21 @@ def render_text(pairs: list[tuple[str, str]]) -> list[str]:
             index += 1
             continue
 
+        # A control never joins a group. Grouping writes the parent once and
+        # gives each member only its own index, which is the right trade for
+        # text -- but a control's line is also the handle that acts on it, and
+        # half an address acts on nothing. So it keeps its own line, whole.
+        if "#" in path:
+            lines.append(f"{path} {value}")
+            index += 1
+            continue
+
         run = [(own, value)]
         probe = index + 1
         while probe < len(pairs):
             sibling_path, sibling_value = pairs[probe]
+            if "#" in sibling_path:
+                break
             sibling_parent, sibling_own = _split_tail(sibling_path)
             if sibling_parent != parent:
                 break
@@ -922,33 +1042,6 @@ def _cap(
 # --- actionable track ----------------------------------------------------------
 
 
-def diff_actionable(
-    before: list[dict],
-    after: list[dict],
-    limit: int = MAX_ACTIONABLE_REPORTED,
-) -> tuple[list[dict], list[int], bool]:
-    """Which interactive elements are new since `before`.
-
-    Aligned on the same keys the snapshot built, so duplicates behave: five
-    identical "Delete" buttons where there were four reports one addition, not
-    five. Returns the new entries, their positions in the walk (which is what
-    `actionable_elements` resolves to live handles), and whether the cap bit.
-    """
-    matcher = difflib.SequenceMatcher(
-        a=[entry["key"] for entry in before],
-        b=[entry["key"] for entry in after],
-        autojunk=False,
-    )
-    picked: list[int] = []
-    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("replace", "insert"):
-            picked.extend(range(j1, j2))
-
-    truncated = len(picked) > limit
-    picked = picked[:limit]
-    return [after[j] for j in picked], picked, truncated
-
-
 def merge_frame(state: dict, sub: dict, path: tuple[int, ...]) -> None:
     """Fold a frame's snapshot into the host document's, in reading order.
 
@@ -977,26 +1070,6 @@ def merge_frame(state: dict, sub: dict, path: tuple[int, ...]) -> None:
         entry["frame"] = path
         entry["key"] = tag + "\u001f" + entry["key"]
         state["actionable"].append(entry)
-
-
-def actionable_elements(driver, indices: list[int]) -> list:
-    """Live handles for the positions a diff picked, in the same order.
-
-    Returns [] on any trouble: refs are a convenience laid on top of a diff that
-    has already succeeded, never a reason for the command to fail.
-    """
-    if not indices:
-        return []
-    try:
-        found = driver.execute_script(_ACTIONABLE_ELEMENTS_JS, list(indices))
-    except Exception:
-        return []
-    if not isinstance(found, list) or any(item is None for item in found):
-        return []
-    return found
-
-
-# --- element track ------------------------------------------------------------
 
 
 def _render_diff(before: list[str], after: list[str], max_chars: int) -> tuple[str, bool]:
