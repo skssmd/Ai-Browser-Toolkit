@@ -111,7 +111,7 @@ def diff(session: BrowserSession, cmd) -> dict:
 
         payload["navigation"] = True
         payload["text"], note = landing_text(
-            entry["text"], after["text"], entry["url"], url_after, cmd
+            session, entry["text"], after["text"], entry["url"], url_after, cmd
         )
         payload["note"] = (
             "the page changed since the baseline; "
@@ -125,6 +125,8 @@ def diff(session: BrowserSession, cmd) -> dict:
         if cmd.element_diff:
             payload["elements"] = diff_html(entry["dom"], after["dom"], cmd.max_tokens)
 
+    # After the diff, never before it -- see `remember_seen`.
+    session.remember_seen(after)
     return payload
 
 

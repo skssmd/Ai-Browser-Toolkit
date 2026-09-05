@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import time
 from pathlib import Path
 
@@ -156,6 +157,23 @@ class BrowserSession:
         # from what the diff printed: the diff suppresses what has not changed,
         # and a handle must outlive the turn that first reported it.
         self.level_marks: dict[str, str] = {}
+        # Every string this session has already put in front of the caller, and
+        # the most copies of it any one page held. Navigation used to report
+        # against the page just left, which is one page deep: go A to B and B's
+        # shared furniture is rightly withheld, come back to A and the whole of
+        # A returns as "new" though it was read two turns ago. Measured over 61
+        # gitlab episodes, 21.6% of everything delivered was a line the agent
+        # had already been shown in that same episode.
+        #
+        # Built from full snapshots rather than from what was printed -- a line
+        # withheld from B's report is still on B, so it has to count as seen for
+        # C. Same reasoning as `level_marks` above.
+        self.seen_text: Counter[str] = Counter()
+        # string -> the URL it was first shown from. A withheld line is only
+        # useful to an agent that can find it again, and "you have read this"
+        # is not findable -- "you read this on /dashboard/issues" is. Kept
+        # alongside rather than inside the Counter so the counting stays cheap.
+        self.seen_from: dict[str, str] = {}
         # The element the command in flight acted on, for the audit frame's
         # highlight box. Set by `targeting.resolve_one`, cleared per command.
         self.last_target = None
@@ -287,6 +305,10 @@ class BrowserSession:
         self._counter = 0
         self._captured.clear()
         self._baselines.clear()
+        # A new browser is a new conversation: nothing has been read yet, so
+        # nothing may be withheld as already read.
+        self.seen_text.clear()
+        self.seen_from.clear()
         self.last_target = None
         self._in_frame = False
 
@@ -797,6 +819,39 @@ class BrowserSession:
     def baseline(self) -> dict | None:
         """The stored (url, dom, text, actionable) state for the active tab."""
         return self._baselines.get(self.active_tab)
+
+    def remember_seen(self, state: dict) -> None:
+        """Fold a page into what this session has already put in front of the caller.
+
+        Deliberately not part of `set_baseline`. The baseline is set as soon as
+        the page settles, which is before the diff has been rendered from it --
+        so folding there would put the page into the aggregate and then diff the
+        page against itself, and every arrival, including the very first, would
+        report that nothing was new. That is exactly what happened the first
+        time this was wired up.
+
+        The count kept is the most copies any one page held, not the running
+        total: a table of twelve "0" cells must not teach the session that
+        twelve zeroes are spent forever, or a later page's thirteenth would be
+        the only one reported. Whatever a page can show at once, it may show
+        again.
+        """
+        page: Counter[str] = Counter()
+        for pair in state.get("text", []) or []:
+            if not pair:
+                continue
+            value = pair[1] if isinstance(pair, (list, tuple)) and len(pair) > 1 else pair
+            if isinstance(value, str) and value:
+                page[value] += 1
+        try:
+            here = self.driver.current_url
+        except Exception:
+            here = ""
+        for value, count in page.items():
+            if value not in self.seen_text:
+                self.seen_from[value] = here
+            if count > self.seen_text[value]:
+                self.seen_text[value] = count
 
     def set_baseline(self, state: dict | None = None) -> dict:
         """Record the current page as the state to diff the next command against.

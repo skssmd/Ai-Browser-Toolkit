@@ -301,43 +301,77 @@ def test_auto_element_diff_truncates_over_budget(clean_session):
 # --- navigation: a diff within the site, the page itself when you leave it ----
 
 
-def test_goto_within_the_site_is_a_diff(clean_session, base_url):
-    """Two pages of one site are the same template, so only the content differs.
-
-    Both fixtures carry the same nav, masthead and footer. A navigation that
-    handed back the whole destination would re-send all of it -- measured
-    across the benchmark campaign that furniture was 38-60% of every page --
-    and the agent is already looking at it.
-    """
-    run(clean_session, op="goto", url=f"{base_url}/site_one.html")
-    result = run(clean_session, op="goto", url=f"{base_url}/site_two.html")
+def test_arriving_withholds_what_you_have_already_read(clean_session, base_url):
+    """Two pages of one site share their furniture, and you have read it once."""
+    run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/heavy_two.html")
     text = result["dom_diff"]["text"]
     assert result["dom_diff"]["navigation"] is True
 
     body = texts(text["added"])
-    assert "Only on page two" in body
-    for furniture in ("Shared Masthead", "Shared footer text", "Reports"):
+    assert "Issue list for beta" in body
+    for furniture in ("Project 7 issues", "Shared footer, every page"):
         assert furniture not in body, f"{furniture!r} was already on screen"
-
-    # A diff, not a suppression summary: nothing is deferred to a later read.
-    assert "unchanged_count" not in text
-
-
-def test_goto_to_another_host_hands_back_the_page(clean_session, base_url):
-    """Unrelated documents share nothing, so a path diff would report all of it.
-
-    Same server, different netloc -- which is exactly what "a different site"
-    means here.
-    """
-    other_host = base_url.replace("127.0.0.1", "localhost")
-    run(clean_session, op="goto", url=f"{base_url}/site_one.html")
-    result = run(clean_session, op="goto", url=f"{other_host}/site_two.html")
-    text = result["dom_diff"]["text"]
-    assert result["dom_diff"]["navigation"] is True
-    # Matched on the string rather than the path, and summarised rather than
-    # dropped, so the repeats are accounted for and reachable.
     assert text["unchanged_count"] > 0
-    assert "Only on page two" in texts(text["added"])
+    # Withheld, never dropped: the count and the way back both travel with it.
+    assert any("get_text" in line for line in text["added"])
+
+
+def test_going_back_reports_against_everything_seen_not_the_last_page(
+    clean_session, base_url
+):
+    """The case one page of memory could not do.
+
+    Relative to the page just left, a page you already read is entirely new --
+    so the old rule re-sent all of it. Over 61 gitlab episodes that was 21.6%
+    of every character delivered, because these tasks double back constantly:
+    open a list, open an item, return to the list.
+    """
+    run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    run(clean_session, op="goto", url=f"{base_url}/heavy_two.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    text = result["dom_diff"]["text"]
+
+    body = texts(text["added"])
+    assert "Issue list for alpha" not in body, "re-sent a page already read"
+    assert text["unchanged_count"] > 0
+
+
+def test_a_page_with_nothing_new_still_says_where_its_controls_are(
+    clean_session, base_url
+):
+    """An empty arrival would be unanswerable.
+
+    Two different pages whose content had all been seen would come back
+    identical, with no way to tell which one you are on and no address to act
+    on -- leaving a full page read as the only move, which costs a turn *and*
+    the whole payload. So the controls still come back, addresses only.
+    """
+    run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    run(clean_session, op="goto", url=f"{base_url}/heavy_two.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/heavy_one.html")
+    added = result["dom_diff"]["text"]["added"]
+
+    addresses = [line for line in added if "#lnk" in line]
+    assert addresses, "no controls to act on"
+    # Address and role, with the text and the href left off.
+    assert all("→" not in line for line in addresses)
+    assert all(line == line.split(" ")[0] for line in addresses)
+
+
+def test_a_small_page_is_not_worth_withholding(clean_session, base_url):
+    """The explanation costs more than a short page's text, so it is not spent.
+
+    Measured at 327 characters to withhold a 121-character page. There the
+    honest answer is the page: no note to read, nothing withheld to reason
+    about.
+    """
+    run(clean_session, op="goto", url=f"{base_url}/site_one.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/site_two.html")
+    text = result["dom_diff"]["text"]
+    assert "unchanged_count" not in text
+    # The shared furniture comes back rather than being explained away.
+    assert "Shared Masthead" in texts(text["added"])
 
 
 def test_goto_returns_the_page_it_landed_on(clean_session, base_url):

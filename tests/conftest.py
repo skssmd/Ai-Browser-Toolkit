@@ -197,11 +197,20 @@ def session(engine, budgets):
 
 @pytest.fixture
 def clean_session(session, base_url):
-    """One tab, on a known page, refs cleared."""
+    """One tab, on a known page, nothing remembered from earlier tests.
+
+    The browser is session-scoped, so without clearing `seen_text` every test
+    after the first would arrive at a page whose content a previous test had
+    already "read", and the diff would rightly withhold all of it.
+    """
     for tab in list(session.tabs()):
         if not tab["active"]:
             session.close_tab(tab["tab_id"])
+    session.seen_text.clear()
+    session.seen_from.clear()
     session.goto(f"{base_url}/cards.html")
+    session.seen_text.clear()
+    session.seen_from.clear()
     return session
 
 

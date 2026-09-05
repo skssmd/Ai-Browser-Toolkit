@@ -294,7 +294,7 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         # form resubmission can also trigger, so the URL decides and not the
         # flag.
         info["text"], note = landing_text(
-            before["text"], after["text"], url_before, url_after, cmd
+            session, before["text"], after["text"], url_before, url_after, cmd
         )
         info["note"] = (
             "the page navigated; "
@@ -317,6 +317,11 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         # either: an unlabelled icon had nothing to decorate before and has its
         # own line now.
 
+    # After the diff, never before it -- see `remember_seen`. In-page changes
+    # count too: text a click revealed has been read, so a later navigation to
+    # a page carrying the same text should not send it again.
+    session.remember_seen(after)
+
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))
     note_status(session, info)
@@ -325,7 +330,9 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     return result
 
 
-def landing_text(before: list, after: list, url_before: str, url_after: str, cmd) -> tuple[dict, str]:
+def landing_text(
+    session, before: list, after: list, url_before: str, url_after: str, cmd
+) -> tuple[dict, str]:
     """What to say about a page you arrived on, and how to describe it.
 
     Three cases, and the host is what separates them.
@@ -336,39 +343,38 @@ def landing_text(before: list, after: list, url_before: str, url_after: str, cmd
     regression once, late-arriving content and a cross-origin frame both gone
     from a reload's answer because the first load had already shown them.
 
-    You moved within the site: this is now a real diff, the same
-    `added`/`removed` shape a click returns. Consecutive pages of one site are
-    the same template with different content in it, so the overwhelming
-    majority of the destination is furniture the caller is already looking at.
-    The old objection was that paths shift between documents and matching on
-    them would suppress real content -- but a path-and-text match means the
-    identical line sat in the identical place, which is the definition of
-    repetition, and anything that moved or changed still comes through. This is
-    the common case now that the tree hands out each link's href: an agent that
-    can read `-> /dashboard/issues` navigates by `goto` instead of clicking.
+    You arrived somewhere: what comes back is the page minus everything this
+    session has already been given. Not minus the page you just left -- that was
+    the old rule and it was one page deep, so it held while you moved forward
+    and broke the moment you doubled back. A to B withheld the shared furniture
+    correctly; B back to A returned the whole of A as though it were new,
+    because relative to B it was. Over 61 gitlab episodes 21.6% of every
+    character delivered was a line already delivered in that same episode, and
+    doubling back is what these tasks do: open a list, open an item, return to
+    the list, open the next.
 
-    You left for another host: unrelated documents share their nav with
-    nothing, so a path diff would report the whole destination as added and the
-    whole origin as removed. Those get the destination's tree with repeated
-    strings summarised, matched on the string rather than the path.
+    The reference is each page's full snapshot, kept here, never the diff that
+    was printed from it -- a line withheld from B's report is still on B, so it
+    still counts as seen when C is reported. What was withheld is summarised
+    with a level to ask for, so nothing is unreachable, only unrepeated.
     """
     same_page = page_key(url_before) == page_key(url_after)
-    same_host = page_key(url_before)[1] == page_key(url_after)[1]
-
-    if not same_page and same_host:
-        return (
-            diff_text(before, after, include_removed=cmd.include_removed),
-            "you moved within the site, so this is what changed -- " + _TREE_LEGEND,
-        )
+    seen = None if same_page else getattr(session, "seen_text", None)
     return (
-        page_text(after, None if same_page else before, cmd.include_removed),
+        page_text(
+            after,
+            None if same_page else before,
+            cmd.include_removed,
+            seen=seen,
+            seen_from=None if same_page else getattr(session, "seen_from", None),
+        ),
         "text is the page you landed on, laid out as its tree -- "
         + _TREE_LEGEND
         + (
             ""
             if same_page
-            else " Strings the previous page already showed are summarised at "
-            "the end rather than repeated."
+            else " Anything you have already been shown is summarised at the "
+            "end rather than repeated."
         ),
     )
 
@@ -393,8 +399,9 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
 
     url_after = session.driver.current_url
     text, note = landing_text(
-        before["text"], after["text"], url_before, url_after, cmd
+        session, before["text"], after["text"], url_before, url_after, cmd
     )
+    session.remember_seen(after)
     info = {
         "url_after": url_after,
         "navigation": True,

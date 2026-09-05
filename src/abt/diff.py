@@ -936,6 +936,8 @@ def page_text(
     before: list[str] | None = None,
     include_removed: bool = False,
     max_chars: int = MAX_TEXT_DIFF_CHARS,
+    seen: dict | None = None,
+    seen_from: dict | None = None,
 ) -> dict:
     """The new page, with what the last one already showed you taken out.
 
@@ -965,44 +967,103 @@ def page_text(
 
     kept = pairs
     unchanged = 0
-    if before:
-        seen: dict[str, int] = {}
+    # `seen` is everything the session has already delivered, not merely the
+    # page just left. One page deep was the old behaviour and it only held while
+    # you kept moving forward: A to B withheld the furniture correctly, B back
+    # to A returned the whole of A as though it were new, because relative to B
+    # it was. Over 61 gitlab episodes that re-sent 21.6% of every character
+    # delivered. Falls back to `before` so a caller with no session -- a test, a
+    # direct call -- gets the old single-page behaviour rather than nothing.
+    came_from = ""
+    sources: dict[str, int] = {}
+    against = seen if seen is not None else None
+    if against is None and before:
+        against = {}
         for _, value in _pairs(before):
-            seen[value] = seen.get(value, 0) + 1
+            against[value] = against.get(value, 0) + 1
+    if against:
+        seen = dict(against)
         kept = []
         hidden_parents: dict[str, int] = {}
         for path, value in pairs:
             left = seen.get(value, 0)
             if left:
-                # Repeat of something the previous page showed. Counted here so
-                # the total is honest even when several copies survive, and its
-                # parent is remembered so the note below can cite a level that
-                # actually holds some of what was withheld.
+                # Something this session has already been given -- on the page
+                # just left, or five pages ago. Counted here so the total is
+                # honest even when several copies survive, and its parent is
+                # remembered so the note below can cite a level that actually
+                # holds some of what was withheld.
                 seen[value] = left - 1
                 unchanged += 1
                 parent, _ = _split_tail(path)
                 if parent:
                     hidden_parents[parent] = hidden_parents.get(parent, 0) + 1
+                origin = (seen_from or {}).get(value)
+                if origin:
+                    sources[origin] = sources.get(origin, 0) + 1
                 continue
             kept.append((path, value))
         example = max(hidden_parents, key=hidden_parents.get) if hidden_parents else ""
+        # Which page most of the withheld text came from. "You have read this"
+        # is not something an agent can act on; "you read this on
+        # /dashboard/issues" tells it where in its own history to look.
+        came_from = max(sources, key=sources.get) if sources else ""
 
     added = render_text(kept)
-    if unchanged:
-        # Says plainly what was withheld and how to get it, because the levels
-        # are the answer: the agent saw them on the page it came from, and an
-        # unchanged subtree still sits at the level it sat at then. So this is
-        # not "some text is missing" -- it is "the parts you already read are
-        # where you left them", which is a fact it can act on.
-        where = example or "the level it was at"
+
+    # An arrival that suppressed everything would say nothing at all -- and two
+    # different pages whose content had both been seen would come back
+    # identical, leaving no way to tell which one you are on and no address to
+    # act on. That is worse than repeating the text: the only move left is to
+    # read the whole page, which costs a turn *and* the full payload.
+    #
+    # So when nothing survived, the page still answers with its controls:
+    # address and role, no text, no href. Around ten characters a line instead
+    # of sixty, and every one of them is actionable.
+    nothing_new = bool(unchanged) and not kept
+    if nothing_new:
+        added = [path for path, _ in pairs if "#" in path]
+
+    if nothing_new:
+        # Not "some text is missing" but "you have read all of this already,
+        # here is where it sits now". The addresses are this page's, so they are
+        # good to act on even though the text they belong to was first read
+        # several pages ago and at different addresses.
+        origin = f" You read them on {came_from}." if came_from else ""
         added.append(
-            f"… {unchanged} string{'s' if unchanged != 1 else ''} identical to "
-            f"the previous page {'are' if unchanged != 1 else 'is'} not "
-            f"repeated here -- only what changed is shown above. To read any of "
-            f"them again, ask for the level: "
-            f'{{"op": "get_text", "level": "{where}"}} returns that subtree and '
-            f"nothing else."
+            f"… nothing on this page is new to you -- all {unchanged} of its "
+            f"strings you have already been shown.{origin} Above are the "
+            f"controls it holds, addresses only, and those addresses are this "
+            f"page's. To read any part of it again, ask for the level: "
+            f'{{"op": "get_text", "level": "…"}}.'
         )
+    elif unchanged:
+        # Says plainly what was withheld and how to get it back. The level is
+        # the answer and it is this page's level, not the one the text was at
+        # when it was first read -- which matters, because "already read" now
+        # reaches back across the whole session rather than one page, and the
+        # address it was read at may be several documents stale.
+        where = example or "the level it was at"
+        origin = f" (most of it on {came_from})" if came_from else ""
+        added.append(
+            f"… {unchanged} string{'s' if unchanged != 1 else ''} you have "
+            f"already been shown{origin} "
+            f"{'are' if unchanged != 1 else 'is'} not repeated here -- only "
+            f"what changed is above. To read any of them again, ask for the "
+            f'level: {{"op": "get_text", "level": "{where}"}} returns that '
+            f"subtree and nothing else."
+        )
+
+    # Withholding is only worth doing when it is actually cheaper. The
+    # explanation costs a couple of hundred characters, so on a small page it
+    # can cost more than the text it saves -- measured at 327 characters to
+    # withhold a 121-character page. There the honest answer is the page
+    # itself: no note to read, no level to ask for, and nothing withheld to
+    # reason about.
+    if unchanged:
+        whole = render_text(pairs)
+        if sum(map(len, added)) >= sum(map(len, whole)):
+            added, unchanged = whole, 0
 
     added, removed_kept, truncated = _cap(
         added, render_text(_pairs(removed)) if include_removed else [], max_chars

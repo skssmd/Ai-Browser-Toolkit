@@ -490,53 +490,69 @@ fetch holds the DOM perfectly still, so a DOM-only check would call the spinner
 owes nothing to the network). A page that never stops — a poller, a clock —
 costs `--settle-timeout` and then proceeds, because a late diff beats no diff.
 
-**Within a site, a navigation is a diff.** Two pages of one site are the same
-template with different content in it, so `goto` to another page of the host you
-are already on returns exactly what a `click` returns — what appeared and what
-left:
+**An arrival reports the page minus everything you have already been shown** —
+not minus the page you just left. That older rule was one page deep: it held
+while you moved forward and broke the moment you doubled back, because relative
+to the page you left, a page you read three turns ago is entirely new. Measured
+over 61 gitlab episodes, 21.6% of every character delivered was a line already
+delivered in that same episode, and doubling back is what these tasks do — open
+a list, open an item, return to the list, open the next.
+
+The reference is each page's full snapshot, held server-side, never the diff
+printed from it: a line withheld from one report is still on that page, so it
+still counts as read when the next one is reported.
 
 ```json
 {"op": "goto", "url": "https://shop.example/cart"}
 → {"url": "…/cart", "title": "Your cart",
    "dom_diff": {"navigation": true,
-                "note": "you moved within the site, so this is what changed — …",
                 "text": {"added": ["ACD", "  a 2 items", "  b Total: $42",
-                                   "ACF#btn Checkout"],
-                         "removed_count": 18, "truncated": false}}}
-```
-
-The nav, header and footer are absent because they are still on screen. Measured
-across a benchmark campaign that furniture was 38% of admin page text, 47% of
-the forum's and 60% of the storefront's — re-sent on every navigation and then
-carried in the conversation for every turn after it. It matters more now than it
-did: the tree gives every link its href, so an agent that can read
-`-> /dashboard/issues` navigates by `goto` rather than by clicking.
-
-**Leaving the host is not.** Unrelated documents share nothing, so a diff would
-report the whole destination as added and the whole origin as removed. Crossing
-to another host returns the destination's tree instead, with strings the
-previous page showed matched on the string rather than the path and summarised
-rather than dropped:
-
-```json
-   "dom_diff": {"navigation": true,
-                "note": "text is the page you landed on, laid out as its tree — …",
-                "text": {"added": ["ABa Your cart", "…",
-                                   "… 41 strings identical to the previous page are not "
-                                   "repeated here — …{\"op\": \"get_text\", \"level\": \"AB\"}…"],
+                                   "ACF#btn Checkout",
+                                   "… 41 strings you have already been shown (most of it "
+                                   "on …/products) are not repeated here — …"],
                          "unchanged_count": 41,
                          "removed_count": 18, "truncated": false}}}
 ```
+
+The nav, header and footer are absent because you have read them. Measured
+across a benchmark campaign that furniture was 38% of admin page text, 47% of
+the forum's and 60% of the storefront's — re-sent on every navigation and then
+carried in the conversation for every turn after it. The summary names the page
+the withheld text came from, because "you have read this" is not something you
+can act on and "you read this on /products" is.
+
+**Nothing is ever unreachable, only unrepeated.** `get_text` with a level
+returns that subtree in full, and the level cited is *this* page's, not the one
+the text sat at when you first read it.
+
+**An arrival is never empty.** If a page's content has all been seen, reporting
+nothing would leave two different pages coming back identical — no way to tell
+which one you are on, no address to act on, and a full page read as the only
+move, costing a turn *and* the whole payload. So the page answers with its
+controls instead: address and role, no text and no href, about ten characters a
+line rather than sixty.
+
+```json
+   "text": {"added": ["AEDBa#lnk", "AEDBb#btn", "AECc#inp-q",
+                      "… nothing on this page is new to you — all 47 of its strings "
+                      "you have already been shown. You read them on …/issues. …"],
+            "unchanged_count": 47}
+```
+
+**Withholding that would not pay is not done.** The explanation costs a couple
+of hundred characters, so on a short page it can cost more than the text it
+saves — measured at 327 characters to withhold a 121-character page. There the
+page comes back whole, with no note and nothing withheld to reason about.
 
 **A reload is neither.** It lands on the document it started from, so there is
 no other page to measure against and nothing is withheld — suppressing here once
 hid the very content a reload had been asked for.
 
-All three cases cover `goto` `back` `forward` `reload` and any interactive op
-that redirected — a `click` that leaves the page is told apart by host the same
-way. The element track is skipped whenever the document was replaced, since a
-unified diff across two documents is noise at any budget. `"diff": false` turns
-it off per command.
+This covers `goto` `back` `forward` `reload` and any interactive op that
+redirected — a `click` that leaves the page lands in exactly the same place and
+is treated the same way. The element track is skipped whenever the document was
+replaced, since a unified diff across two documents is noise at any budget.
+`"diff": false` turns it off per command.
 
 Only rendered text counts. An element with `display: none` has not appeared yet,
 so a hover that reveals a menu shows up as its items being *added* — which is
