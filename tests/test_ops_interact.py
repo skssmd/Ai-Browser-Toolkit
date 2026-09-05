@@ -210,3 +210,74 @@ def test_scroll_to_element_and_to_offset(clean_session):
 def test_index_picks_a_later_match(clean_session):
     result = run(clean_session, op="get_html", css=".card", index=1)
     assert 'id="p2"' in result
+
+
+# --- input sets whatever a control holds ---------------------------------------
+#
+# `input` is the one op for "put this value in there". It used to mean only
+# "type this text", so on a <select> it fell through to send_keys -- which the
+# browser answers with its own typeahead, landing on the wrong option for a
+# value that prefixes two of them and on nothing for one spelled differently,
+# while the op reported the value as written either way. A box and a radio were
+# worse: nothing happened at all, still reported as success. Silent wrong
+# beats loud wrong nowhere, so each of these now either sets the value or says
+# it could not.
+
+
+@pytest.fixture
+def valued(clean_session, base_url):
+    clean_session.goto(f"{base_url}/valued.html")
+    return clean_session
+
+
+def test_input_sets_a_select_by_option_text(valued):
+    result = run(valued, op="input", css="#country", value="Germany")
+    assert result["selected"] == "Germany"
+    assert result["value"] == "de"
+
+
+def test_input_sets_a_select_by_underlying_value(valued):
+    """A caller holding the code rather than the label is still understood."""
+    assert run(valued, op="input", css="#country", value="uk")["selected"] == (
+        "United Kingdom"
+    )
+
+
+def test_input_on_a_select_names_the_options_it_has(valued):
+    with pytest.raises(OpError) as caught:
+        run(valued, op="input", css="#country", value="Atlantis")
+    assert caught.value.type == "element_not_found"
+    assert "United Kingdom" in caught.value.hint
+
+
+def test_input_ticks_a_checkbox(valued):
+    result = run(valued, op="input", css="#agree", value="true")
+    assert result == {"checked": True, "changed": True}
+
+
+def test_input_unticks_a_checkbox(valued):
+    assert run(valued, op="input", css="#preset", value="false")["checked"] is False
+
+
+def test_setting_a_checkbox_to_what_it_already_is_does_nothing(valued):
+    """Clicking unconditionally would turn off the box it was asked to turn on."""
+    result = run(valued, op="input", css="#preset", value="true")
+    assert result == {"checked": True, "changed": False}
+
+
+def test_input_selects_a_radio(valued):
+    assert run(valued, op="input", css="#ship-fast", value="true")["checked"] is True
+
+
+def test_a_radio_cannot_be_switched_off(valued):
+    with pytest.raises(OpError) as caught:
+        run(valued, op="input", css="#ship-std", value="false")
+    assert caught.value.type == "invalid_op"
+    assert "Set the radio you do want" in caught.value.hint
+
+
+def test_a_box_is_not_a_text_field(valued):
+    with pytest.raises(OpError) as caught:
+        run(valued, op="input", css="#agree", value="ada")
+    assert caught.value.type == "invalid_op"
+    assert '"true" or "false"' in caught.value.hint

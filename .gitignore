@@ -56,3 +56,6 @@ private/
 !/benchmarks/browsergym/results/multisite/REPORT.md
 /benchmarks/browsergym/results/gitlab-minimax/*
 !/benchmarks/browsergym/results/gitlab-minimax/REPORT.md
+!/benchmarks/browsergym/results/compare-102
+/benchmarks/browsergym/results/compare-102/*
+!/benchmarks/browsergym/results/compare-102/TASK-102-BEFORE-AFTER.md

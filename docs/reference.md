@@ -288,6 +288,19 @@ Act on it with the same address:
 {"op": "input", "level": "AEDBc", "value": "laptop pro"}
 ```
 
+**`input` sets whatever the control holds**, not just text. On a `#sel` the
+value is the option's visible text (its underlying `value` is accepted too, and
+an option that matches neither is refused with the list of options that do
+exist). On a `#chk` or `#rad` it is `"true"` or `"false"`, and the click is
+spent only if the state actually changes — so setting a ticked box to `true`
+leaves it ticked instead of toggling it off. A radio cannot be switched off
+directly; set the one you want instead.
+
+This exists because the alternative was silence. Typing at a `<select>` used to
+reach the browser's own typeahead, which lands on the wrong option whenever the
+value prefixes two of them and on nothing when it is spelled differently — and
+at a checkbox it did nothing whatsoever. Both reported the value as written.
+
 A `#` line is interactable and is an edge: everything inside it is on that one
 line.
 

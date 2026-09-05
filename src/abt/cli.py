@@ -1344,7 +1344,7 @@ def browser_restart(port: int = _port_option()) -> None:
     """Close and reopen the browser on the same profile.
 
     The way back from `browser_dead` -- which is what a tab that closed itself
-    leaves behind. You stay logged in; every tab and ref is gone.
+    leaves behind. You stay logged in; every tab is gone.
     """
     _call(port, "/browser/restart", {})
 

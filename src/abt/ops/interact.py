@@ -528,6 +528,29 @@ def input(session: BrowserSession, cmd) -> dict:
     if field_type in _SEGMENTED_TYPES:
         return _set_segmented(session, cmd, element, field_type)
 
+    # A <select> is the one control the tree invites you to type into and that
+    # typing does not actually drive. It shows as `#sel-country United Kingdom`
+    # -- a name and the value it currently holds, exactly like a text field --
+    # so the obvious move is `input`, and `input` used to fall through to
+    # send_keys. Which half-works, and that is the worst of the options: the
+    # browser's own typeahead picks whatever option starts with those
+    # keystrokes, so a value that is a prefix of two options lands on the wrong
+    # one, a value spelled differently lands on nothing, and either way the op
+    # reports the value it was given as though it had been set.
+    #
+    # So the value is used the way a person would: match an option by what it
+    # says, and fall back to matching by the `value` attribute for a caller that
+    # has the underlying code rather than the label.
+    if _tag_of(element) == "select":
+        return _select_option(element, cmd.value, describe(cmd))
+
+    # Same principle one control further: a box and a radio hold a value too --
+    # whether they are set -- and typing at them does nothing at all. Left as
+    # send_keys they were a silent no-op that still reported the value as
+    # written, which is the failure mode worth removing everywhere it appears.
+    if field_type in ("checkbox", "radio"):
+        return _set_checked(session, element, cmd.value, field_type, describe(cmd))
+
     previous = _field_value(element) or "" if cmd.clear else ""
     try:
         if cmd.clear:
@@ -620,6 +643,69 @@ def _field_value(element) -> str | None:
     if element.get_attribute("contenteditable") in ("", "true", "plaintext-only"):
         return element.get_attribute("textContent")
     return None
+
+
+_TRUE = {"true", "yes", "on", "1", "checked", "check"}
+_FALSE = {"false", "no", "off", "0", "unchecked", "uncheck"}
+
+
+def _set_checked(session, element, value: str, field_type: str,
+                 described: str) -> dict:
+    """Put a box or a radio into the state asked for, clicking only if needed.
+
+    Clicked unconditionally, "set this to on" would turn off a box that was
+    already on -- so the current state is read first and the click is spent only
+    when it changes something. A radio cannot be cleared by clicking it, so
+    asking for that is refused rather than quietly leaving it set.
+    """
+    wanted = (value or "").strip().lower()
+    if wanted not in _TRUE and wanted not in _FALSE:
+        raise OpError(
+            "invalid_op",
+            f"{described} is a {field_type}; it holds whether it is set, not "
+            f"text, and {value!r} is neither",
+            hint='Send "true" or "false".',
+        )
+    want_on = wanted in _TRUE
+    already = bool(element.is_selected())
+    if already == want_on:
+        return {"checked": already, "changed": False}
+    if field_type == "radio" and not want_on:
+        raise OpError(
+            "invalid_op",
+            f"{described} is a radio and cannot be switched off directly",
+            hint="Set the radio you do want instead; that clears this one.",
+        )
+    element.click()
+    return {"checked": bool(element.is_selected()), "changed": True}
+
+
+def _tag_of(element) -> str:
+    try:
+        return (element.tag_name or "").lower()
+    except EngineError:
+        return ""
+
+
+def _select_option(element, value: str, described: str) -> dict:
+    """Choose an option by its visible text, or failing that by its value."""
+    dropdown = Select(element)
+    try:
+        dropdown.select_by_visible_text(value)
+    except Exception:
+        try:
+            dropdown.select_by_value(value)
+        except Exception as exc:  # selenium raises NoSuchElementException here
+            options = [o.text for o in dropdown.options][:20]
+            raise OpError(
+                "element_not_found",
+                f"no option in {described} reads or is valued {value!r}",
+                hint="Options are: " + ", ".join(repr(o) for o in options)
+                + (" …" if len(dropdown.options) > 20 else "")
+                + ". Send one of those.",
+            ) from exc
+    chosen = dropdown.first_selected_option
+    return {"selected": chosen.text, "value": chosen.get_attribute("value")}
 
 
 def select(session: BrowserSession, cmd) -> dict:

@@ -66,7 +66,7 @@ HINTS = {
         "No usable browser. If you have not started one: `abt browser start` "
         "-- the server runs without a browser on purpose. If one died (a tab "
         "that closes itself takes the session with it): `abt browser restart`, "
-        "which keeps your logins but loses every tab and ref."
+        "which keeps your logins but loses every tab."
     ),
     "bad_browser": (
         "Only chrome and edge are supported. `abt doctor` reports which are "
