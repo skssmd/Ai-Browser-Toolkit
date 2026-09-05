@@ -288,13 +288,20 @@ Act on it with the same address:
 {"op": "input", "level": "AEDBc", "value": "laptop pro"}
 ```
 
-**`input` sets whatever the control holds**, not just text. On a `#sel` the
-value is the option's visible text (its underlying `value` is accepted too, and
-an option that matches neither is refused with the list of options that do
-exist). On a `#chk` or `#rad` it is `"true"` or `"false"`, and the click is
-spent only if the state actually changes — so setting a ticked box to `true`
-leaves it ticked instead of toggling it off. A radio cannot be switched off
-directly; set the one you want instead.
+**`input` and `select` are two names for one intent** — make this control hold
+that value — and either works on any of them. On a `#sel` the value is the
+option's visible text (its underlying `value` is accepted too, and an option
+matching neither is refused with the list of options that do exist). On a
+`#chk` or `#rad` it is `"true"` or `"false"`, and the click is spent only if the
+state actually changes, so setting a ticked box to `true` leaves it ticked
+rather than toggling it off. A radio cannot be switched off directly; set the
+one you want instead. A date field takes its value, and a text field is typed
+into.
+
+Neither spelling is a dead end. `select` at a checkbox used to be refused as
+"not a `<select>`" — which left the working op undiscovered, and cost one agent
+six turns of clicks and element diffs on a control the other name would have set
+first time. Only `option_index` still needs real options.
 
 This exists because the alternative was silence. Typing at a `<select>` used to
 reach the browser's own typeahead, which lands on the wrong option whenever the

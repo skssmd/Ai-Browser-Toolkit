@@ -15,7 +15,6 @@ from ..engine import (
     NotInteractable,
     Select,
     Timeout,
-    UnexpectedTagName,
     WebDriverWait,
 )
 from ..engine import KEYS as KEYS
@@ -505,12 +504,22 @@ def _hidden_file_input(session: BrowserSession, cmd, original: OpError):
     raise original
 
 
-def input(session: BrowserSession, cmd) -> dict:
-    try:
-        element = resolve_one(session, cmd, state="visible")
-    except OpError as exc:
-        return _write_hidden_file(session, cmd, _hidden_file_input(session, cmd, exc))
+def set_by_kind(session: BrowserSession, cmd, element, value):
+    """Put a value into whatever kind of control this is, or None if it types.
 
+    One intent -- "make this control hold that" -- reached by whichever op name
+    the caller thought of. `input` and `select` both land here, so a select can
+    be driven with `input` and a checkbox with `select`, and neither spelling is
+    a dead end. An agent that guesses the other name loses nothing; watched one
+    send `select {level, value: true}` at a checkbox, be told only that it was
+    not a <select>, and spend six further turns on clicks and element diffs.
+
+    Each branch exists because typing at that control does the wrong thing
+    quietly. A date input consumes "2026-08-03" as locale segments and submits
+    60803-02-20. A <select> answers keystrokes with the browser's own typeahead,
+    landing on the wrong option when the value prefixes two of them. A checkbox
+    ignores keystrokes entirely. All three used to report the value as written.
+    """
     field_type = ""
     try:
         field_type = (element.get_attribute("type") or "").lower()
@@ -519,37 +528,29 @@ def input(session: BrowserSession, cmd) -> dict:
 
     # Every file input goes through the staged writer, however it was targeted.
     # A `level` resolves by position without a visibility check, so a hidden
-    # upload reaches here rather than raising -- which meant the address
-    # the actionable track hands out for an upload was the one way of reaching
-    # it that did not work.
+    # upload reaches here rather than raising -- which meant the address the
+    # tree hands out for an upload was the one way of reaching it that did not
+    # work.
     if field_type == "file":
         return _write_hidden_file(session, cmd, element)
-
     if field_type in _SEGMENTED_TYPES:
-        return _set_segmented(session, cmd, element, field_type)
-
-    # A <select> is the one control the tree invites you to type into and that
-    # typing does not actually drive. It shows as `#sel-country United Kingdom`
-    # -- a name and the value it currently holds, exactly like a text field --
-    # so the obvious move is `input`, and `input` used to fall through to
-    # send_keys. Which half-works, and that is the worst of the options: the
-    # browser's own typeahead picks whatever option starts with those
-    # keystrokes, so a value that is a prefix of two options lands on the wrong
-    # one, a value spelled differently lands on nothing, and either way the op
-    # reports the value it was given as though it had been set.
-    #
-    # So the value is used the way a person would: match an option by what it
-    # says, and fall back to matching by the `value` attribute for a caller that
-    # has the underlying code rather than the label.
+        return _set_segmented(session, cmd, element, field_type, value)
     if _tag_of(element) == "select":
-        return _select_option(element, cmd.value, describe(cmd))
-
-    # Same principle one control further: a box and a radio hold a value too --
-    # whether they are set -- and typing at them does nothing at all. Left as
-    # send_keys they were a silent no-op that still reported the value as
-    # written, which is the failure mode worth removing everywhere it appears.
+        return _select_option(element, value, describe(cmd))
     if field_type in ("checkbox", "radio"):
-        return _set_checked(session, element, cmd.value, field_type, describe(cmd))
+        return _set_checked(session, element, value, field_type, describe(cmd))
+    return None
+
+
+def input(session: BrowserSession, cmd) -> dict:
+    try:
+        element = resolve_one(session, cmd, state="visible")
+    except OpError as exc:
+        return _write_hidden_file(session, cmd, _hidden_file_input(session, cmd, exc))
+
+    handled = set_by_kind(session, cmd, element, cmd.value)
+    if handled is not None:
+        return handled
 
     previous = _field_value(element) or "" if cmd.clear else ""
     try:
@@ -602,7 +603,8 @@ def input(session: BrowserSession, cmd) -> dict:
     return {"target": describe(cmd), "value": _field_value(element)}
 
 
-def _set_segmented(session: BrowserSession, cmd, element, field_type: str) -> dict:
+def _set_segmented(session: BrowserSession, cmd, element, field_type: str,
+                   value: str) -> dict:
     """Write a date/time field instead of typing into it.
 
     `send_keys` feeds the browser's *locale* segments, not the ISO value: on an
@@ -611,7 +613,7 @@ def _set_segmented(session: BrowserSession, cmd, element, field_type: str) -> di
     silently wrong. Setting the value is the only reliable route.
     """
     try:
-        landed = session.driver.execute_script(_SET_VALUE_JS, element, cmd.value)
+        landed = session.driver.execute_script(_SET_VALUE_JS, element, value)
     except EngineError as exc:
         raise OpError(
             "not_interactable",
@@ -725,14 +727,29 @@ def _select_option(element, value: str, described: str) -> dict:
 
 def select(session: BrowserSession, cmd) -> dict:
     element = resolve_one(session, cmd, state="visible")
-    try:
-        dropdown = Select(element)
-    except UnexpectedTagName as exc:
-        raise OpError(
-            "not_a_select",
-            f"{describe(cmd)} is a <{element.tag_name}>, not a <select>; "
-            "for custom dropdowns use hover then click",
-        ) from exc
+    # Not a <select>, but the caller still said "make this hold that", and the
+    # tree marks #chk #rad #inp right beside #sel. Rather than refuse a
+    # reasonable guess, do what was asked -- a checkbox takes true/false, a date
+    # takes its value, a text field gets typed into. Refusing cost an agent six
+    # turns of clicks and element diffs once, for a control the other op name
+    # would have set on the first try.
+    if _tag_of(element) != "select":
+        wanted = cmd.by_text if cmd.by_text is not None else cmd.value
+        if wanted is None:
+            raise OpError(
+                "not_a_select",
+                f"{describe(cmd)} is a <{element.tag_name}>, not a <select>, so "
+                "it has no options to index",
+                hint='Give the value you want instead: {"value": "…"}.',
+            )
+        handled = set_by_kind(session, cmd, element, wanted)
+        if handled is not None:
+            return handled
+        _clear_field(session, element)
+        element.send_keys(wanted)
+        return {"value": _field_value(element)}
+
+    dropdown = Select(element)
 
     try:
         if cmd.by_text is not None:

@@ -98,7 +98,7 @@ NO_HEALTH_CHECK = frozenset(
 _TREE_LEGEND = (
     "each line begins with where it sits on the page: a letter per level, so a longer prefix is deeper and two lines sharing one sit in the same container (AEDBa and AEDBb are siblings; AEDB is what holds them). That prefix is an address -- read one part of the page again with {\"op\": \"get_text\", \"level\": \"AEDB\"} instead of re-reading all of it. "
     "A line whose address carries # is interactable and is an edge -- everything inside it is on that one line -- and the same address acts on it: #btn #lnk #inp #sel #chk #rad #file. Click it with {\"op\": \"click\", \"level\": \"AEDBa\"}, type with {\"op\": \"input\", \"level\": \"AEDBc\", \"value\": \"...\"}. "
-    "A link shows its target after an arrow; an input shows its name in the mark (#inp-q) and its current value as the text; a #sel shows the option it currently holds, and you set it by sending that option's text as the value."
+    "A link shows its target after an arrow; an input shows its name in the mark (#inp-q) and its current value as the text; a #sel shows the option it currently holds, and you set it by sending that option's text as the value; a #chk or #rad holds whether it is set, and you set that the same way, with a value of \"true\" or \"false\"."
 )
 
 

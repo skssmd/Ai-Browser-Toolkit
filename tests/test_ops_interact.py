@@ -120,11 +120,9 @@ def test_select_flows_into_the_form_result(form):
     assert run(form, op="get_text", css="#out") == "bob/l"
 
 
-def test_select_on_a_non_select_errors(form):
-    with pytest.raises(OpError) as caught:
-        run(form, op="select", css="#name", value="s")
-    assert caught.value.type == "not_a_select"
-    assert "hover then click" in caught.value.message
+def test_select_on_a_text_field_just_sets_it(form):
+    """Either op name, same intent: make this control hold that."""
+    assert run(form, op="select", css="#name", value="ada")["value"] == "ada"
 
 
 def test_select_unknown_option_errors(form):
@@ -281,3 +279,29 @@ def test_a_box_is_not_a_text_field(valued):
         run(valued, op="input", css="#agree", value="ada")
     assert caught.value.type == "invalid_op"
     assert '"true" or "false"' in caught.value.hint
+
+
+def test_select_sets_a_checkbox_too(valued):
+    """#chk sits beside #sel in the tree, so `select` at one is a fair guess.
+
+    It used to be refused with "not a <select>", which left the working op
+    undiscovered -- watched an agent send `select {level, value: true}` at a
+    checkbox and spend six further turns on clicks and element diffs.
+    """
+    assert run(valued, op="select", css="#agree", value="true")["checked"] is True
+
+
+def test_input_and_select_agree_on_a_dropdown(valued):
+    """Neither spelling is a dead end, and both land on the same option."""
+    a = run(valued, op="input", css="#country", value="Germany")
+    run(valued, op="input", css="#country", value="France")
+    b = run(valued, op="select", css="#country", by_text="Germany")
+    assert a["selected"] == b["selected"] == "Germany"
+
+
+def test_select_without_a_value_on_a_non_select_says_why(valued):
+    """option_index needs options, and a checkbox has none."""
+    with pytest.raises(OpError) as caught:
+        run(valued, op="select", css="#agree", option_index=0)
+    assert caught.value.type == "not_a_select"
+    assert "no options to index" in caught.value.message
