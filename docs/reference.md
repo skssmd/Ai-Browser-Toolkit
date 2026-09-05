@@ -315,6 +315,24 @@ A level is positional, so it is checked before it acts: if the page re-rendered
 and something else now sits at that address, the op fails with `stale_ref`
 rather than clicking the wrong control.
 
+**Every read is laid out as its tree**, whichever way you name what you want:
+`get_text` with a `css` selector returns the same lines, with the same
+addresses, as `get_text` with that element's `level`. It used to be the one
+exception -- a selector named a single element, so the answer was its plain
+string -- and that handed back a wall of text with nothing addressable in it,
+so anything you then wanted to act on needed a `find` first.
+
+**A level and a selector combine.** Give both and the level scopes the search:
+
+```json
+{"op": "get_text", "level": "AEDB", "css": ".price"}
+```
+
+The level says where to look, the selector says what to look for in there.
+Neither answers "the price in *this* row" alone — the selector matches every
+price on the page, and the level brings back the whole row. Two *selectors*
+together are still refused; only `level` combines.
+
 **The prefix is an address.** Give it back to read one part of the page:
 
 ```json

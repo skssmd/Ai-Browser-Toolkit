@@ -8,7 +8,8 @@ from .. import diff, shadow
 from ..browser import BrowserSession
 from ..engine import EngineError
 from ..errors import OpError
-from ..targeting import resolve_many, resolve_one
+from ..schema import SELECTOR_FIELDS
+from ..targeting import describe, locator, resolve_many, resolve_one
 
 # One round trip for the whole match list.
 # A match used to be its shell and nothing else -- `cloneNode(false)` drops every
@@ -101,6 +102,41 @@ def get_text(session: BrowserSession, cmd) -> str:
     inventing a divider would put text on screen that nobody can see.
     """
     level = getattr(cmd, "level", None)
+    # A selector, not merely "some target": `level` is itself one of the
+    # target fields, so `has_target` is true for a level-only read and this
+    # branch would take it and then find nothing to search for.
+    selector = any(getattr(cmd, f, None) is not None for f in SELECTOR_FIELDS)
+    if level and selector:
+        # Both given: the level says where to look, the selector says what to
+        # look for in there. Neither alone answers "the price cells in *this*
+        # row" -- a selector matches the whole page, and a level brings back
+        # everything under it.
+        scope = diff.element_at(session.driver, level)
+        if scope is None:
+            raise OpError(
+                "element_not_found",
+                f"nothing sits at level {level!r}",
+                hint=(
+                    "Levels describe one page and a navigation renumbers them. "
+                    "Read the page again and use a level from what you were "
+                    "just given."
+                ),
+            )
+        by, selector = locator(cmd)
+        found = scope.find_elements(by, selector)
+        if not found:
+            raise OpError(
+                "element_not_found",
+                f"nothing under level {level!r} matches {describe(cmd)}",
+                hint=(
+                    f'Drop the selector to read all of {level!r}, or drop the '
+                    f"level to search the whole page."
+                ),
+            )
+        return "\n".join(
+            text for text in (_tree_text(session, el) for el in found) if text
+        )
+
     if level:
         element = diff.element_at(session.driver, level)
         if element is None:
@@ -123,12 +159,14 @@ def get_text(session: BrowserSession, cmd) -> str:
         return _tree_text(session, element)
 
     if cmd.has_target:
-        # A selector names one element and the caller wants what it says, so
-        # this stays the plain string it has always been. Structure is what
-        # `level` is for: a table read by selector would come back as a wall of
-        # cells, and the way to avoid that is to ask for its level -- which
-        # `find` now hands back with every match.
-        return resolve_one(session, cmd).text
+        # Laid out as its tree, the same as every other read. This used to be
+        # the one exception -- a selector named one element, so the answer was
+        # its plain string -- and the exception cost more than it saved. A page
+        # has one shape however it is reached, and a caller handed a wall of
+        # text with no addresses in it has to go back and `find` before it can
+        # touch anything the text just described. Reading a table by selector
+        # was the worst of it: every cell, no rows, nothing addressable.
+        return _tree_text(session, resolve_one(session, cmd))
 
     session.leave_frames()
     parts = [_tree_text(session)]

@@ -8,7 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .errors import OpError
 
-TARGET_FIELDS = ("css", "xpath", "text", "level")
+# What names an element by describing it. At most one may be given.
+SELECTOR_FIELDS = ("css", "xpath", "text")
+# Every way of naming a target. `level` is here so "some target was given"
+# still counts it, but it is a place rather than a description, so it is
+# allowed alongside a selector to scope it -- see `_exactly_one_target`.
+TARGET_FIELDS = SELECTOR_FIELDS + ("level",)
 
 
 class Base(BaseModel):
@@ -40,8 +45,17 @@ class Target(Base):
     @model_validator(mode="after")
     def _exactly_one_target(self):
         given = [f for f in TARGET_FIELDS if getattr(self, f) is not None]
-        if len(given) > 1:
-            raise ValueError(f"supply only one of {', '.join(TARGET_FIELDS)}, got {given}")
+        # A level is a place, not a description, so it is the one target that
+        # combines: `level` says where to look and a selector says what to look
+        # for in there. Neither answers "the price in *this* row" alone -- the
+        # selector matches the whole page, the level brings back everything
+        # under it. Two selectors together still make no sense and are still
+        # refused.
+        selectors = [f for f in SELECTOR_FIELDS if getattr(self, f) is not None]
+        if len(selectors) > 1:
+            raise ValueError(
+                f"supply only one of {', '.join(SELECTOR_FIELDS)}, got {selectors}"
+            )
         if not given and self.target_required:
             raise ValueError(f"one of {', '.join(TARGET_FIELDS)} is required")
         if self.near is not None and not given:
@@ -145,8 +159,11 @@ class GetText(OptionalTarget):
     where the table was, and asking for that level again brings it back without
     the rest of the document coming with it.
 
-    Not a selector, so it does not compete with css/xpath/text: those name
-    an element by what it is, `level` names one by where it sits.
+    Not a selector, so it does not compete with css/xpath/text: those name an
+    element by what it is, `level` names one by where it sits -- which is why
+    the two combine. Give both and the level scopes the selector: `level` says
+    where to look, `css` says what to look for in there. Neither answers "the
+    price in *this* row" alone.
     """
 
     op: Literal["get_text"]

@@ -40,6 +40,25 @@ def texts(added: list[str]) -> list[str]:
     return out
 
 
+def said(text: str) -> str:
+    """A get_text result with the addresses taken off.
+
+    Since every read is laid out as its tree, even one element comes back as
+    "AE ada/m". A test that cares what the page *says* reads through this; one
+    about the tree itself asserts on the raw string.
+    """
+    out = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        # A group header owns no text -- it introduces the members indented
+        # under it -- so it is not something the page said. Same rule `texts`
+        # uses on the diff's lines.
+        if not stripped or " " not in stripped:
+            continue
+        out.append(stripped.partition(" ")[2])
+    return chr(10).join(out)
+
+
 def values(pairs) -> list[str]:
     """The strings in a raw `(path, value)` text track, path taken off.
 

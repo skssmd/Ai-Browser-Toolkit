@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import said
 
 from abt.errors import OpError
 from abt.ops import dispatch
@@ -45,13 +46,13 @@ def test_plain_click_dispatches_through_the_cover_and_says_so(overlay):
 def test_the_overlay_really_would_have_stolen_the_click(overlay):
     # Proves the fixture reproduces the hijack rather than merely failing.
     run(overlay, op="click", css="#hijack")
-    assert run(overlay, op="get_text", css="#out") == "hijacked"
+    assert said(run(overlay, op="get_text", css="#out")) == "hijacked"
 
 
 def test_force_click_reaches_the_covered_link(overlay):
     result = run(overlay, op="click", css="#link", force=True)
     assert result["forced"] is True
-    assert run(overlay, op="get_text", css="#out") == "link"
+    assert said(run(overlay, op="get_text", css="#out")) == "link"
 
 
 def test_force_is_not_used_when_the_click_lands_normally(links):
@@ -64,7 +65,7 @@ def test_force_still_refuses_a_disabled_control(overlay):
     with pytest.raises(OpError) as caught:
         run(overlay, op="click", css="#disabled-btn", force=True)
     assert caught.value.type == "not_interactable"
-    assert run(overlay, op="get_text", css="#out") == ""
+    assert said(run(overlay, op="get_text", css="#out")) == ""
 
 
 def test_force_defaults_off():
@@ -83,7 +84,7 @@ def test_force_clicks_a_visually_hidden_control(overlay):
     # a zero-size input never becomes "clickable", so the gate is where it dies.
     result = run(overlay, op="click", css="#fancy", force=True)
     assert result["forced"] is True
-    assert run(overlay, op="get_text", css="#out") == "fancy"
+    assert said(run(overlay, op="get_text", css="#out")) == "fancy"
 
 
 def test_force_still_reports_a_missing_element(overlay):

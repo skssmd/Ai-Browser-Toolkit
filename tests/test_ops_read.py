@@ -174,3 +174,44 @@ def test_an_honest_null_is_not_second_guessed(clean_session):
         result = run(clean_session, op="run_js", script=script)
         assert result["value"] is None
         assert "hint" not in result, script
+
+
+# --- one shape however you reach it -------------------------------------------
+
+
+def test_a_selector_read_is_laid_out_as_its_tree(clean_session):
+    """A page has one shape however it is read.
+
+    A selector read used to be the exception: it named one element, so the
+    answer was that element's plain string. What came back was a wall of text
+    with no addresses in it, so a caller that wanted to act on anything it had
+    just read had to go back and `find` for it first. Reading a table this way
+    was the worst of it -- every cell, no rows, nothing addressable.
+    """
+    by_selector = run(clean_session, op="get_text", css="#p1")
+    level = run(clean_session, op="find", css="#p1")["matches"][0]["level"]
+    by_level = run(clean_session, op="get_text", level=level)
+    assert by_selector == by_level
+    assert by_selector.splitlines()[0].strip().startswith(level)
+
+
+def test_a_level_and_a_selector_together_scope_the_search(clean_session):
+    """The level says where to look, the selector says what to look for.
+
+    Neither answers "the price in *this* card" alone: the selector matches
+    every price on the page, and the level brings back the whole card.
+    """
+    level = run(clean_session, op="find", css="#p1")["matches"][0]["level"]
+    scoped = run(clean_session, op="get_text", level=level, css=".price")
+    assert "$4.99" in scoped
+    assert "Cheap Widget" not in scoped, "the selector did not narrow the level"
+
+
+def test_a_selector_that_matches_nothing_in_scope_says_so(clean_session):
+    from abt.errors import OpError
+
+    level = run(clean_session, op="find", css="#p1")["matches"][0]["level"]
+    with pytest.raises(OpError) as caught:
+        run(clean_session, op="get_text", level=level, css=".nope")
+    assert caught.value.type == "element_not_found"
+    assert "under level" in caught.value.message

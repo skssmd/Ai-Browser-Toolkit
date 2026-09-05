@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import said
 
 from abt.errors import OpError
 from abt.ops import dispatch
@@ -28,7 +29,7 @@ def nav(clean_session, base_url):
 def test_input_then_click_updates_the_page(form):
     run(form, op="input", css="#name", value="ada")
     run(form, op="click", css="#go")
-    assert run(form, op="get_text", css="#out") == "ada/m"
+    assert said(run(form, op="get_text", css="#out")) == "ada/m"
 
 
 def test_input_clears_by_default(form):
@@ -57,7 +58,7 @@ def test_input_replaces_text_in_a_controlled_input(controlled):
     # field, where every retry silently concatenated onto the last one.
     result = run(controlled, op="input", css="#controlled", value="typed")
     assert result["value"] == "typed"
-    assert run(controlled, op="get_text", css="#state") == "typed"
+    assert said(run(controlled, op="get_text", css="#state")) == "typed"
 
 
 def test_input_replaces_text_when_only_real_keystrokes_count(clean_session, base_url):
@@ -67,7 +68,7 @@ def test_input_replaces_text_when_only_real_keystrokes_count(clean_session, base
     clean_session.goto(f"{base_url}/controlled_trusted.html")
     result = run(clean_session, op="input", css="#controlled", value="typed")
     assert result["value"] == "typed"
-    assert run(clean_session, op="get_text", css="#state") == "typed"
+    assert said(run(clean_session, op="get_text", css="#state")) == "typed"
 
 
 def test_input_can_still_append_to_a_controlled_input(controlled):
@@ -80,13 +81,13 @@ def test_input_replaces_text_in_a_contenteditable(form):
     # write appends and the field silently accumulates.
     run(form, op="input", css="#rich", value="first")
     run(form, op="input", css="#rich", value="second")
-    assert run(form, op="get_text", css="#rich") == "second"
+    assert said(run(form, op="get_text", css="#rich")) == "second"
 
 
 def test_input_can_append_to_a_contenteditable(form):
     run(form, op="input", css="#rich", value="one")
     run(form, op="input", css="#rich", value="two", clear=False)
-    assert run(form, op="get_text", css="#rich") == "onetwo"
+    assert said(run(form, op="get_text", css="#rich")) == "onetwo"
 
 
 def test_input_reports_the_value_it_wrote_to_a_contenteditable(form):
@@ -117,7 +118,7 @@ def test_select_flows_into_the_form_result(form):
     run(form, op="input", css="#name", value="bob")
     run(form, op="select", css="#size", value="l")
     run(form, op="click", css="#go")
-    assert run(form, op="get_text", css="#out") == "bob/l"
+    assert said(run(form, op="get_text", css="#out")) == "bob/l"
 
 
 def test_select_on_a_text_field_just_sets_it(form):
@@ -134,7 +135,7 @@ def test_select_unknown_option_errors(form):
 def test_press_enter_in_a_field(form):
     run(form, op="input", css="#name", value="x")
     run(form, op="press", css="#name", key="Enter")
-    assert run(form, op="get_text", css="#keyed") == "entered"
+    assert said(run(form, op="get_text", css="#keyed")) == "entered"
 
 
 def test_press_rejects_an_unknown_key_name(form):
@@ -160,14 +161,14 @@ def test_hover_reveals_a_dropdown_then_click_selects(nav):
     run(nav, op="hover", css="#products")
     assert run(nav, op="find", css="#widgets", visible_only=True)["count"] == 1
     run(nav, op="click", css="#widgets")
-    assert run(nav, op="get_text", css="#chosen") == "widgets"
+    assert said(run(nav, op="get_text", css="#chosen")) == "widgets"
 
 
 def test_wait_for_visible_on_delayed_content(clean_session, base_url):
     clean_session.goto(f"{base_url}/delayed.html")
     result = run(clean_session, op="wait_for", css="#late", state="visible", timeout=5)
     assert result["state"] == "visible"
-    assert run(clean_session, op="get_text", css="#late") == "arrived"
+    assert said(run(clean_session, op="get_text", css="#late")) == "arrived"
 
 
 def test_press_chord_applies_modifier(form):

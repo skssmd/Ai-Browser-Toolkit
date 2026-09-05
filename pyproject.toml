@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-browser-toolkit"
-version = "0.5.7"
+version = "0.5.8"
 # One line, and it is what PyPI search results show. It has to answer "for
 # whom" as well as "what": a browser-automation library is a crowded shelf, and
 # the thing that makes this one different is that a coding agent drives it,
