@@ -477,29 +477,53 @@ fetch holds the DOM perfectly still, so a DOM-only check would call the spinner
 owes nothing to the network). A page that never stops — a poller, a clock —
 costs `--settle-timeout` and then proceeds, because a late diff beats no diff.
 
+**Within a site, a navigation is a diff.** Two pages of one site are the same
+template with different content in it, so `goto` to another page of the host you
+are already on returns exactly what a `click` returns — what appeared and what
+left:
+
 ```json
 {"op": "goto", "url": "https://shop.example/cart"}
 → {"url": "…/cart", "title": "Your cart",
    "dom_diff": {"navigation": true,
+                "note": "you moved within the site, so this is what changed — …",
+                "text": {"added": ["ACD", "  a 2 items", "  b Total: $42",
+                                   "ACF#btn Checkout"],
+                         "removed_count": 18, "truncated": false}}}
+```
+
+The nav, header and footer are absent because they are still on screen. Measured
+across a benchmark campaign that furniture was 38% of admin page text, 47% of
+the forum's and 60% of the storefront's — re-sent on every navigation and then
+carried in the conversation for every turn after it. It matters more now than it
+did: the tree gives every link its href, so an agent that can read
+`-> /dashboard/issues` navigates by `goto` rather than by clicking.
+
+**Leaving the host is not.** Unrelated documents share nothing, so a diff would
+report the whole destination as added and the whole origin as removed. Crossing
+to another host returns the destination's tree instead, with strings the
+previous page showed matched on the string rather than the path and summarised
+rather than dropped:
+
+```json
+   "dom_diff": {"navigation": true,
                 "note": "text is the page you landed on, laid out as its tree — …",
-                "text": {"added": ["ABa Your cart", "ACD",
-                                   "  a 2 items", "  b Total: $42",
-                                   "ACF Checkout",
+                "text": {"added": ["ABa Your cart", "…",
                                    "… 41 strings identical to the previous page are not "
                                    "repeated here — …{\"op\": \"get_text\", \"level\": \"AB\"}…"],
                          "unchanged_count": 41,
                          "removed_count": 18, "truncated": false}}}
 ```
 
-Strings the page you came from already showed are **not repeated** — the nav,
-header and footer you have read once are summarised in that last line instead.
-On a Magento admin page that is a third of the payload, re-sent on every
-navigation and then carried in the conversation for every turn after it.
+**A reload is neither.** It lands on the document it started from, so there is
+no other page to measure against and nothing is withheld — suppressing here once
+hid the very content a reload had been asked for.
 
-This covers `goto` `back` `forward` `reload` and any interactive op that
-redirected — a `click` that leaves the page returns the page it arrived at. The
-element track is skipped in this case, since a unified diff of two unrelated
-documents is noise at any budget. `"diff": false` turns it off per command.
+All three cases cover `goto` `back` `forward` `reload` and any interactive op
+that redirected — a `click` that leaves the page is told apart by host the same
+way. The element track is skipped whenever the document was replaced, since a
+unified diff across two documents is noise at any budget. `"diff": false` turns
+it off per command.
 
 Only rendered text counts. An element with `display: none` has not appeared yet,
 so a hover that reveals a menu shows up as its items being *added* — which is

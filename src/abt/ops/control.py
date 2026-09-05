@@ -107,14 +107,16 @@ def diff(session: BrowserSession, cmd) -> dict:
         "url_after": url_after,
     }
     if navigated:
+        from . import landing_text
+
         payload["navigation"] = True
-        payload["note"] = (
-            "the page changed since the baseline; text is the new page as its "
-            "tree, minus what the previous one already showed, and the "
-            "element track is skipped"
+        payload["text"], note = landing_text(
+            entry["text"], after["text"], entry["url"], url_after, cmd
         )
-        payload["text"] = page_text(
-            after["text"], entry["text"], include_removed=cmd.include_removed
+        payload["note"] = (
+            "the page changed since the baseline; "
+            + note
+            + ". The element track is skipped"
         )
     else:
         payload["text"] = diff_text(

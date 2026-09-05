@@ -285,26 +285,21 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
         info["navigation"] = True
         if navigated_away:
             # Worth stating outright: the op is being reported as a success
-            # *because* it navigated, and the caller's refs are now stale.
+            # *because* it navigated, and the addresses the caller was holding
+            # describe a page that is no longer on screen.
             info["navigated_during_op"] = True
-        # Same reasoning as the plain navigation ops: suppress against a
-        # genuinely different page, never against this one. `navigated_away`
+        # A click that redirected lands exactly where a goto lands, so it is
+        # told apart the same way -- by host, in `landing_text`. `navigated_away`
         # only means the execution context was destroyed, which a same-page
-        # form resubmission can also trigger -- so check the URL, not the flag.
-        same_page = page_key(url_before) == page_key(url_after)
-        info["note"] = (
-            "the page navigated; text is the new page as its tree -- "
-            + _TREE_LEGEND
-            + (
-                ""
-                if same_page
-                else " Minus what the previous page already showed. "
-            )
-            + "The element track is skipped because the two documents are "
-            "unrelated"
+        # form resubmission can also trigger, so the URL decides and not the
+        # flag.
+        info["text"], note = landing_text(
+            before["text"], after["text"], url_before, url_after, cmd
         )
-        info["text"] = page_text(
-            after["text"], None if same_page else before["text"], cmd.include_removed
+        info["note"] = (
+            "the page navigated; "
+            + note
+            + ". The element track is skipped because the document was replaced"
         )
     else:
         info["text"] = diff_text(
@@ -330,13 +325,58 @@ def _run_with_diff(session: BrowserSession, cmd, handler) -> Any:
     return result
 
 
-def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
-    """Run a navigation op, then hand back the text of the page it landed on.
+def landing_text(before: list, after: list, url_before: str, url_after: str, cmd) -> tuple[dict, str]:
+    """What to say about a page you arrived on, and how to describe it.
 
-    No diff: goto/back/forward/reload exist to replace the document, so the
-    before and after have nothing in common worth aligning. What the caller
-    wants is the destination's content, which they would otherwise have to ask
-    for in a second round trip.
+    Three cases, and the host is what separates them.
+
+    You did not really leave (a reload, a same-page history move): there is no
+    other document, so the whole tree comes back unsuppressed. Hiding anything
+    here would hide the very thing a reload was asked for -- that was a live
+    regression once, late-arriving content and a cross-origin frame both gone
+    from a reload's answer because the first load had already shown them.
+
+    You moved within the site: this is now a real diff, the same
+    `added`/`removed` shape a click returns. Consecutive pages of one site are
+    the same template with different content in it, so the overwhelming
+    majority of the destination is furniture the caller is already looking at.
+    The old objection was that paths shift between documents and matching on
+    them would suppress real content -- but a path-and-text match means the
+    identical line sat in the identical place, which is the definition of
+    repetition, and anything that moved or changed still comes through. This is
+    the common case now that the tree hands out each link's href: an agent that
+    can read `-> /dashboard/issues` navigates by `goto` instead of clicking.
+
+    You left for another host: unrelated documents share their nav with
+    nothing, so a path diff would report the whole destination as added and the
+    whole origin as removed. Those get the destination's tree with repeated
+    strings summarised, matched on the string rather than the path.
+    """
+    same_page = page_key(url_before) == page_key(url_after)
+    same_host = page_key(url_before)[1] == page_key(url_after)[1]
+
+    if not same_page and same_host:
+        return (
+            diff_text(before, after, include_removed=cmd.include_removed),
+            "you moved within the site, so this is what changed -- " + _TREE_LEGEND,
+        )
+    return (
+        page_text(after, None if same_page else before, cmd.include_removed),
+        "text is the page you landed on, laid out as its tree -- "
+        + _TREE_LEGEND
+        + (
+            ""
+            if same_page
+            else " Strings the previous page already showed are summarised at "
+            "the end rather than repeated."
+        ),
+    )
+
+
+def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
+    """Run a navigation op, then hand back what the page it landed on says.
+
+    Within one site that is a diff; leaving it is not. See `landing_text`.
     """
     url_before = session.driver.current_url
     before = session.snapshot()
@@ -352,30 +392,14 @@ def _run_with_page_text(session: BrowserSession, cmd, handler) -> Any:
         return result
 
     url_after = session.driver.current_url
-    # Chrome-suppression compares against a genuinely different page -- the
-    # thing two pages of the same site share is their nav and footer, not their
-    # content. A reload lands on this same page, and back/forward occasionally
-    # do too (a same-page anchor, a history entry that never left). There "the
-    # previous page" and "the one you are looking at" are the same document, so
-    # suppressing against it would hide the very thing the caller reloaded for
-    # -- reported once as a live regression: late-arriving content and a
-    # cross-origin frame both vanished from a reload's answer because they had
-    # already been seen the first time the page loaded.
-    same_page = page_key(url_before) == page_key(url_after)
+    text, note = landing_text(
+        before["text"], after["text"], url_before, url_after, cmd
+    )
     info = {
         "url_after": url_after,
         "navigation": True,
-        "note": "text is the page you landed on, laid out as its tree -- "
-        + _TREE_LEGEND
-        + (
-            ""
-            if same_page
-            else " Strings the previous page already showed are summarised at "
-            "the end rather than repeated."
-        ),
-        "text": page_text(
-            after["text"], None if same_page else before["text"], cmd.include_removed
-        ),
+        "note": note,
+        "text": text,
     }
     elements = info.get("elements") or {}
     note_no_change(info, bool(elements.get("added") or elements.get("removed")))

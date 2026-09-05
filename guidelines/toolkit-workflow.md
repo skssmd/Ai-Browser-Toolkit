@@ -327,7 +327,7 @@ believe it:
 
 | | step | what it covers |
 |---|---|---|
-| 1 | **Re-read the response you have** | A navigation already returned the whole page in `text.added` |
+| 1 | **Re-read the response you have** | A navigation already returned what changed (or, off-site, the page) in `text.added` |
 | 2 | **`find`** — `css`, then `text` | The document and every frame |
 | 3 | **`get_text`** | Rendered text, *including open shadow roots* |
 | 4 | **`find` with `"shadow": true`** | Turns shadow content into a level you can act on |

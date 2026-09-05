@@ -298,10 +298,49 @@ def test_auto_element_diff_truncates_over_budget(clean_session):
     assert len(result["dom_diff"]["elements"]["diff"]) < 400
 
 
-# --- navigation returns the page instead of a diff ----------------------------
+# --- navigation: a diff within the site, the page itself when you leave it ----
 
 
-def test_goto_returns_the_whole_page_text(clean_session, base_url):
+def test_goto_within_the_site_is_a_diff(clean_session, base_url):
+    """Two pages of one site are the same template, so only the content differs.
+
+    Both fixtures carry the same nav, masthead and footer. A navigation that
+    handed back the whole destination would re-send all of it -- measured
+    across the benchmark campaign that furniture was 38-60% of every page --
+    and the agent is already looking at it.
+    """
+    run(clean_session, op="goto", url=f"{base_url}/site_one.html")
+    result = run(clean_session, op="goto", url=f"{base_url}/site_two.html")
+    text = result["dom_diff"]["text"]
+    assert result["dom_diff"]["navigation"] is True
+
+    body = texts(text["added"])
+    assert "Only on page two" in body
+    for furniture in ("Shared Masthead", "Shared footer text", "Reports"):
+        assert furniture not in body, f"{furniture!r} was already on screen"
+
+    # A diff, not a suppression summary: nothing is deferred to a later read.
+    assert "unchanged_count" not in text
+
+
+def test_goto_to_another_host_hands_back_the_page(clean_session, base_url):
+    """Unrelated documents share nothing, so a path diff would report all of it.
+
+    Same server, different netloc -- which is exactly what "a different site"
+    means here.
+    """
+    other_host = base_url.replace("127.0.0.1", "localhost")
+    run(clean_session, op="goto", url=f"{base_url}/site_one.html")
+    result = run(clean_session, op="goto", url=f"{other_host}/site_two.html")
+    text = result["dom_diff"]["text"]
+    assert result["dom_diff"]["navigation"] is True
+    # Matched on the string rather than the path, and summarised rather than
+    # dropped, so the repeats are accounted for and reachable.
+    assert text["unchanged_count"] > 0
+    assert "Only on page two" in texts(text["added"])
+
+
+def test_goto_returns_the_page_it_landed_on(clean_session, base_url):
     """Landing on a page hands you its content; no second read needed."""
     result = run(clean_session, op="goto", url=f"{base_url}/links.html")
     text = result["dom_diff"]["text"]
