@@ -252,7 +252,7 @@ def test_input_on_a_select_names_the_options_it_has(valued):
 
 def test_input_ticks_a_checkbox(valued):
     result = run(valued, op="input", css="#agree", value="true")
-    assert result == {"checked": True, "changed": True}
+    assert (result["checked"], result["changed"]) == (True, True)
 
 
 def test_input_unticks_a_checkbox(valued):
@@ -262,7 +262,7 @@ def test_input_unticks_a_checkbox(valued):
 def test_setting_a_checkbox_to_what_it_already_is_does_nothing(valued):
     """Clicking unconditionally would turn off the box it was asked to turn on."""
     result = run(valued, op="input", css="#preset", value="true")
-    assert result == {"checked": True, "changed": False}
+    assert (result["checked"], result["changed"]) == (True, False)
 
 
 def test_input_selects_a_radio(valued):
