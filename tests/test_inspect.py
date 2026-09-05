@@ -6,6 +6,7 @@ Every case here comes from a real failure on a live site, not from imagination.
 from __future__ import annotations
 
 import pytest
+from conftest import said
 
 from abt.errors import ERROR_TYPES, OpError
 
@@ -33,7 +34,7 @@ def test_the_page_is_told_the_date_changed(page):
     """Setting .value silently is useless -- the framework must see the event."""
     page.post("/command-list", json={"op": "input", "css": "#d", "value": "2026-08-03"})
     text = page.post("/command-list", json={"op": "get_text", "css": "#echo"}).json()
-    assert text["result"] == "d=2026-08-03"
+    assert said(text["result"]) == "d=2026-08-03"
 
 
 @pytest.mark.parametrize(
@@ -70,7 +71,7 @@ def test_a_button_below_the_fold_is_scrolled_to_and_clicked(page):
     body = page.post("/command-list", json={"op": "click", "css": "#low"}).json()
     assert body["ok"] is True, body
     text = page.post("/command-list", json={"op": "get_text", "css": "#clicked"}).json()
-    assert text["result"] == "the low button was clicked"
+    assert said(text["result"]) == "the low button was clicked"
 
 
 def test_a_ref_below_the_fold_is_also_scrolled_to(page):

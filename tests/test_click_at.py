@@ -7,6 +7,7 @@ unable to act on it.
 from __future__ import annotations
 
 import pytest
+from conftest import said
 
 
 @pytest.fixture
@@ -16,7 +17,16 @@ def canvas(client, base_url):
 
 
 def text_of(client, css):
-    return client.post("/command-list", json={"op": "get_text", "css": css}).json()["result"]
+    """What the element says, with the tree address taken off.
+
+    Every read is laid out as its tree now, so a one-line element comes back as
+    "AC hit 120,80". These tests are about where the click landed, not about
+    the layout of the answer.
+    """
+    body = client.post(
+        "/command-list", json={"op": "get_text", "css": css}
+    ).json()["result"]
+    return said(body)
 
 
 def test_a_click_inside_a_canvas_lands_where_asked(canvas):

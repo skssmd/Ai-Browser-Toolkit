@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from conftest import said
+
 
 def test_single_command(client, base_url):
     body = client.post("/command-list", json={"op": "goto", "url": f"{base_url}/form.html"}).json()
@@ -48,7 +50,7 @@ def test_batch_runs_in_order(client, base_url):
     ).json()
     assert body["ok"] is True
     assert body["ran"] == 5
-    assert body["results"][-1]["result"] == "zoe/l"
+    assert said(body["results"][-1]["result"]) == "zoe/l"
 
 
 def test_batch_stops_on_first_error(client, base_url):
