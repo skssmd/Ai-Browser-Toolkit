@@ -402,10 +402,24 @@ class PlaywrightElement:
             return False
 
     def is_enabled(self) -> bool:
-        # `refs.get` calls this purely to decide whether the element is still
-        # attached, and expects a stale one to raise rather than answer.
+        # Called purely to decide whether the element is still attached, and a
+        # stale one is expected to raise rather than answer.
         try:
             return bool(self._call(lambda: self._handle.is_enabled()))
+        except Exception as exc:
+            raise _as_engine_error(exc) from exc
+
+    def is_selected(self) -> bool:
+        """Selenium's is_selected: an option's `selected`, anything else's `checked`.
+
+        Not Playwright's `is_checked()`, which raises on an element that is
+        neither a box nor a radio -- and `<option>` is exactly that, while being
+        the case Selenium's name comes from.
+        """
+        try:
+            return bool(self._call(lambda: self._handle.evaluate(
+                "e => e.tagName === 'OPTION' ? !!e.selected : !!e.checked"
+            )))
         except Exception as exc:
             raise _as_engine_error(exc) from exc
 
@@ -1250,6 +1264,21 @@ class PlaywrightSelect:
 
     def select_by_index(self, index: int) -> None:
         self._select(index=index)
+
+    @property
+    def options(self) -> list:
+        """Every <option>, so a caller can match one itself.
+
+        Worth having because asking the engine to find an option that is not
+        there costs the whole selection timeout -- fifteen seconds of retrying
+        for something that was never going to appear -- and comes back as a
+        timeout rather than as "no such option". Reading the list is one round
+        trip and says what the real choices are.
+        """
+        handles = self._driver._call(
+            lambda: self._element.raw.query_selector_all("option")
+        )
+        return [PlaywrightElement(self._driver, handle) for handle in handles]
 
     @property
     def first_selected_option(self):

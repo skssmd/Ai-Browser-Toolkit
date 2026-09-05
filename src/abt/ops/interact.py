@@ -688,22 +688,37 @@ def _tag_of(element) -> str:
 
 
 def _select_option(element, value: str, described: str) -> dict:
-    """Choose an option by its visible text, or failing that by its value."""
+    """Choose an option by its visible text, or failing that by its value.
+
+    The options are read and matched here rather than handed to the engine to
+    find. Asking it for one that does not exist costs the whole selection
+    timeout -- fifteen seconds of retrying, twice over when the text is tried
+    before the value -- and arrives as a timeout, which says nothing about the
+    option. One read costs a round trip and knows what the real choices are, so
+    the miss is instant and the error can list them.
+    """
     dropdown = Select(element)
-    try:
-        dropdown.select_by_visible_text(value)
-    except Exception:
-        try:
-            dropdown.select_by_value(value)
-        except Exception as exc:  # selenium raises NoSuchElementException here
-            options = [o.text for o in dropdown.options][:20]
-            raise OpError(
-                "element_not_found",
-                f"no option in {described} reads or is valued {value!r}",
-                hint="Options are: " + ", ".join(repr(o) for o in options)
-                + (" …" if len(dropdown.options) > 20 else "")
-                + ". Send one of those.",
-            ) from exc
+    options = [
+        ((option.text or "").strip(), option.get_attribute("value") or "")
+        for option in dropdown.options
+    ]
+    wanted = (value or "").strip()
+
+    if any(text == wanted for text, _ in options):
+        dropdown.select_by_visible_text(wanted)
+    elif any(held == wanted for _, held in options):
+        dropdown.select_by_value(wanted)
+    else:
+        shown = [text or held for text, held in options][:20]
+        raise OpError(
+            "element_not_found",
+            f"no option in {described} reads or is valued {value!r}",
+            hint="Options are: "
+            + ", ".join(repr(option) for option in shown)
+            + (" …" if len(options) > 20 else "")
+            + ". Send one of those.",
+        )
+
     chosen = dropdown.first_selected_option
     return {"selected": chosen.text, "value": chosen.get_attribute("value")}
 
