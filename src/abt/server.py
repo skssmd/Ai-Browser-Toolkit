@@ -7,6 +7,7 @@ never stalls the event loop -- `GET /status` stays answerable meanwhile.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from pathlib import Path
@@ -33,6 +34,11 @@ from .recorder import (
 )
 from .schema import OP_NAMES, op_signatures, parse_command
 from .viewer import VIEWER_HTML
+
+# How long /status will wait for the browser before answering without it. A
+# status check is a question about liveness, so it has to come back while the
+# thing it describes is still busy -- see the route.
+STATUS_TIMEOUT = 5.0
 
 
 def ok(result: Any) -> dict:
@@ -363,8 +369,31 @@ def create_app(
     @app.get("/status")
     async def status():
         # Lock-free on purpose: usable while a long command is still running.
+        #
+        # Lock-free is not the same as instant, though. `session_status` asks
+        # the browser where it is -- a `switch_to.window` plus a url and title
+        # per tab -- and a driver runs one command at a time, so those queue
+        # behind whatever is in flight. A status check during a slow `goto` sat
+        # there for the client's whole timeout, which is the opposite of what
+        # this route is for: the question is "is it alive and busy", and five
+        # minutes of silence answers neither half.
         try:
-            return ok(await run_in_threadpool(session_status, session))
+            return ok(
+                await asyncio.wait_for(
+                    run_in_threadpool(session_status, session), STATUS_TIMEOUT
+                )
+            )
+        except asyncio.TimeoutError:
+            return ok({
+                "running": session.is_running,
+                "busy": True,
+                "note": (
+                    f"the browser did not answer within {STATUS_TIMEOUT:g}s, so "
+                    "where it is could not be read -- it is busy with a command, "
+                    "not dead. /health answers without touching the browser at "
+                    "all; browser_restart is the way out if it never frees up"
+                ),
+            })
         except OpError as exc:
             return fail(exc)
         except EngineError as exc:

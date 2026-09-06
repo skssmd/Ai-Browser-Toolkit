@@ -850,8 +850,11 @@ abt command-list '{"op":"click","css":"a.result","force":true}'
 abt command-list '{"op":"click","css":"a.result","new_tab":true,"activate":false}'
 ```
 
-`GET /ops` lists them live; `GET /status` reports the current URL, open tabs, and
-live ref count without waiting for a running command to finish.
+`GET /ops` lists them live. `GET /status` reports the current URL and open tabs;
+it takes no lock, but it does ask the browser, and a driver runs one command at
+a time — so during a slow navigation it gives up after five seconds and answers
+`busy: true` rather than waiting. `GET /health` reads no browser state at all,
+so it answers even when the browser is wedged, which is when you most want it.
 
 ### Errors
 
@@ -967,7 +970,8 @@ of step with the server.
 # lifecycle
 abt up                      # start a server if none is running
 abt browser start           # a separate step; up to 2 min on a real profile
-abt status                  # URL, tabs, live refs
+abt status                  # URL and tabs -- asks the browser, so it can report busy
+abt health                  # is the server up? never touches the browser
 abt ops                     # every op and its exact parameters
 abt logs
 abt shutdown

@@ -320,16 +320,46 @@ def _choose_browser(browser: str | None) -> str:
     return chosen
 
 
-def _call(port: int, path: str, payload: Any = None, method: str = "POST") -> None:
+# A page command can legitimately take minutes -- a slow navigation, a long
+# batch -- so it gets a patient budget. A question *about* the server is a
+# different thing: `abt status` asking "is it alive" and then sitting silent for
+# five minutes answers neither half, and the wait is not free either, because
+# the caller is usually an agent that has now spent its turn. See STATUS_TIMEOUT
+# in server.py, which is the other end of this.
+COMMAND_TIMEOUT = 300
+QUERY_TIMEOUT = 20
+
+
+def _call(
+    port: int,
+    path: str,
+    payload: Any = None,
+    method: str = "POST",
+    timeout: float | None = None,
+) -> None:
     url = f"http://{HOST}:{port}{path}"
+    if timeout is None:
+        timeout = QUERY_TIMEOUT if method == "GET" else COMMAND_TIMEOUT
     try:
         if method == "GET":
-            response = httpx.get(url, timeout=300)
+            response = httpx.get(url, timeout=timeout)
         else:
-            response = httpx.post(url, json=payload, timeout=300)
+            response = httpx.post(url, json=payload, timeout=timeout)
     except httpx.ConnectError:
         typer.secho(
             f"No server on {HOST}:{port}. Start one with `abt serve`.",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
+    except httpx.ReadTimeout:
+        # Say which wait ran out and what answers faster, rather than leaving a
+        # caller to guess whether the server is wedged or merely busy.
+        typer.secho(
+            f"The server on {HOST}:{port} did not answer {path} within "
+            f"{timeout:g}s. It is up (the connection was accepted) but busy. "
+            f"`abt health` answers without touching the browser; "
+            f"`abt browser restart` if it never frees up.",
             fg="red",
             err=True,
         )
@@ -688,8 +718,25 @@ def doctor(
 
 @app.command()
 def status(port: int = _port_option()) -> None:
-    """Show current URL and tabs."""
+    """Show current URL and tabs.
+
+    Asks the browser where it is, so it queues behind a command already in
+    flight. It gives up after a few seconds and says the browser is busy rather
+    than waiting on it -- `health` is the one that never touches the browser.
+    """
     _call(port, "/status", method="GET")
+
+
+@app.command()
+def health(port: int = _port_option()) -> None:
+    """Is the *server* up? Answered without touching the browser.
+
+    The question `status` cannot always answer. A driver runs one command at a
+    time, so a status check during a slow navigation waits for it -- and a
+    wedged browser is exactly when you most want to know the server is alive.
+    This route reads no browser state at all, so it answers either way.
+    """
+    _call(port, "/health", method="GET")
 
 
 @app.command()

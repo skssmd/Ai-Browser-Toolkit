@@ -139,3 +139,51 @@ def test_run_js_returns_a_value(client):
 def test_run_js_error_is_typed(client):
     body = client.post("/command-list", json={"op": "run_js", "script": "boom();"}).json()
     assert body["error"]["type"] == "js_error"
+
+
+def test_status_answers_while_a_command_holds_the_driver(client, base_url):
+    """The question is "alive and busy?", and silence answers neither half.
+
+    /status is lock-free, but it still asks the browser where it is -- a window
+    switch plus a url and title per tab -- and a driver runs one command at a
+    time, so it queues behind whatever is in flight. It used to wait there for
+    the client's whole budget, which was five minutes.
+    """
+    import threading
+    import time
+
+    from abt.server import STATUS_TIMEOUT
+
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    hold = threading.Thread(
+        target=lambda: client.post(
+            "/command-list",
+            json={
+                "op": "run_js",
+                "script": "const t=Date.now(); while(Date.now()-t<9000){}; return 1;",
+            },
+        )
+    )
+    hold.start()
+    try:
+        time.sleep(1.0)  # let the slow command take the driver
+        began = time.monotonic()
+        body = client.get("/status").json()
+        waited = time.monotonic() - began
+        assert body["ok"] is True
+        assert body["result"]["busy"] is True
+        assert waited < STATUS_TIMEOUT + 3, f"waited {waited:.1f}s"
+        # And the route that never touches the browser is unaffected.
+        began = time.monotonic()
+        assert client.get("/health").json()["ok"] is True
+        assert time.monotonic() - began < 2
+    finally:
+        hold.join()
+
+
+def test_status_is_normal_when_nothing_is_running(client, base_url):
+    client.post("/command-list", json={"op": "goto", "url": f"{base_url}/cards.html"})
+    result = client.get("/status").json()["result"]
+    assert result["running"] is True
+    assert "busy" not in result
+    assert result["url"].endswith("/cards.html")
