@@ -39,11 +39,22 @@ def locator(cmd) -> tuple[str, str]:
 
 
 def describe(cmd) -> str:
-    for field in ("css", "xpath", "text"):
+    """How to name the thing a command acted on, in a result or an error.
+
+    `level` is included, and its omission was not cosmetic. It is now the usual
+    way to target something -- the tree hands out an address per line -- so
+    every level-targeted command described itself as `<no target>`. That reached
+    the failures too: "typing into <no target> timed out" was a real error about
+    a real element, with the one detail identifying it dropped, and a caller
+    reading it cannot tell which field it had been aiming at.
+    """
+    parts = []
+    for field in ("css", "xpath", "text", "level"):
         value = getattr(cmd, field, None)
         if value is not None:
-            return f"{field}={value!r}"
-    return "<no target>"
+            parts.append(f"{field}={value!r}")
+    # A level may now accompany a selector to scope it, so both are said.
+    return " ".join(parts) if parts else "<no target>"
 
 
 _CONDITIONS = {

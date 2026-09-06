@@ -215,3 +215,22 @@ def test_a_selector_that_matches_nothing_in_scope_says_so(clean_session):
         run(clean_session, op="get_text", level=level, css=".nope")
     assert caught.value.type == "element_not_found"
     assert "under level" in caught.value.message
+
+
+def test_a_level_target_names_itself_in_results_and_errors(clean_session):
+    """`<no target>` was what every level-targeted command called itself.
+
+    Levels are now the usual way to aim at something, so the omission reached
+    the errors: "typing into <no target> timed out" is a real failure about a
+    real element with the one identifying detail dropped.
+    """
+    from abt.targeting import describe
+
+    level = run(clean_session, op="find", css="#p1")["matches"][0]["level"]
+    assert describe(parse_command({"op": "click", "level": level})) == f"level={level!r}"
+
+    from abt.errors import OpError
+
+    with pytest.raises(OpError) as caught:
+        run(clean_session, op="get_text", level="ZZZZ")
+    assert "ZZZZ" in caught.value.message

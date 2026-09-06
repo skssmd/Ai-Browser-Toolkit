@@ -27,10 +27,17 @@ from abt.schema import OP_NAMES
 # a bespoke spelling again.
 LIFECYCLE = {
     "serve", "up", "shutdown", "browser", "autostart",   # run the thing
-    "status", "doctor", "logs", "ops", "guidelines", "mcp",  # look at the thing
+    "status", "health", "doctor", "logs", "ops", "guidelines", "mcp",  # look at it
     "messenger",                                          # a site shortcut
     "command-list",                                       # every page action
 }
+
+# `health` is here rather than being a drift: there is no `health` op, so it
+# cannot become a second spelling of one. It asks whether the *server* is up
+# without touching the browser, which is the question `status` cannot always
+# answer -- a driver runs one command at a time, so a status check during a
+# slow navigation waits for it. The rule this file holds is about page actions
+# growing bespoke subcommands, and this is not one.
 
 
 def cli_commands() -> set[str]:
