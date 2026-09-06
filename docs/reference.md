@@ -18,7 +18,7 @@ abt doctor        # what browsers are installed, and where
 ```
 
 Also on **winget** (`winget install skssmd.AIBrowserToolkit`), **Scoop**,
-**Homebrew** (`brew install skssmd/tap/abt`) and the **AUR**.
+**Homebrew** (`brew install skssmd/tap/aibrowsertoolkit`) and the **AUR**.
 
 Point an MCP client at it:
 

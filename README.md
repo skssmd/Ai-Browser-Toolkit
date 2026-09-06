@@ -254,9 +254,73 @@ a site change leaves the next run better informed than the last.
 
 ## Install and run
 
+Needs **Python 3.11+** and **Chrome** or **Edge**. Drivers resolve themselves —
+nothing to download by hand.
+
+**Python** — every platform, and the only route that needs Python already there:
+
 ```bash
 pip install ai-browser-toolkit
-# Windows: py -m pip install ai-browser-toolkit
+py -m pip install ai-browser-toolkit      # Windows
+```
+
+**Arch** — from the AUR, with either helper:
+
+```bash
+yay -S aibrowsertoolkit-bin
+paru -S aibrowsertoolkit-bin
+```
+
+**macOS / Linuxbrew**:
+
+```bash
+brew install skssmd/tap/aibrowsertoolkit
+```
+
+**Windows** — Scoop, or winget:
+
+```powershell
+scoop bucket add skssmd https://github.com/skssmd/scoop-bucket
+scoop install aibrowsertoolkit
+
+winget install skssmd.AIBrowserToolkit
+```
+
+**Debian / Ubuntu** — `.deb` from the package repository:
+
+```bash
+echo "deb [trusted=yes] https://apt.fury.io/skssmd/ /" \
+  | sudo tee /etc/apt/sources.list.d/skssmd.list
+sudo apt update && sudo apt install aibrowsertoolkit
+```
+
+**Fedora / RHEL** — `.rpm`:
+
+```bash
+sudo tee /etc/yum.repos.d/skssmd.repo <<'EOF'
+[skssmd]
+name=skssmd
+baseurl=https://yum.fury.io/skssmd/
+enabled=1
+gpgcheck=0
+EOF
+sudo dnf install aibrowsertoolkit
+```
+
+**Alpine** — `.apk`:
+
+```sh
+echo "https://apk.fury.io/skssmd/" | sudo tee -a /etc/apk/repositories
+sudo apk add --allow-untrusted aibrowsertoolkit
+```
+
+The system packages carry their own Python runtime, so they are the route to
+take when the machine has no Python or you would rather not touch the one it
+has. Every one of them installs the same `abt` command.
+
+Then, however you installed it:
+
+```bash
 abt doctor          # what browsers are installed, and where
 ./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
 ```
