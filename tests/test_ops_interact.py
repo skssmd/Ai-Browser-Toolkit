@@ -306,3 +306,42 @@ def test_select_without_a_value_on_a_non_select_says_why(valued):
         run(valued, op="select", css="#agree", option_index=0)
     assert caught.value.type == "not_a_select"
     assert "no options to index" in caught.value.message
+
+
+# --- why a control cannot be operated -----------------------------------------
+
+
+@pytest.fixture
+def tabs(clean_session, base_url):
+    clean_session.goto(f"{base_url}/tabs.html")
+    return clean_session
+
+
+def test_a_field_on_an_inactive_tab_says_it_is_hidden(tabs):
+    """"hidden, disabled, or covered" is three problems with three remedies.
+
+    The generic hint said something was covering the target and to dismiss the
+    overlay. On a reddit submit form whose URL field sits on the inactive tab
+    there is no overlay, and an agent following that advice spent its turns
+    hunting for one. What it needed was the name of the container to reveal.
+    """
+    with pytest.raises(OpError) as caught:
+        run(tabs, op="input", css="#url", value="x")
+    assert caught.value.type == "not_interactable"
+    assert "#pane-url" in caught.value.message, caught.value.message
+    assert "display:none" in caught.value.message
+    assert "nothing is covering it" in caught.value.hint
+
+
+def test_a_disabled_field_says_so_rather_than_blaming_an_overlay(tabs):
+    with pytest.raises(OpError) as caught:
+        run(tabs, op="input", css="#locked", value="x")
+    assert caught.value.type == "not_interactable"
+    assert "disabled" in caught.value.message
+    assert "disabled" in caught.value.hint
+
+
+def test_revealing_the_tab_makes_the_field_usable(tabs):
+    """The remedy the hint names actually works."""
+    run(tabs, op="click", css="#tab-url")
+    assert run(tabs, op="input", css="#url", value="hello")["value"] == "hello"

@@ -570,9 +570,17 @@ def input(session: BrowserSession, cmd) -> dict:
             _clear_by_keystrokes(session, element)
             element.send_keys(cmd.value)
     except NotInteractable as exc:
+        # Same question as `_miss` asks, for the path that never reaches it:
+        # the engine refused, and "covered" is only one of three reasons.
+        from ..targeting import hint_for_unusable, why_unusable
+
+        why = why_unusable(session, element)
         raise OpError(
             "not_interactable",
-            f"could not type into {describe(cmd)}: {exc.msg or exc}",
+            f"could not type into {describe(cmd)}"
+            + (f" -- it is {why}" if why else "")
+            + f": {exc.msg or exc}",
+            hint=hint_for_unusable(why),
         ) from exc
     except Timeout as exc:
         # A readonly field never becomes editable, so the engine waits out its

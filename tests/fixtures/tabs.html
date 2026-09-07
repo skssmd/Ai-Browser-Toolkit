@@ -1,0 +1,15 @@
+<title>Tabs</title>
+<body>
+  <div role="tablist">
+    <button id="tab-text" type="button">Text</button>
+    <button id="tab-url" type="button"
+            onclick="document.getElementById('pane-url').style.display='block'">URL</button>
+  </div>
+  <div id="pane-text">
+    <textarea name="post[body]" id="body"></textarea>
+  </div>
+  <div id="pane-url" style="display: none">
+    <input name="post[url]" id="url" type="text">
+  </div>
+  <input id="locked" type="text" disabled>
+</body>

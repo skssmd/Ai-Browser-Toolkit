@@ -381,6 +381,75 @@ def _resolve_one(
     return session.driver.find_elements(by, selector)[index]
 
 
+# Why an element that exists is not interactable. "hidden, disabled, or covered"
+# is three different problems with three different remedies, and guessing wrong
+# costs turns: watched an agent told to dismiss an overlay spend eight turns
+# hunting for one, on a reddit submit form whose URL field was simply on the
+# inactive tab. Nothing was covering it. It needed revealing.
+_WHY_JS = """
+const el = arguments[0];
+if (el.disabled) { return 'disabled'; }
+const cs = getComputedStyle(el);
+if (cs.display === 'none') { return 'display:none'; }
+if (cs.visibility === 'hidden') { return 'visibility:hidden'; }
+if (parseFloat(cs.opacity) === 0) { return 'opacity:0'; }
+// Ancestors before the element's own box. Inside a display:none container an
+// element keeps its own computed display and merely has no rectangle, so the
+// checks above miss it and "zero size" would be all that is left -- true, and
+// useless. The container is the thing a caller can act on.
+for (let n = el.parentElement, up = 0; n && up < 12; n = n.parentElement, up++) {
+  const s = getComputedStyle(n);
+  const who = n.id ? '#' + n.id : n.tagName.toLowerCase()
+    + (n.getAttribute('role') ? '[role=' + n.getAttribute('role') + ']' : '');
+  if (s.display === 'none') { return 'inside ' + who + ', which is display:none'; }
+  if (n.hasAttribute('hidden')) { return 'inside ' + who + ', which is [hidden]'; }
+  if (n.getAttribute('aria-hidden') === 'true') {
+    return 'inside ' + who + ', which is aria-hidden';
+  }
+}
+const r = el.getBoundingClientRect();
+if (!r.width || !r.height) { return 'zero size'; }
+return '';
+"""
+
+_REVEAL = (
+    "It is on the page but not shown, and nothing is covering it -- so there is "
+    "no overlay to dismiss. Something has to reveal it first: a tab, an "
+    "accordion, a 'show more', a disclosure. Find that control in the tree and "
+    "click it, then retry this."
+)
+_ENABLE = (
+    "It is disabled, so no amount of waiting or scrolling will help. Whatever "
+    "it depends on has to be satisfied first -- an earlier field, a checkbox, a "
+    "selection."
+)
+
+
+def why_unusable(session, element) -> str:
+    """Why this element cannot be operated, in a few words, or "".
+
+    Best-effort by design: a diagnosis that fails must not replace the error it
+    was meant to explain, so any trouble here returns nothing and the caller
+    reports what it already knew.
+    """
+    try:
+        return session.driver.execute_script(_WHY_JS, element) or ""
+    except Exception:  # noqa: BLE001 - deliberate; this only adds detail
+        return ""
+
+
+def hint_for_unusable(why: str) -> str | None:
+    """The remedy that matches the diagnosis, or None to keep the generic one.
+
+    None is right when nothing was found: the element is present, visible and
+    enabled, so being unable to act on it really does mean something is in the
+    way -- which is what the type's own hint says.
+    """
+    if not why:
+        return None
+    return _ENABLE if why == "disabled" else _REVEAL
+
+
 def _miss(session, by, selector, cmd, state, waited) -> OpError:
     """Distinguish 'nothing matched' from 'matched but not interactable'."""
     try:
@@ -388,10 +457,13 @@ def _miss(session, by, selector, cmd, state, waited) -> OpError:
     except (NoSuchElement, StaleElement):
         found = []
     if found and state in ("visible", "clickable"):
+        why = why_unusable(session, found[0])
+        detail = f" -- it is {why}" if why else " (hidden, disabled, or covered)"
         return OpError(
             "not_interactable",
             f"{len(found)} element(s) matched {describe(cmd)} but none became "
-            f"{state} within {waited}s (hidden, disabled, or covered)",
+            f"{state} within {waited}s{detail}",
+            hint=hint_for_unusable(why),
         )
     return OpError(
         "element_not_found", f"nothing matched {describe(cmd)} within {waited}s"
