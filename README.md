@@ -343,32 +343,53 @@ MCP, and the mechanics behind the diff and the text track — are in
 
 ## Benchmark
 
-475 WebArena tasks across shopping, the Magento admin back office, and reddit
-(Postmill), driven by **z-ai/glm-5.3-flash** through `abt`, one fresh agent
-process per task, 30-turn ceiling.
+632 WebArena tasks across five sites, driven through `abt`, one fresh agent
+process per task.
 
-| | tasks | passed, as the harness scored it | final (+ fuzzy judging) | did the task (correctness) |
-|---|---|---|---|---|
-| shopping | 187 | 98 — 52.4% | 109 — 58.3% | 124 — 66.3% |
-| admin | 182 | 95 — 52.2% | 108 — 59.3% | 118 — 64.8% |
-| reddit | 106 | 87 — 82.1% | 89 — 84.0% | 95 — 89.6% |
-| **combined** | **475** | **280 — 58.9%** | **306 — 64.4%** | **337 — 70.9%** |
+| site | tasks | passed | turns/ep | ops | tokens/ep | cached | wall | model |
+|---|---|---|---|---|---|---|---|---|
+| shopping | 187 | 98 — 52.4% | 9 | 2,088 | 185,222 | 76% | 11.1 h | glm-5.3-flash |
+| shopping_admin | 182 | 95 — 52.2% | 14 | 3,736 | 400,891 | 78% | 21.1 h | glm-5.3-flash |
+| gitlab | 139 of 180 | 94 — 67.6% | 15 | 2,164 | 482,382 | 93% | 6.1 h | minimax-m3 |
+| reddit | 106 | 85 — 80.2% | 12 | 1,347 | 473,392 | 92% | 3.4 h | minimax-m3 |
+| gitlab + reddit | 18 | 8 — 44.4% | 42 | 794 | 1,555,142 | 97% | 1.4 h | minimax-m3 |
+| **total** | **632** | **380 — 60.1%** | **13** | **10,129** | **400,034** | **87%** | **43.1 h** | |
 
-| | turns/episode | turns | ops | tokens/episode (cached) | tokens (cached) | wall time |
-|---|---|---|---|---|---|---|
-| shopping | 9 | 1,601 | 2,088 | 185,222 (140,591, 76%) | 34,636,273 (26,290,560, 76%) | 11.1 h |
-| admin | 14 | 2,564 | 3,736 | 400,891 (313,741, 78%) | 72,962,196 (57,100,928, 78%) | 21.1 h |
-| reddit | 11 | 1,183 | 1,582 | 258,913 (183,892, 71%) | 27,444,731 (19,492,544, 71%) | 10.3 h |
-| **combined** | **11** | **5,348** | **7,406** | **284,302 (216,598, 76%)** | **135,043,200 (102,884,032, 76%)** | **42.5 h** |
+Scores are WebArena's own evaluator, read off the page after the agent stops —
+never computed here, and failures stay in the table. The two shopping sites ran
+at a 30-turn ceiling with `run_js` available; gitlab, reddit and the multi-site
+tasks ran at 100 turns with `run_js` **off**, so those columns are not a
+like-for-like comparison of models. gitlab stops at 139 because the inference
+balance ran out mid-sweep, not because tasks were skipped.
 
-"Did the task" is a second, separate measure kept apart from the score: an
-episode counts correct there when everything the evaluator required actually
-appears in what the agent produced, even when the harness's exact string, URL,
-or subreddit case didn't match it. Full per-task tables, what each task's
-evaluator actually checks, and why each failure happened:
-[shopping](benchmarks/browsergym/results/shopping/REPORT.md),
+Per-task tables, what each evaluator actually checks, and why each failure
+happened: [shopping](benchmarks/browsergym/results/shopping/REPORT.md),
 [admin](benchmarks/browsergym/results/admin/REPORT.md),
 [reddit](benchmarks/browsergym/results/reddit/REPORT.md).
+
+**What the addressing rewrite changed.** The same 139 gitlab tasks, same model,
+against the baseline that preceded it:
+
+| | baseline | level tree | |
+|---|---|---|---|
+| all tasks | 69.8% | 67.6% | −2.2pt |
+| **read** (62) | 58.1% | **59.7%** | **+1.6pt** |
+| — turns | 13.6 | **9.5** | **−30%** |
+| — failed ops | 0.82 | **0.52** | **−37%** |
+| — tokens/ep | 328,955 | **313,646** | **−5%** |
+| **write** (77) | 79.2% | 74.0% | −5.2pt |
+| — turns | 19.6 | 20.3 | +3% |
+| — failed ops | 1.19 | 2.32 | +95% |
+| — tokens/ep | 467,991 | 618,247 | +32% |
+
+Reading improves on every axis. Writing regresses on every axis — and most
+likely because `run_js` is off in the new run and was on in the baseline, not
+because of the addressing. Write tasks leaned on it about twice as heavily as
+read tasks, the extra failures are refused `run_js` calls plus timeouts on the
+widgets it used to drive, and in 8 baseline episodes the agent skipped the
+browser entirely and called GitLab's REST API through it — winning 5 passes that
+way. Separating the two would need a run with the level tree and `run_js` on,
+which has not been done.
 
 ## Tests
 
