@@ -1,27 +1,41 @@
 # Understanding the benchmark
 
-Three documents. Read them in order the first time; after that they are
+Four documents. Read them in order the first time; after that they are
 reference.
 
 | | |
 |---|---|
+| [00 — setting it up from scratch](00-setting-up-from-scratch.md) | a blank VPS to two workers, with the exact commands that were run |
 | [01 — servers and tunnels](01-servers-and-tunnels.md) | what listens on the host, how to start each one, how to see them from your machine |
 | [02 — running a sweep](02-running-a-sweep.md) | sites, plan, run, resume — and the traps that cost hours |
 | [03 — what gets logged](03-what-gets-logged.md) | the four record layers, what each can answer, and where each lies to you |
 
 Related, outside this folder:
 
-- [`../WEBARENA-SETUP.md`](../WEBARENA-SETUP.md) — how this install was built,
-  with the measured image sizes and how each harness bug was proven
+- [`../WEBARENA-SETUP.md`](../WEBARENA-SETUP.md) — the earlier shopping-era
+  install, with the measured image sizes and how each harness bug was proven
 - [`../WEBARENA.md`](../WEBARENA.md) — the original harness notes
+- [`../dashboard.py`](../dashboard.py) — the analytics dashboard itself, the
+  same file that runs live on `:9102`
 - [`../../../guidelines/toolkit-workflow.md`](../../../guidelines/toolkit-workflow.md)
   — how to drive the toolkit itself
 
 ## The short version
 
-Two workers, one per site, on a VPS. Each has its own toolkit server, browser
-profile, CDP port, trace port and results directory — sharing any of them
-breaks in a way that does not announce itself.
+Two workers, one per site, on a VPS. Right now they are **gitlab**
+(`localhost:8023`) and **reddit** (`localhost:9999`), model
+`stealth/union-alpha`. Each has its own toolkit server, browser profile, CDP
+port, trace port and results directory — sharing any of them breaks in a way
+that does not announce itself.
+
+| | gitlab | reddit |
+|---|---|---|
+| site port | `8023` (+ `8024` ctrl) | `9999` (+ `9998` ctrl) |
+| toolkit server | `8766` | `8767` |
+| profile | `bench/profile` | `bench/profile-reddit` |
+| CDP | `9222` | `9223` |
+| trace | `9100` | `9101` |
+| results | `results/wa-gitlab/` | `results/wa-reddit/` |
 
 A plan is written once and fixes the model, the ports, the turn ceiling and
 the task list. The sweep runs each task in its own process, appends a row per

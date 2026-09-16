@@ -1,8 +1,9 @@
 # The servers, and how to see them from your machine
 
-Five processes listen on the benchmark host, all on `127.0.0.1` so nothing is
-exposed to the internet. Three of them are worth tunnelling. This says what
-each one is, how to start it, and how to look at it.
+Two workers, each with a site container, a toolkit server, a per-episode trace
+and a results directory — plus one dashboard. Everything binds `127.0.0.1` so
+nothing is exposed to the internet. Three of them are worth tunnelling. This
+says what each one is, how to start it, and how to look at it.
 
 Host: `root@169.58.213.174` (graft remote `contabo`). Everything lives under
 `/opt/webarena/bench/`.
@@ -13,13 +14,16 @@ Host: `root@169.58.213.174` (graft remote `contabo`). Everything lives under
 
 | port | what | lifetime | tunnel? |
 |---|---|---|---|
-| 7770 | shopping site (Magento) | container, always up | no |
-| 7780 | shopping_admin site | container, always up | no |
-| 8766 | abt server, worker 1 | long-running | optional — `/viewer` |
-| 8767 | abt server, worker 2 | long-running | optional — `/viewer` |
-| **9100** | **live trace, worker 1** | **per episode** | **yes** |
-| **9101** | **live trace, worker 2** | **per episode** | **yes** |
+| 8023 (+ 8024 ctrl) | gitlab site | container, always up | no |
+| 9999 (+ 9998 ctrl) | reddit site | container, always up | no |
+| 8766 | abt server, gitlab worker | long-running | optional — `/viewer` |
+| 8767 | abt server, reddit worker | long-running | optional — `/viewer` |
+| **9100** | **live trace, gitlab** | **per episode** | **yes** |
+| **9101** | **live trace, reddit** | **per episode** | **yes** |
 | **9102** | **analytics dashboard** | **long-running** | **yes** |
+
+Each site answers a control endpoint on the port one above/below it (`8024`,
+`9998`) — that is the image's own env-ctrl responder, not ours.
 
 The one thing that surprises people: **9100 and 9101 do not answer between
 tasks.** The trace server lives inside each `run_webarena_one.py` process, so
@@ -34,10 +38,11 @@ always up, which is why it is the one to leave open.
 The one to watch. Recomputes every episode's metrics on a timer and serves
 them as a page and as JSON.
 
-- **file:** `/opt/webarena/bench/dashboard.py`
-- **reads:** `toolkit/results/*/episodes.jsonl` and `plan.json` — read-only,
-  it never writes to the sweep's files
-- **recompute interval:** 180s, on the server; the page polls every 20s
+- **file:** `benchmarks/browsergym/dashboard.py` in this repo, deployed to
+  `/opt/webarena/bench/dashboard.py` — same file
+- **reads:** `toolkit/results/*/episodes*.jsonl` and `plan.json`, and tails
+  `sweep-*.log` — read-only, it never writes to the sweep's files
+- **recompute interval:** 30s, on the server; the page polls every 15s
 - **log:** `/opt/webarena/bench/dashboard.log`
 
 ```bash
@@ -57,7 +62,9 @@ It recomputes on a timer rather than per request so that a browser tab left
 open overnight cannot become load on the machine the sweep is using.
 
 `GET /` is the page. `GET /data` is the same numbers as JSON, if you would
-rather script against it than read it.
+rather script against it than read it. `GET /task/<sweep>/<task_id>` opens one
+episode with its live trace, and `GET /logs/<sweep>` tails that sweep's run
+log.
 
 ---
 
@@ -87,19 +94,23 @@ written line by line as the episode runs and survive it.
 The toolkit itself, one per worker. Each **attaches** to a browser that
 BrowserGym launched, addressed by `ABT_CDP_URL` — it does not launch its own.
 
-- **worker 1:** port 8766, CDP 9222, profile `profile/`, log `server.log`
-- **worker 2:** port 8767, CDP 9223, profile `profile-admin/`, log
-  `server-admin.log`
+- **gitlab worker:** port 8766, CDP 9222, profile `profile/`, log `server.log`
+- **reddit worker:** port 8767, CDP 9223, profile `profile-reddit/`, log
+  `server-reddit.log`
+
+`--headless` and `--no-run-js` are required by the sweep: the harness forbids
+the agent reaching for raw JavaScript.
 
 ```bash
 cd /opt/webarena/bench
 nohup setsid env ABT_CDP_URL=http://127.0.0.1:9222 \
-  ./venv/bin/python -m abt serve --port 8766 --headless \
+  ./venv/bin/python -m abt serve --port 8766 --headless --no-run-js \
   --profile /opt/webarena/bench/profile \
   > /opt/webarena/bench/server.log 2>&1 < /dev/null &
 ```
 
-Worker 2 is the same with `9223`, `8767`, `profile-admin`, `server-admin.log`.
+The reddit worker is the same with `9223`, `8767`, `profile-reddit`,
+`server-reddit.log`.
 
 **Every value must differ between the two.** Sharing the CDP port is the
 dangerous one: it does not error, it hands one worker's browser to the other
@@ -136,6 +147,8 @@ while true; do
       -N -L 9102:127.0.0.1:9102 \
          -L 9100:127.0.0.1:9100 \
          -L 9101:127.0.0.1:9101 \
+         -L 8766:127.0.0.1:8766 \
+         -L 8767:127.0.0.1:8767 \
       root@169.58.213.174
   echo "dropped $(date +%H:%M:%S), reconnecting"; sleep 3
 done
@@ -146,10 +159,10 @@ Then:
 | open | to see |
 |---|---|
 | <http://localhost:9102> | pass rate, tokens, per-sweep metrics, latest episodes |
-| <http://localhost:9100> | what worker 1 is thinking, right now |
-| <http://localhost:9101> | what worker 2 is thinking, right now |
-
-Add `-L 8766:127.0.0.1:8766` if you also want `/viewer`.
+| <http://localhost:9100> | what the gitlab agent is thinking, right now |
+| <http://localhost:9101> | what the reddit agent is thinking, right now |
+| <http://localhost:8766/viewer> | the gitlab worker's op history |
+| <http://localhost:8767/viewer> | the reddit worker's op history |
 
 **A dropped tunnel never affects the run.** Both sweeps are detached from any
 ssh session — `setsid`, no controlling terminal, reparented to PID 1, output

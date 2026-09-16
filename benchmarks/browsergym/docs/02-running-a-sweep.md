@@ -21,29 +21,38 @@ failed.
 | gitlab | 22 GB | **~60–80 GB** | **4–8 GB** | 180 |
 | wikipedia | 47 MB + an **85–115 GB** `.zim` | — | — | few |
 
-On a 96 GB / 7.8 GB box, **gitlab and wikipedia do not fit.** Shopping,
-shopping_admin, reddit and map do — about 584 of the 812 tasks.
+On a 96 GB disk / 7.8 GB RAM box, **wikipedia** is the one that does not fit
+(its `.zim` alone is 85–115 GB). GitLab does fit, but only with the Puma and
+Sidekiq caps plus a 4 GB swapfile — see
+[00 — setting it up](00-setting-up-from-scratch.md#4-the-containers). Right now
+the two running workers are **gitlab and reddit**.
 
 ```bash
-docker run -d --name webarena-shopping-admin --restart unless-stopped \
-  -p 127.0.0.1:7780:80 -p 127.0.0.1:7781:8877 \
-  am1n3e/webarena-verified-shopping_admin:latest
+docker run -d --name webarena-gitlab --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:8023:8023 -p 127.0.0.1:8024:8877 \
+  am1n3e/webarena-verified-gitlab:latest
+
+docker run -d --name webarena-reddit --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:9999:80 -p 127.0.0.1:9998:8877 \
+  am1n3e/webarena-verified-reddit:latest
 ```
 
-Bound to loopback deliberately. The image already expects `localhost:7780`.
+Bound to loopback deliberately, and **gitlab's inside port is `8023`, not
+`80`** — `-p 8023:80` runs but answers nothing.
 
 **Wait for it properly.** Magento answers `302` within seconds but takes
-minutes to serve the admin panel. Poll the real thing:
+minutes to serve the panel; GitLab takes minutes to answer at all. Poll the
+real thing:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -L http://localhost:7780/admin
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -L http://localhost:8023/
 ```
 
 Pull images detached — they take a long time and an ssh drop should not kill
 one:
 
 ```bash
-nohup setsid sh -c 'for i in shopping_admin reddit map; do
+nohup setsid sh -c 'for i in gitlab reddit; do
   docker pull am1n3e/webarena-verified-$i:latest; done' \
   >> /opt/webarena/pull.log 2>&1 < /dev/null &
 ```
@@ -60,29 +69,34 @@ provider, every port, and the exact task list.
 
 ```bash
 cd /opt/webarena/bench/toolkit
+export WA_GITLAB=http://localhost:8023 WA_REDDIT=http://localhost:9999
 ../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
-  --out results/wa-admin --sites shopping_admin \
-  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
-  --provider openrouter --model z-ai/glm-5.3-flash
+  --out results/wa-gitlab --sites gitlab \
+  --server http://127.0.0.1:8766 --cdp-port 9222 --trace-port 9100 \
+  --provider openrouter --model stealth/union-alpha
 ```
+
+The reddit plan is identical with `wa-reddit`, `reddit`, `8767`, `9223`,
+`9101`.
 
 `--sites` filters to tasks whose sites are all running, so the completion
 figure means something.
 
-The launcher holds the environment. `run-sweep-admin.sh` reads the API key out
-of `run-sweep.sh` rather than repeating it, so rotating stays a one-file job:
+The launcher holds the environment. Each launcher `source`s `run-sweep.sh`
+rather than repeating the key, so rotating stays a one-file job:
 
 ```bash
-export OPENROUTER_API_KEY="$(sed -n "s/^export OPENROUTER_API_KEY='\(.*\)'$/\1/p" \
-  /opt/webarena/bench/run-sweep.sh)"
-export WA_SHOPPING_ADMIN='http://localhost:7780/admin'
+# /opt/webarena/bench/run-gitlab.sh
+set -a; source /opt/webarena/bench/run-sweep.sh; set +a
+export WA_GITLAB='http://localhost:8023'
+cd /opt/webarena/bench/toolkit
 exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
-  --out results/wa-admin --timeout 2400
+  --out results/wa-gitlab --timeout 2400
 ```
 
 ```bash
-nohup setsid /opt/webarena/bench/run-sweep-admin.sh \
-  >> /opt/webarena/bench/sweep-admin.log 2>&1 < /dev/null &
+nohup setsid /opt/webarena/bench/run-gitlab.sh \
+  >> /opt/webarena/bench/sweep-gitlab.log 2>&1 < /dev/null &
 ```
 
 **Use an absolute path.** `cd /x && nohup … &` backgrounds the whole
@@ -112,7 +126,7 @@ both a failure and a pass.
 <http://localhost:9102> after tunnelling. Or:
 
 ```bash
-../venv/bin/python benchmarks/browsergym/sweep_webarena.py report --out results/wa-vps
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py report --out results/wa-gitlab
 ```
 
 ---
@@ -140,10 +154,24 @@ BrowserGym's login does `goto(url)` and does not append `/admin`, so without
 it you land on the storefront and `get_by_label("Username")` finds nothing.
 
 **Every request refused with 402 and no tokens spent.**
-OpenRouter checks affordability against `max_tokens`, not usage. A 32,000
-ceiling is refused outright on a thin balance — *"you requested up to 32000
-tokens, but can only afford 22583"*. Measured need is ~370 output tokens per
-turn including reasoning, so 8,000 is twenty times enough and always fits.
+OpenRouter checks affordability against `max_tokens`, not usage, so an
+oversized ceiling is refused outright — *"you requested up to 32000 tokens,
+but can only afford 22583"* — and that halted two sweeps without a token being
+spent. The ceiling is therefore a **balance** decision, not a capability one.
+
+The shipped `loop_policy.py` defaults to `8000` (`budget = max_tokens or 8000`,
+line ~763): measured over 43 episodes a turn produces ~387 output tokens
+including reasoning, so 8k is twenty times the observed need. But the live run
+was bumped to `32000` with
+
+```bash
+sed -i 's/max_tokens or 8000/max_tokens or 32000/' benchmarks/browsergym/loop_policy.py
+```
+
+to give reasoning models room to think before emitting a tool call, on a key
+whose balance affords it. Pick the ceiling your balance can afford: a model
+that thinks needs headroom, a thin balance needs a low number. `--max-tokens`
+overrides both.
 
 **Two workers, one browser.** Give each its own port, profile, CDP port,
 trace port and results directory. A shared CDP port does not error; it hands

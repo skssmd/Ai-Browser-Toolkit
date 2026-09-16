@@ -142,10 +142,11 @@ responses with the screenshots inline.
 
 ## 4. Analytics — `dashboard.py` on `:9102`
 
-Derived, not stored. Recomputes every 180s from `episodes.jsonl` and
+Derived, not stored. Recomputes every 30s from `episodes.jsonl` and
 `plan.json`, holds the result in memory, serves it as a page and as
-`GET /data`. Nothing here is a source of truth — it is the other layers,
-totalled.
+`GET /data`, and can open a single episode or a sweep's log
+(`GET /task/<sweep>/<task>`, `GET /logs/<sweep>`). Nothing here is a source of
+truth — it is the other layers, totalled.
 
 Use it to watch. Use `episodes.jsonl` to make a claim.
 
