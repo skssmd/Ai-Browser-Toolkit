@@ -1,6 +1,6 @@
 # Understanding the benchmark
 
-Four documents. Read them in order the first time; after that they are
+Five documents. Read them in order the first time; after that they are
 reference.
 
 | | |
@@ -9,6 +9,7 @@ reference.
 | [01 — servers and tunnels](01-servers-and-tunnels.md) | what listens on the host, how to start each one, how to see them from your machine |
 | [02 — running a sweep](02-running-a-sweep.md) | sites, plan, run, resume — and the traps that cost hours |
 | [03 — what gets logged](03-what-gets-logged.md) | the four record layers, what each can answer, and where each lies to you |
+| [04 — cross-site tasks](04-multisite-tasks.md) | the 18 tasks that need both gitlab and reddit, and the one prompt line that permits it |
 
 Related, outside this folder:
 

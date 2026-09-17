@@ -57,20 +57,17 @@ git fetch -q origin browsergym-benchmark
 git checkout FETCH_HEAD -- benchmarks/browsergym
 ```
 
-Two one-line edits to `benchmarks/browsergym/loop_policy.py`, both learned the
-hard way:
+Two settings in `benchmarks/browsergym/loop_policy.py` were learned the hard way
+and now ship in the file, so a fresh checkout needs no edit:
 
-- **`max_tokens 8000 → 32000`.** The user asks for room to think; 8k output
-  budget clipped reasoning on long tasks. Later runs confirmed 32k is never
-  *used*, only *allowed* — OpenRouter refuses a request outright if the ceiling
-  exceeds the account balance, so the ceiling is the thing that must be safe.
-
-  ```bash
-  sed -i 's/max_tokens or 8000/max_tokens or 32000/' benchmarks/browsergym/loop_policy.py
-  ```
+- **A 32000 output window** (`budget = max_tokens or 32000`). The user asks for
+  room to think; an 8000 budget clipped reasoning on long tasks. Later runs
+  confirmed 32k is never *used*, only *allowed* — OpenRouter refuses a request
+  outright if the ceiling exceeds the account balance, so the ceiling is the
+  thing that must be safe.
 
 - **Identify the caller to OpenRouter.** Requests without `HTTP-Referer` /
-  `X-Title` are fine but the official route is to send them. Added to
+  `X-Title` are fine but the official route is to send them. Shipped in
   `loop_policy.py`:
 
   ```python

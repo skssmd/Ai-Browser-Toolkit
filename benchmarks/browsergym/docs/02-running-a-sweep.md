@@ -198,19 +198,11 @@ oversized ceiling is refused outright — *"you requested up to 32000 tokens,
 but can only afford 22583"* — and that halted two sweeps without a token being
 spent. The ceiling is therefore a **balance** decision, not a capability one.
 
-The shipped `loop_policy.py` defaults to `8000` (`budget = max_tokens or 8000`,
-line ~763): measured over 43 episodes a turn produces ~387 output tokens
-including reasoning, so 8k is twenty times the observed need. But the live run
-was bumped to `32000` with
-
-```bash
-sed -i 's/max_tokens or 8000/max_tokens or 32000/' benchmarks/browsergym/loop_policy.py
-```
-
-to give reasoning models room to think before emitting a tool call, on a key
-whose balance affords it. Pick the ceiling your balance can afford: a model
-that thinks needs headroom, a thin balance needs a low number. `--max-tokens`
-overrides both.
+`loop_policy.py` ships with a **32000** window (`budget = max_tokens or 32000`):
+a reasoning model spends output tokens thinking before it emits a tool call, so
+the window has to leave room for that. A thin balance still refuses the request
+outright — top the balance up rather than shrink the window — and `--max-tokens`
+overrides it per run.
 
 **Two workers, one browser.** Give each its own port, profile, CDP port,
 trace port and results directory. A shared CDP port does not error; it hands
