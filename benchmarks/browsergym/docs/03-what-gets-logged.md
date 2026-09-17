@@ -21,6 +21,9 @@ across episodes, the toolkit layer knows what happened inside one.**
 
 ## 1. Sweep results — `toolkit/results/<sweep>/`
 
+`<sweep>` is `wa-gitlab`, `wa-reddit`, or `wa-multisite` (the queued 18-task
+cross-site gitlab+reddit pass, which shares reddit's ports).
+
 ```
 plan.json          the commitment: model, ports, ceiling, exact task list
 episodes.jsonl     one JSON row per episode, appended as it finishes

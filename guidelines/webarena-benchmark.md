@@ -59,9 +59,65 @@ exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
   --out results/wa-gitlab --timeout 2400
 ```
 
-## The two edits the VPS carries
+## Multisite (gitlab+reddit) — queued after reddit
 
-Both from this session, both uncommitted on the `browsergym-benchmark` branch:
+Some WebArena tasks need **two** sites at once. Of the 812, exactly **18** need
+gitlab *and* reddit (ids 552-555, 562-566, 681-688, 791). They are the only
+multisite tasks runnable with these two containers up.
+
+`--sites gitlab,reddit` alone is **not** what you want: its filter is
+`set(task_sites) <= wanted`, so it also re-plans all 180 gitlab-only and 106
+reddit-only tasks the other workers already cover. A `--cross-site` flag
+filters to `len(set(task_sites)) > 1`, giving exactly those 18:
+
+```bash
+cd /opt/webarena/bench/toolkit
+export WA_GITLAB='http://localhost:8023' WA_REDDIT='http://localhost:9999'
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-multisite --sites gitlab,reddit --cross-site \
+  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
+  --provider openrouter --model stealth/union-alpha
+# planned 18 tasks -> results/wa-multisite/plan.json
+```
+
+It runs on the **reddit worker's** ports (`8767`/`9223`/`9101`), so it is
+queued behind that worker's single-site sweep and starts the moment it ends.
+`run-multisite.sh` sources the key and sets **both** site URLs:
+
+```bash
+set -a; source /opt/webarena/bench/run-sweep.sh; set +a
+export WA_GITLAB='http://localhost:8023' WA_REDDIT='http://localhost:9999'
+cd /opt/webarena/bench/toolkit
+exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
+  --out results/wa-multisite --timeout 2400
+```
+
+`run-queue-reddit.sh` does the waiting — it polls for the reddit sweep to exit,
+then `exec`s the multisite run, sending the run's output to
+`sweep-multisite.log`:
+
+```bash
+while pgrep -f 'sweep_webarena.py run --out results/wa-reddit' >/dev/null 2>&1; do
+  sleep 60
+done
+exec /opt/webarena/bench/run-multisite.sh >> /opt/webarena/bench/sweep-multisite.log 2>&1
+```
+
+Arm it detached (safe to leave; it is a plain poll loop):
+
+```bash
+nohup setsid /opt/webarena/bench/run-queue-reddit.sh \
+  < /dev/null > /dev/null 2>&1 &
+cat /opt/webarena/bench/queue-reddit.log     # "armed: waiting for..."
+```
+
+It appears in the dashboard as the **Multisite** tab, and as `wa-multisite` in
+the All tab, the moment its plan exists — before the queue even fires.
+
+## The edits the VPS carries
+
+All uncommitted on the `browsergym-benchmark` branch, so they live only on the
+VPS until they are landed there:
 
 ```bash
 # 1. reasoning headroom (shipped default is 8000)
@@ -70,7 +126,14 @@ sed -i 's/max_tokens or 8000/max_tokens or 32000/' \
 
 # 2. identify the caller to OpenRouter (default_headers on the OpenAI client)
 #    "HTTP-Referer": "https://localhost", "X-Title": "abt"
+
+# 3. --cross-site on `plan`: keep only tasks needing >1 of the listed sites.
+#    Added after the `set(by_id[t]) <= wanted` subset filter in cmd_plan and
+#    as a flag next to --sites; also recorded as `cross_site` in plan.json.
 ```
+
+Without edit 3 the multisite plan cannot be expressed, and `--sites
+gitlab,reddit` re-plans the 286 single-site tasks instead of the 18.
 
 ## Watch it
 
@@ -113,6 +176,9 @@ never touches the run; everything is `setsid`ed.
 
 Per sweep: `results/wa-<site>/` — `plan.json` (the commitment),
 `episodes.jsonl` (one row per episode), `traces/<task>.log` (turn by turn),
-`raw/<task>.json`. Toolkit side: `~/.local/state/aibrowsertoolkit/logs/`
-(commands + screenshots, `/viewer`). Dashboard: memory only, recomputed every
-30s. Full detail in [`../benchmarks/browsergym/docs/03-what-gets-logged.md`](../benchmarks/browsergym/docs/03-what-gets-logged.md).
+`raw/<task>.json`. The queued cross-site pass is just another sweep,
+`results/wa-multisite/`, with its run log at `sweep-multisite.log`. Toolkit
+side: `~/.local/state/aibrowsertoolkit/logs/` (commands + screenshots,
+`/viewer`). Dashboard: memory only, recomputed every 30s, four tabs (All,
+Gitlab, Reddit, Multisite). Full detail in
+[`../benchmarks/browsergym/docs/03-what-gets-logged.md`](../benchmarks/browsergym/docs/03-what-gets-logged.md).

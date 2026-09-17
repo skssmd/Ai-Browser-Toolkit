@@ -41,6 +41,11 @@ A plan is written once and fixes the model, the ports, the turn ceiling and
 the task list. The sweep runs each task in its own process, appends a row per
 episode, and can be stopped and resumed at any point.
 
+A third, 18-task **multisite** pass (the tasks needing both gitlab and reddit)
+is queued behind the reddit worker and starts when its sweep ends — see
+[02, §4](02-running-a-sweep.md). It has its own `wa-multisite` results
+directory and its own **Multisite** tab on the dashboard.
+
 Watch it at `localhost:9102`. Check a claim in
 `results/<sweep>/episodes.jsonl`. Find out why something failed in
 `results/<sweep>/traces/<task>.log`.

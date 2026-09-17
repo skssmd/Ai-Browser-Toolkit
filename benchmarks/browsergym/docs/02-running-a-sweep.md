@@ -103,7 +103,46 @@ nohup setsid /opt/webarena/bench/run-gitlab.sh \
 `cd && nohup`, so the parent's directory never changes and a relative path in
 the next command misses.
 
-## 4. Resuming
+## 4. Multisite (gitlab+reddit), queued
+
+18 of WebArena's 812 tasks need **both** gitlab and reddit — ids 552-555,
+562-566, 681-688, 791. They are invisible to the two single-site plans
+(`--sites gitlab` excludes them, because their site set is not a subset of
+`{gitlab}`), and they are the only multisite tasks these two containers can
+serve.
+
+Do **not** reach for `--sites gitlab,reddit`: its filter is
+`set(task_sites) <= wanted`, so it keeps every gitlab-only and reddit-only task
+too — 304 where 18 are wanted. A `--cross-site` flag (added to `cmd_plan`)
+filters to `len(set(task_sites)) > 1`, and the plan records `cross_site: true`:
+
+```bash
+cd /opt/webarena/bench/toolkit
+export WA_GITLAB=http://localhost:8023 WA_REDDIT=http://localhost:9999
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-multisite --sites gitlab,reddit --cross-site \
+  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
+  --provider openrouter --model stealth/union-alpha
+# planned 18 tasks -> results/wa-multisite/plan.json
+```
+
+It borrows the **reddit worker's** ports (8767/9223/9101) and so is queued
+behind that worker's single-site sweep. `run-queue-reddit.sh` polls for the
+reddit sweep to exit, then starts `run-multisite.sh` (which sets *both* site
+URLs):
+
+```bash
+# wait, then run — armed detached, fires when reddit ends
+while pgrep -f 'sweep_webarena.py run --out results/wa-reddit' >/dev/null 2>&1; do
+  sleep 60
+done
+exec /opt/webarena/bench/run-multisite.sh >> /opt/webarena/bench/sweep-multisite.log 2>&1
+```
+
+The dashboard gives it its own **Multisite** tab; it shows up under that name
+as soon as the plan file exists, before the queue fires.
+
+## 5. Resuming
 
 A sweep resumes from what it recorded. Only *settled* outcomes count as done:
 
@@ -121,7 +160,7 @@ Retried tasks get a second row in `episodes.jsonl`; anything reading the file
 must take the best row per task (`dedupe_rows`) or it will count one task as
 both a failure and a pass.
 
-## 5. Watching it
+## 6. Watching it
 
 <http://localhost:9102> after tunnelling. Or:
 

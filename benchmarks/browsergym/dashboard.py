@@ -1,6 +1,7 @@
 """WebArena sweep dashboard. Serves on :9102.
 
-Three tabs: All (both sweeps + main run logs), Gitlab, Reddit. Every task row
+Four tabs: All (every sweep + main run logs), Gitlab, Reddit, Multisite (the
+queued cross-site gitlab+reddit pass). Every task row
 is clickable and opens a detail pane with the episode record (answer, tokens,
 cached %, op-success %, turns, ops, reward) and the live per-task run log --
 what the model ran, received, said and answered -- updated while you watch.
@@ -290,17 +291,19 @@ padding:0 .3rem;font-size:.78rem}
   <button data-tab="all" class="on">All · main logs</button>
   <button data-tab="gitlab">Gitlab</button>
   <button data-tab="reddit">Reddit</button>
+  <button data-tab="multisite">Multisite</button>
 </nav>
 <div class="tab" id="tab-all"></div>
 <div class="tab hidden" id="tab-gitlab"></div>
 <div class="tab hidden" id="tab-reddit"></div>
+<div class="tab hidden" id="tab-multisite"></div>
 <div class="modal hidden" id="modal"><div id="panel">
   <div id="phead"></div>
   <div id="pbody"></div>
 </div></div>
 <script>
-const TABS=["all","gitlab","reddit"];
-const SWEEPS={gitlab:"wa-gitlab",reddit:"wa-reddit"};
+const TABS=["all","gitlab","reddit","multisite"];
+const SWEEPS={gitlab:"wa-gitlab",reddit:"wa-reddit",multisite:"wa-multisite"};
 let state={sweeps:{}};let active="all";let openTask=null;let intvModal=null;const POLL=15;
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>
@@ -361,7 +364,7 @@ function logHTML(d){
   return '<div class="card"><h2>Main run log — '+esc(lg.file||sweepOf(d.name))+'</h2>'
     +'<pre class="log" style="max-height:26vh">'+lines+'</pre></div>'; }
 
-function sweepOf(name){return name==="wa-gitlab"?"gitlab":name==="wa-reddit"?"reddit":name;}
+function sweepOf(name){return name==="wa-gitlab"?"gitlab":name==="wa-reddit"?"reddit":name==="wa-multisite"?"multisite":name;}
 
 function renderAll(){
   let h="";
@@ -412,14 +415,6 @@ async function refreshTask(){
     +'<span class="dim">'+esc(j.sweep)+' · '+(j.running?"live":"final")+'</span>'
     +'<button class="x" onclick="closeTask()">close</button>';
   document.getElementById("phead").innerHTML=head;
-  const rec=j.running?null:
-    '<div class="card"><b>Record</b><table><tbody>'
-    +'<tr><th>status</th><td>'+esc(r.status)+'</td></tr>'
-    +'<tr><th>reward</th><td>'+esc(r.reward)+'</td></tr>'
-    +'<tr><th>judge</th><td>'+esc(r.judge)+'</td></tr>'
-    +'<tr><th>turns</th><td>'+fmt(r.turns)+' (limit '+(j.sweep==="wa-gitlab"?state.sweeps["wa-gitlab"]:state.sweeps["wa-reddit"])
-    +'</td></tr></tbody></table></div>'
-    ;
   function tline(k,v){return '<tr><th>'+k+'</th><td>'+v+'</td></tr>';}
   const tokens='<div class="card"><b>Tokens &amp; cache</b><table><tbody>'
     +tline("total",fmt(r.total_tokens))

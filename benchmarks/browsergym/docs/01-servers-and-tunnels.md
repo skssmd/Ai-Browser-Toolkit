@@ -36,7 +36,8 @@ always up, which is why it is the one to leave open.
 ## 9102 — the analytics dashboard
 
 The one to watch. Recomputes every episode's metrics on a timer and serves
-them as a page and as JSON.
+them as a page and as JSON. Four tabs: **All** (every sweep), **Gitlab**,
+**Reddit**, **Multisite** (the queued cross-site gitlab+reddit pass).
 
 - **file:** `benchmarks/browsergym/dashboard.py` in this repo, deployed to
   `/opt/webarena/bench/dashboard.py` — same file

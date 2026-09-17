@@ -288,6 +288,37 @@ tail -3 /opt/webarena/bench/sweep-gitlab.log
 tail -3 /opt/webarena/bench/sweep-reddit.log
 ```
 
+### Queue the multisite pass behind reddit
+
+18 tasks need both gitlab and reddit. They are not in either single-site plan
+(their site set is not a subset of one site), and `--sites gitlab,reddit`
+would wrongly drag in all 286 single-site tasks. A `--cross-site` flag on
+`plan` keeps only tasks needing more than one site:
+
+```bash
+cd /opt/webarena/bench/toolkit
+export WA_GITLAB=http://localhost:8023 WA_REDDIT=http://localhost:9999
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-multisite --sites gitlab,reddit --cross-site \
+  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
+  --provider openrouter --model stealth/union-alpha
+```
+
+It runs on the reddit worker's ports, so it is queued behind that worker: a
+poll loop waits for `wa-reddit` to exit, then `exec`s the multisite run.
+
+```bash
+# /opt/webarena/bench/run-queue-reddit.sh
+while pgrep -f 'sweep_webarena.py run --out results/wa-reddit' >/dev/null 2>&1; do
+  sleep 60
+done
+exec /opt/webarena/bench/run-multisite.sh >> /opt/webarena/bench/sweep-multisite.log 2>&1
+```
+
+```bash
+nohup setsid /opt/webarena/bench/run-queue-reddit.sh < /dev/null > /dev/null 2>&1 &
+```
+
 ## 8. The dashboard
 
 `benchmarks/browsergym/dashboard.py` in this repo *is* the dashboard — the
