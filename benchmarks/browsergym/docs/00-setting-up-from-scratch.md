@@ -44,24 +44,21 @@ but each block is the plain command you would pass to a shell on the host.
 
 ## 1. Get the code
 
-The benchmark lives in `bench/toolkit` — a plain clone of this repo, with the
-harness files (`sweep_webarena.py`, `run_webarena_one.py`, `adapter.py`,
-`loop_policy.py`) pulled in from the `browsergym-benchmark` branch because
-they are not on `main`:
+The benchmark lives in `bench/toolkit` — a plain clone of this repo. The
+harness (`sweep_webarena.py`, `run_webarena_one.py`, `adapter.py`,
+`loop_policy.py`) ships in `benchmarks/browsergym/` on `main`, so one clone is
+all it takes:
 
 ```bash
 mkdir -p /opt/webarena/bench
-cd /opt/webarena && git clone -b main https://github.com/skssmd/Ai-Browser-Toolkit bench/toolkit
-cd /opt/webarena/bench/toolkit
-git fetch -q origin browsergym-benchmark
-git checkout FETCH_HEAD -- benchmarks/browsergym
+cd /opt/webarena && git clone https://github.com/skssmd/Ai-Browser-Toolkit bench/toolkit
 ```
 
 Two settings in `benchmarks/browsergym/loop_policy.py` were learned the hard way
 and now ship in the file, so a fresh checkout needs no edit:
 
 - **A 32000 output window** (`budget = max_tokens or 32000`). The user asks for
-  room to think; an 8000 budget clipped reasoning on long tasks. Later runs
+  room to think; a smaller budget clipped reasoning on long tasks. Later runs
   confirmed 32k is never *used*, only *allowed* — OpenRouter refuses a request
   outright if the ceiling exceeds the account balance, so the ceiling is the
   thing that must be safe.

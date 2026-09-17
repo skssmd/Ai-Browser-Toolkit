@@ -118,17 +118,14 @@ the All tab, the moment its plan exists — before the queue even fires.
 
 Two of them are `loop_policy.py`, uncommitted on the VPS:
 
-```bash
-# 1. reasoning headroom (shipped default is 8000)
-sed -i 's/max_tokens or 8000/max_tokens or 32000/' \
-  benchmarks/browsergym/loop_policy.py
+Two settings ship in `benchmarks/browsergym/loop_policy.py` and need no edit:
 
-# 2. identify the caller to OpenRouter (default_headers on the OpenAI client)
-#    "HTTP-Referer": "https://localhost", "X-Title": "abt"
-```
+- a **32000** output window (`budget = max_tokens or 32000`), so reasoning
+  models have room to think before emitting a tool call;
+- `default_headers` on the OpenAI client, identifying the caller to OpenRouter
+  (`"HTTP-Referer": "https://localhost", "X-Title": "abt"`).
 
-The harness flags are **committed on `browsergym-benchmark`** (`4a81924`) —
-that branch is where `sweep_webarena.py` lives; `main` does not track it.
+The harness (`sweep_webarena.py` and the flags below) is committed on `main`.
 
 - `--cross-site` on `plan`: keep only tasks needing >1 of the listed sites,
   added after the `set(by_id[t]) <= wanted` subset filter in `cmd_plan` and as
