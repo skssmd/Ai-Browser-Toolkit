@@ -116,8 +116,7 @@ the All tab, the moment its plan exists — before the queue even fires.
 
 ## The edits the VPS carries
 
-All uncommitted on the `browsergym-benchmark` branch, so they live only on the
-VPS until they are landed there:
+Two of them are `loop_policy.py`, uncommitted on the VPS:
 
 ```bash
 # 1. reasoning headroom (shipped default is 8000)
@@ -126,13 +125,20 @@ sed -i 's/max_tokens or 8000/max_tokens or 32000/' \
 
 # 2. identify the caller to OpenRouter (default_headers on the OpenAI client)
 #    "HTTP-Referer": "https://localhost", "X-Title": "abt"
-
-# 3. --cross-site on `plan`: keep only tasks needing >1 of the listed sites.
-#    Added after the `set(by_id[t]) <= wanted` subset filter in cmd_plan and
-#    as a flag next to --sites; also recorded as `cross_site` in plan.json.
 ```
 
-Without edit 3 the multisite plan cannot be expressed, and `--sites
+The harness flags are **committed on `browsergym-benchmark`** (`4a81924`) —
+that branch is where `sweep_webarena.py` lives; `main` does not track it.
+
+- `--cross-site` on `plan`: keep only tasks needing >1 of the listed sites,
+  added after the `set(by_id[t]) <= wanted` subset filter in `cmd_plan` and as
+  a flag next to `--sites`; also recorded as `cross_site` in plan.json.
+- `--retry-faults` on `run`: fail again only the tasks whose last verdict was
+  a harness fault.
+- `store_row`: dedupe at write time, so a retry overwrites the verdict it
+  supersedes instead of leaving a stranded `harness_error` under it.
+
+Without `--cross-site` the multisite plan cannot be expressed, and `--sites
 gitlab,reddit` re-plans the 286 single-site tasks instead of the 18.
 
 ## Watch it
