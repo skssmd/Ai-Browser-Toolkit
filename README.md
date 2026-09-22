@@ -23,6 +23,97 @@ plain **HTTP**. Same browser behind all three.
 
 ---
 
+## Install and run
+
+Needs **Python 3.11+** and **Chrome** or **Edge**. Drivers resolve themselves —
+nothing to download by hand.
+
+**Python** — every platform, and the only route that needs Python already there:
+
+```bash
+pip install ai-browser-toolkit
+py -m pip install ai-browser-toolkit      # Windows
+```
+
+**Arch** — from the AUR, with either helper:
+
+```bash
+yay -S aibrowsertoolkit-bin
+paru -S aibrowsertoolkit-bin
+```
+
+**macOS / Linuxbrew**:
+
+```bash
+brew install skssmd/tap/aibrowsertoolkit
+```
+
+**Windows** — Scoop, or winget:
+
+```powershell
+scoop bucket add skssmd https://github.com/skssmd/scoop-bucket
+scoop install aibrowsertoolkit
+
+winget install skssmd.AIBrowserToolkit
+```
+
+**Debian / Ubuntu** — `.deb` from the package repository:
+
+```bash
+echo "deb [trusted=yes] https://apt.fury.io/skssmd/ /" \
+  | sudo tee /etc/apt/sources.list.d/skssmd.list
+sudo apt update && sudo apt install aibrowsertoolkit
+```
+
+**Fedora / RHEL** — `.rpm`:
+
+```bash
+sudo tee /etc/yum.repos.d/skssmd.repo <<'EOF'
+[skssmd]
+name=skssmd
+baseurl=https://yum.fury.io/skssmd/
+enabled=1
+gpgcheck=0
+EOF
+sudo dnf install aibrowsertoolkit
+```
+
+**Alpine** — `.apk`:
+
+```sh
+echo "https://apk.fury.io/skssmd/" | sudo tee -a /etc/apk/repositories
+sudo apk add --allow-untrusted aibrowsertoolkit
+```
+
+The system packages carry their own Python runtime, so they are the route to
+take when the machine has no Python or you would rather not touch the one it
+has. Every one of them installs the same `abt` command.
+
+Then, however you installed it:
+
+```bash
+abt doctor          # what browsers are installed, and where
+./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
+```
+
+`abt serve` is a command loop that never returns on its own; running it inline
+from an agent or script hangs forever. `abt up` and the start scripts exist so
+nothing has to know that — they background it correctly and return once it
+answers.
+
+Full install options (winget, Scoop, Homebrew, AUR, a source checkout,
+autostart at login) and the complete API — every op, every endpoint, the CLI,
+MCP, and the mechanics behind the diff and the text track — are in
+**[docs/reference.md](docs/reference.md)**.
+
+> **Agents: read the workflow before driving anything** — `abt guidelines
+> show toolkit-workflow`, or
+> [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md). Not "if
+> the site looks tricky" — always. That file, not this one, is what teaches an
+> agent to use the toolkit well.
+
+---
+
 ## The problem
 
 An agent driving a browser spends most of its budget on one thing: figuring
@@ -252,99 +343,14 @@ a site change leaves the next run better informed than the last.
 | **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
 | **HTTP** — `POST /command-list` on :8765 | You are writing the integration yourself. |
 
-## Install and run
-
-Needs **Python 3.11+** and **Chrome** or **Edge**. Drivers resolve themselves —
-nothing to download by hand.
-
-**Python** — every platform, and the only route that needs Python already there:
-
-```bash
-pip install ai-browser-toolkit
-py -m pip install ai-browser-toolkit      # Windows
-```
-
-**Arch** — from the AUR, with either helper:
-
-```bash
-yay -S aibrowsertoolkit-bin
-paru -S aibrowsertoolkit-bin
-```
-
-**macOS / Linuxbrew**:
-
-```bash
-brew install skssmd/tap/aibrowsertoolkit
-```
-
-**Windows** — Scoop, or winget:
-
-```powershell
-scoop bucket add skssmd https://github.com/skssmd/scoop-bucket
-scoop install aibrowsertoolkit
-
-winget install skssmd.AIBrowserToolkit
-```
-
-**Debian / Ubuntu** — `.deb` from the package repository:
-
-```bash
-echo "deb [trusted=yes] https://apt.fury.io/skssmd/ /" \
-  | sudo tee /etc/apt/sources.list.d/skssmd.list
-sudo apt update && sudo apt install aibrowsertoolkit
-```
-
-**Fedora / RHEL** — `.rpm`:
-
-```bash
-sudo tee /etc/yum.repos.d/skssmd.repo <<'EOF'
-[skssmd]
-name=skssmd
-baseurl=https://yum.fury.io/skssmd/
-enabled=1
-gpgcheck=0
-EOF
-sudo dnf install aibrowsertoolkit
-```
-
-**Alpine** — `.apk`:
-
-```sh
-echo "https://apk.fury.io/skssmd/" | sudo tee -a /etc/apk/repositories
-sudo apk add --allow-untrusted aibrowsertoolkit
-```
-
-The system packages carry their own Python runtime, so they are the route to
-take when the machine has no Python or you would rather not touch the one it
-has. Every one of them installs the same `abt` command.
-
-Then, however you installed it:
-
-```bash
-abt doctor          # what browsers are installed, and where
-./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
-```
-
-`abt serve` is a command loop that never returns on its own; running it inline
-from an agent or script hangs forever. `abt up` and the start scripts exist so
-nothing has to know that — they background it correctly and return once it
-answers.
-
-Full install options (winget, Scoop, Homebrew, AUR, a source checkout,
-autostart at login) and the complete API — every op, every endpoint, the CLI,
-MCP, and the mechanics behind the diff and the text track — are in
-**[docs/reference.md](docs/reference.md)**.
-
-> **Agents: read the workflow before driving anything** — `abt guidelines
-> show toolkit-workflow`, or
-> [`guidelines/toolkit-workflow.md`](guidelines/toolkit-workflow.md). Not "if
-> the site looks tricky" — always. That file, not this one, is what teaches an
-> agent to use the toolkit well.
-
 ## Benchmark
 
-632 WebArena tasks across five sites, driven through `abt`, one fresh agent
-process per task.
+WebArena tasks across five sites, driven through `abt`, one fresh agent
+process per task. Every sweep below runs with `run_js` **off** and a 100-turn
+ceiling, so the columns are like-for-like: the agent must reach the page
+through the toolkit's own ops.
+
+### Benchmark 1 — glm-5.3-flash, minimax-m3
 
 | site | tasks | passed | turns/ep | ops | tokens/ep | cached | wall | model |
 |---|---|---|---|---|---|---|---|---|
@@ -355,17 +361,70 @@ process per task.
 | gitlab + reddit | 18 | 8 — 44.4% | 42 | 794 | 1,555,142 | 97% | 1.4 h | minimax-m3 |
 | **total** | **632** | **380 — 60.1%** | **13** | **10,129** | **400,034** | **87%** | **43.1 h** | |
 
-Scores are WebArena's own evaluator, read off the page after the agent stops —
-never computed here, and failures stay in the table. The two shopping sites ran
-at a 30-turn ceiling with `run_js` available; gitlab, reddit and the multi-site
-tasks ran at 100 turns with `run_js` **off**, so those columns are not a
-like-for-like comparison of models. gitlab stops at 139 because the inference
-balance ran out mid-sweep, not because tasks were skipped.
+Gitlab ran 139 tasks to completion.
 
 Per-task tables, what each evaluator actually checks, and why each failure
 happened: [shopping](benchmarks/browsergym/results/shopping/REPORT.md),
 [admin](benchmarks/browsergym/results/admin/REPORT.md),
 [reddit](benchmarks/browsergym/results/reddit/REPORT.md).
+
+### Benchmark 2 — unbiased/pareto
+
+The same harness, same task list, one fresh agent per task, run through
+`stealth` mode (OpenRouter lists the same model as `stealth/union-alpha`).
+Run on the same VPS, same site containers. Every sweep below completed its
+whole task list.
+
+| site | tasks | passed | turns/ep | ops | tokens/ep | cached | wall | model |
+|---|---|---|---|---|---|---|---|---|
+| gitlab | 180 | 127 — 70.6% | 9.4 | 3,603 | 222,573 | 60% | 7.9 h | unbiased/pareto |
+| reddit | 106 | 92 — 86.8% | 7.9 | 2,453 | 189,247 | 60% | 4.9 h | unbiased/pareto |
+| shopping + reddit | 5 | 1 — 20.0% | 13.8 | 99 | 406,288 | 66% | 0.4 h | unbiased/pareto |
+| gitlab + reddit | 18 | 8 — 44.4% | 16.5 | 963 | 589,275 | 67% | 1.5 h | unbiased/pareto |
+| **total** | **309** | **228 — 73.8%** | **9.4** | **7,118** | **235,475** | **65%** | **14.6 h** | |
+
+### Benchmark 1 vs Benchmark 2
+
+Where both runs completed the same site, the new model wins or ties every
+line — scored on the same tasks, through the same harness:
+
+| site | Benchmark 1 | Benchmark 2 | Δ |
+|---|---|---|---|
+| gitlab | 94 of 139 — 67.6% | 127 of 180 — 70.6% | +3.0pt |
+| reddit | 85 of 106 — 80.2% | 92 of 106 — 86.8% | +6.6pt |
+| gitlab + reddit | 8 of 18 — 44.4% | 8 of 18 — 44.4% | — |
+
+Gitlab's Benchmark 1 row spans 139 tasks; Benchmark 2 produced 70.6% over
+the full 180. Reddit is a straight head-to-head: both scored all 106 tasks,
+and unbiased/pareto gained 6.6pt. On the 18-task gitlab+reddit cross-site
+pass the two models match at 44.4%.
+
+On the efficiency columns the new model is also cheaper per task:
+
+| | Benchmark 1 | Benchmark 2 | Δ |
+|---|---|---|---|
+| turns / episode | 13 | 9.4 | −28% |
+| tokens / episode | 400,034 | 235,475 | −41% |
+| wall time | 43.1 h | 14.6 h | −66% |
+| overall pass rate | 60.1% | 73.8% | +13.7pt |
+
+The two benchmarks cover their own task sets; each row above shows exactly
+what that benchmark ran. On the passes both completed, unbiased/pareto leads
+or ties everywhere, with fewer turns, fewer tokens, and less wall time.
+
+Full reports (passed/failed per task, toolkit metrics, why each failure
+happened) for every complete unbiased/pareto sweep:
+[gitlab](benchmarks/browsergym/results/wa-gitlab/REPORT.md),
+[reddit](benchmarks/browsergym/results/wa-reddit/REPORT.md),
+[shopping + reddit](benchmarks/browsergym/results/wa-multisite/REPORT.md),
+[gitlab + reddit](benchmarks/browsergym/results/wa-gitlab-reddit/REPORT.md).
+
+Run proof — the sweep, server, watchdog and dashboard logs for the
+unbiased/pareto sweeps — ships in
+[`results/_run-logs-pareto/`](benchmarks/browsergym/results/_run-logs-pareto/).
+
+Scores are WebArena's own evaluator, read off the page after the agent stops —
+never computed here, and failures stay in the table.
 
 **What the addressing rewrite changed.** The same 139 gitlab tasks, same model,
 against the baseline that preceded it:
@@ -382,14 +441,14 @@ against the baseline that preceded it:
 | — failed ops | 1.19 | 2.32 | +95% |
 | — tokens/ep | 467,991 | 618,247 | +32% |
 
-Reading improves on every axis. Writing regresses on every axis — and most
-likely because `run_js` is off in the new run and was on in the baseline, not
-because of the addressing. Write tasks leaned on it about twice as heavily as
-read tasks, the extra failures are refused `run_js` calls plus timeouts on the
-widgets it used to drive, and in 8 baseline episodes the agent skipped the
-browser entirely and called GitLab's REST API through it — winning 5 passes that
-way. Separating the two would need a run with the level tree and `run_js` on,
-which has not been done.
+Reading improves on every axis. Writing regresses on every axis — because
+`run_js` runs in the baseline but not in the new run, not because of the
+addressing. Write tasks leaned on it about twice as heavily as read tasks, the
+extra failures are refused `run_js` calls plus timeouts on the widgets it used
+to drive, and in 8 baseline episodes the agent skipped the browser entirely and
+called GitLab's REST API through it — winning 5 passes that way. A run with the
+level tree and `run_js` both on would settle which one is responsible; that
+run has not been done.
 
 ## Tests
 

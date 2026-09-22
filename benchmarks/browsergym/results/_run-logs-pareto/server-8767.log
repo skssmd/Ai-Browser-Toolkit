@@ -1,0 +1,7 @@
+no browser running (default: chrome, profile: /opt/webarena/bench/profile-admin2)
+start one with {"op": "browser_start"} or POST /browser/start
+recording session 20260916-204429 -> /root/.local/state/aibrowsertoolkit/logs/20260916-204429/events.jsonl
+capturing frames -> /root/.local/state/aibrowsertoolkit/logs/20260916-204429/shots
+listening on http://127.0.0.1:8767  (POST /command-list)
+log viewer at http://127.0.0.1:8767/viewer
+send {"op": "shutdown"} to stop

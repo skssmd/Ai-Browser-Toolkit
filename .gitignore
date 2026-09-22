@@ -59,3 +59,21 @@ private/
 !/benchmarks/browsergym/results/compare-102
 /benchmarks/browsergym/results/compare-102/*
 !/benchmarks/browsergym/results/compare-102/TASK-102-BEFORE-AFTER.md
+
+# unbiased/pareto (union-alpha) sweep reports and the run logs that prove them.
+!/benchmarks/browsergym/results/wa-gitlab
+!/benchmarks/browsergym/results/wa-reddit
+!/benchmarks/browsergym/results/wa-multisite
+!/benchmarks/browsergym/results/wa-gitlab-reddit
+/benchmarks/browsergym/results/wa-gitlab/*
+!/benchmarks/browsergym/results/wa-gitlab/REPORT.md
+/benchmarks/browsergym/results/wa-reddit/*
+!/benchmarks/browsergym/results/wa-reddit/REPORT.md
+/benchmarks/browsergym/results/wa-multisite/*
+!/benchmarks/browsergym/results/wa-multisite/REPORT.md
+/benchmarks/browsergym/results/wa-gitlab-reddit/*
+!/benchmarks/browsergym/results/wa-gitlab-reddit/REPORT.md
+
+# Run proof logs from the union-alpha sweeps ship verbatim.
+!/benchmarks/browsergym/results/_run-logs-pareto
+!/benchmarks/browsergym/results/_run-logs-pareto/**
