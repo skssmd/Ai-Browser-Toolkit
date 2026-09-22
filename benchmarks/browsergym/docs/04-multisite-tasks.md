@@ -4,12 +4,18 @@ Most WebArena tasks live on one site, and the prompt says so: *"You are on a
 self-contained store at `<url>`. Everything you need is on this site. Do NOT
 navigate to any other domain."*
 
-Eighteen tasks are not like that. They start on one site and finish on another
-— gitlab and reddit together — and that sentence, taken literally, forbids
-exactly the half of the task that matters. An agent that obeys it answers from
-the wrong site and scores zero for being well-behaved.
+Several WebArena tasks are not like that. They start on one site and finish on
+another — and that sentence, taken literally, forbids exactly the half of the
+task that matters. An agent that obeys it answers from the wrong site and
+scores zero for being well-behaved.
 
 The fix is one line, and it is deliberately the *only* difference.
+
+**Which pairs are runnable changes with which containers are up.** The
+mechanism below is site-agnostic. The current pass is **shopping + reddit,
+5 tasks** (ids 671-675); the gitlab+reddit 18 it was originally written for
+are listed in [What the multisite pairs are](#what-the-multisite-pairs-are)
+alongside the other pairings that would need containers not currently running.
 
 ---
 
@@ -42,10 +48,10 @@ Both are untouched by this change; only the cross-site branch is new.
 
 Two flags with two jobs share one name. This is the trap worth stating plainly.
 
-**`plan --sites`** is a *filter*. `plan --sites gitlab,reddit --cross-site`
-plans only the tasks whose site set has more than one member, so a queued
-multisite pass does not re-plan the single-site tasks the other workers
-already cover. The choice is frozen into `plan.json` as `"cross_site": true`.
+**`plan --sites`** is a *filter*. `plan --sites shopping,reddit --cross-site`
+plans only the tasks whose site set has more than one member, so a multisite
+pass does not re-plan the single-site tasks the other workers already cover.
+The choice is frozen into `plan.json` as `"cross_site": true`.
 
 **runner `--sites`** is the *access line*. The sweep reads each task's site
 list from WebArena's own task file (`_task_sites()` — read rather than
@@ -94,15 +100,22 @@ site that is not up would tell the model to go and use
 
 ---
 
-## What the eighteen are
+## What the multisite pairs are
 
-```
-552 553 554 555   562 563 564 565 566
-681 682 683 684 685 686 687 688   791
-```
+Read from WebArena's own task file (`test.raw.json`, via `_task_sites()` —
+never hardcoded, because a copy here drifts the moment the task set changes):
 
-All of them gitlab ⇄ reddit. They are the only tasks in the 812 that need two
-sites at once, and they are why the multisite pass exists.
+| pairing | tasks | runnable now? |
+|---|---|---|
+| gitlab + reddit | 18 (552-555, 562-566, 681-688, 791) | no — gitlab retired |
+| map + wikipedia | 17 | no — neither container up |
+| gitlab + wikipedia | 6 | no |
+| **reddit + shopping** | **5 (671-675)** | **yes — this is the current pass** |
+| map + shopping_admin | 2 | no — map not up |
+
+Only **reddit + shopping** is servable with the shopping, shopping_admin and
+reddit containers running, which is why `results/wa-multisite` plans exactly
+those 5.
 
 ---
 
@@ -112,7 +125,7 @@ sites at once, and they are why the multisite pass exists.
 was given. A cross-site episode contains the line
 
 ```
-You only have a connection to these sites: http://localhost:8023 and http://localhost:9999.
+You only have a connection to these sites: http://localhost:7770 and http://localhost:9999.
 ```
 
 A single-site episode contains the original "self-contained store" sentence

@@ -1,7 +1,7 @@
 # WebArena — shopping (One Stop Market), full task list
 
 Model **z-ai/glm-5.3-flash** via OpenRouter, driving the abt toolkit through
-BrowserGym. 30-turn ceiling, one fresh agent process per task.
+BrowserGym. 100-turn ceiling, one fresh agent process per task.
 
 ## Result
 
@@ -304,7 +304,7 @@ Task types with three or more instances, under 60% solved.
 | arithmetic: aggregated a total and got a near-miss | 9 | 12% |
 | scored on page state, not on the answer | 7 | 9% |
 | answered when the reference was N/A | 3 | 4% |
-| hit the 30-turn ceiling | 2 | 3% |
+| hit the 100-turn ceiling | 2 | 3% |
 | page content missing a required phrase | 2 | 3% |
 
 ## Reading this

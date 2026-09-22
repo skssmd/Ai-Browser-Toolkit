@@ -121,11 +121,12 @@ def main() -> int:
     ap.add_argument("--oc-dir", default="/opt/webarena/bench/oc")
     ap.add_argument("--oc-agent", default="webarena")
     ap.add_argument("--model", default="stealth/ox-alpha")
-    ap.add_argument("--max-turns", type=int, default=30,
-                    help="Turn ceiling. 25 truncated 7%% of shopping tasks -- "
-                         "all of them multi-step 'buy the X' flows that ran out "
-                         "mid-checkout. Cost grows with the square of turns, so "
-                         "raise this deliberately, not by default.")
+    ap.add_argument("--max-turns", type=int, default=100,
+                    help="Turn ceiling. 100 is the project-wide default: the "
+                         "'buy the highest rated X' flows need 20-50 turns and "
+                         "the evaluator still has to score the result. Cost "
+                         "grows with the square of turns, so change it "
+                         "deliberately and in every place at once.")
     ap.add_argument("--cdp-port", type=int, default=9222)
     ap.add_argument("--trace-port", type=int, default=None,
                     help="Serve the live loop view on this port while running.")

@@ -1,7 +1,7 @@
 # WebArena — shopping admin (Magento back office), full task list
 
 Model **z-ai/glm-5.3-flash** via OpenRouter, driving the abt toolkit through
-BrowserGym. 30-turn ceiling, one fresh agent process per task.
+BrowserGym. 100-turn ceiling, one fresh agent process per task.
 
 ## Result
 

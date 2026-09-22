@@ -1,7 +1,7 @@
 # WebArena — multi-site (shopping → reddit), full task list
 
 Model **z-ai/glm-5.3-flash** via OpenRouter, driving the abt toolkit through
-BrowserGym. 30-turn ceiling, one fresh agent process per task.
+BrowserGym. 100-turn ceiling, one fresh agent process per task.
 
 These are the only five WebArena tasks that span two sites we can host. Each
 one is the same shape: read product reviews on the Magento storefront

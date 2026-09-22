@@ -24,35 +24,43 @@ failed.
 On a 96 GB disk / 7.8 GB RAM box, **wikipedia** is the one that does not fit
 (its `.zim` alone is 85–115 GB). GitLab does fit, but only with the Puma and
 Sidekiq caps plus a 4 GB swapfile — see
-[00 — setting it up](00-setting-up-from-scratch.md#4-the-containers). Right now
-the two running workers are **gitlab and reddit**.
+[00 — setting it up](00-setting-up-from-scratch.md#4-the-containers), and it was
+retired on 2026-09-17 for exactly that cost. **Right now the three running
+workers are shopping, shopping_admin and a shopping+reddit multisite pass**
+(§4).
 
 ```bash
-docker run -d --name webarena-gitlab --restart unless-stopped --shm-size=256m \
-  -p 127.0.0.1:8023:8023 -p 127.0.0.1:8024:8877 \
-  am1n3e/webarena-verified-gitlab:latest
+docker run -d --name webarena-shopping --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:7770:80 -p 127.0.0.1:7771:8877 \
+  am1n3e/webarena-verified-shopping:latest
+
+docker run -d --name webarena-shopping_admin --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:7780:80 -p 127.0.0.1:7781:8877 \
+  am1n3e/webarena-verified-shopping_admin:latest
 
 docker run -d --name webarena-reddit --restart unless-stopped --shm-size=256m \
   -p 127.0.0.1:9999:80 -p 127.0.0.1:9998:8877 \
   am1n3e/webarena-verified-reddit:latest
 ```
 
-Bound to loopback deliberately, and **gitlab's inside port is `8023`, not
-`80`** — `-p 8023:80` runs but answers nothing.
+Bound to loopback deliberately. **The two Magento images expect `80` inside**
+(`-p 7770:80`, `-p 7780:80`), unlike gitlab whose inside port was `8023` — `-p
+8023:80` ran but answered nothing.
 
 **Wait for it properly.** Magento answers `302` within seconds but takes
-minutes to serve the panel; GitLab takes minutes to answer at all. Poll the
-real thing:
+minutes to serve the panel; the storefront root answers `200`, the admin panel
+`200` on `/admin`. Poll the real thing:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -L http://localhost:8023/
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' http://localhost:7770/
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' http://localhost:7780/admin
 ```
 
 Pull images detached — they take a long time and an ssh drop should not kill
 one:
 
 ```bash
-nohup setsid sh -c 'for i in gitlab reddit; do
+nohup setsid sh -c 'for i in shopping shopping_admin reddit; do
   docker pull am1n3e/webarena-verified-$i:latest; done' \
   >> /opt/webarena/pull.log 2>&1 < /dev/null &
 ```
@@ -69,15 +77,15 @@ provider, every port, and the exact task list.
 
 ```bash
 cd /opt/webarena/bench/toolkit
-export WA_GITLAB=http://localhost:8023 WA_REDDIT=http://localhost:9999
+export WA_SHOPPING=http://localhost:7770
 ../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
-  --out results/wa-gitlab --sites gitlab \
+  --out results/wa-shopping --sites shopping \
   --server http://127.0.0.1:8766 --cdp-port 9222 --trace-port 9100 \
   --provider openrouter --model stealth/union-alpha
 ```
 
-The reddit plan is identical with `wa-reddit`, `reddit`, `8767`, `9223`,
-`9101`.
+The admin plan is identical with `wa-admin`, `shopping_admin`, `8767`, `9223`,
+`9101` — and its site URL must include the path: `WA_SHOPPING_ADMIN=http://localhost:7780/admin`.
 
 `--sites` filters to tasks whose sites are all running, so the completion
 figure means something.
@@ -86,61 +94,63 @@ The launcher holds the environment. Each launcher `source`s `run-sweep.sh`
 rather than repeating the key, so rotating stays a one-file job:
 
 ```bash
-# /opt/webarena/bench/run-gitlab.sh
+# /opt/webarena/bench/run-shopping.sh
 set -a; source /opt/webarena/bench/run-sweep.sh; set +a
-export WA_GITLAB='http://localhost:8023'
+export WA_SHOPPING='http://localhost:7770'
 cd /opt/webarena/bench/toolkit
 exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
-  --out results/wa-gitlab --timeout 2400
+  --out results/wa-shopping --timeout 2400
 ```
 
 ```bash
-nohup setsid /opt/webarena/bench/run-gitlab.sh \
-  >> /opt/webarena/bench/sweep-gitlab.log 2>&1 < /dev/null &
+nohup setsid /opt/webarena/bench/run-shopping.sh \
+  >> /opt/webarena/bench/sweep-shopping.log 2>&1 < /dev/null &
 ```
 
 **Use an absolute path.** `cd /x && nohup … &` backgrounds the whole
 `cd && nohup`, so the parent's directory never changes and a relative path in
 the next command misses.
 
-## 4. Multisite (gitlab+reddit), queued
+## 4. Multisite (shopping+reddit)
 
-18 of WebArena's 812 tasks need **both** gitlab and reddit — ids 552-555,
-562-566, 681-688, 791. They are invisible to the two single-site plans
-(`--sites gitlab` excludes them, because their site set is not a subset of
-`{gitlab}`), and they are the only multisite tasks these two containers can
-serve.
+WebArena's 812 tasks include several multisite pairings. With gitlab retired,
+the only pairing these containers can serve is **shopping + reddit — 5 tasks,
+ids 671-675**. The others (gitlab+reddit 18, map+wikipedia 17, gitlab+wikipedia
+6, map+shopping_admin 2) each need at least one container that is not running.
 
-Do **not** reach for `--sites gitlab,reddit`: its filter is
-`set(task_sites) <= wanted`, so it keeps every gitlab-only and reddit-only task
-too — 304 where 18 are wanted. A `--cross-site` flag (added to `cmd_plan`)
-filters to `len(set(task_sites)) > 1`, and the plan records `cross_site: true`:
+They are invisible to the single-site plans (`--sites shopping` excludes them,
+because their site set is not a subset of `{shopping}`).
+
+Do **not** reach for `--sites shopping,reddit`: its filter is
+`set(task_sites) <= wanted`, so it keeps every shopping-only and reddit-only
+task too. A `--cross-site` flag (added to `cmd_plan`) filters to
+`len(set(task_sites)) > 1`, and the plan records `cross_site: true`:
 
 ```bash
 cd /opt/webarena/bench/toolkit
-export WA_GITLAB=http://localhost:8023 WA_REDDIT=http://localhost:9999
+export WA_SHOPPING=http://localhost:7770 WA_REDDIT=http://localhost:9999
 ../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
-  --out results/wa-multisite --sites gitlab,reddit --cross-site \
-  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
+  --out results/wa-multisite --sites shopping,reddit --cross-site \
+  --server http://127.0.0.1:8768 --cdp-port 9224 --trace-port 9103 \
   --provider openrouter --model stealth/union-alpha
-# planned 18 tasks -> results/wa-multisite/plan.json
+# planned 5 tasks -> results/wa-multisite/plan.json
 ```
 
-It borrows the **reddit worker's** ports (8767/9223/9101) and so is queued
-behind that worker's single-site sweep. `run-queue-reddit.sh` polls for the
-reddit sweep to exit, then starts `run-multisite.sh` (which sets *both* site
-URLs):
+Unlike the old gitlab+reddit pass, this one gets **its own worker** (8768 /
+9224 / 9103, profile `profile-multi`), so it does not queue behind anything —
+it runs in parallel with the other two. The launcher sets *both* site URLs:
 
 ```bash
-# wait, then run — armed detached, fires when reddit ends
-while pgrep -f 'sweep_webarena.py run --out results/wa-reddit' >/dev/null 2>&1; do
-  sleep 60
-done
-exec /opt/webarena/bench/run-multisite.sh >> /opt/webarena/bench/sweep-multisite.log 2>&1
+# /opt/webarena/bench/run-multisite-shop.sh
+set -a; source /opt/webarena/bench/run-sweep.sh; set +a
+export WA_SHOPPING='http://localhost:7770' WA_REDDIT='http://localhost:9999'
+cd /opt/webarena/bench/toolkit
+exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
+  --out results/wa-multisite --timeout 2400
 ```
 
 The dashboard gives it its own **Multisite** tab; it shows up under that name
-as soon as the plan file exists, before the queue fires.
+as soon as the plan file exists.
 
 ## 5. Resuming
 
@@ -165,7 +175,7 @@ both a failure and a pass.
 <http://localhost:9102> after tunnelling. Or:
 
 ```bash
-../venv/bin/python benchmarks/browsergym/sweep_webarena.py report --out results/wa-gitlab
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py report --out results/wa-shopping
 ```
 
 ---
@@ -204,7 +214,13 @@ the window has to leave room for that. A thin balance still refuses the request
 outright — top the balance up rather than shrink the window — and `--max-tokens`
 overrides it per run.
 
-**Two workers, one browser.** Give each its own port, profile, CDP port,
+**The turn ceiling is 100, everywhere.**
+`--max-turns` defaults to **100** in `sweep_webarena.py`, `run_webarena_one.py`
+and `loop_policy.py`. A `plan.json` freezes the ceiling it was built with, so
+raising it means rebuilding the plan (`plan --force`, or a fresh `--out`); the
+code default alone does not reach an existing run.
+
+**One worker, one browser.** Give each its own port, profile, CDP port,
 trace port and results directory. A shared CDP port does not error; it hands
 one worker's browser to the other worker's agent.
 

@@ -7,22 +7,32 @@ order and you arrive at the same two workers this repo's `results/` came from.
 
 What you are building:
 
-| | worker 1 | worker 2 |
-|---|---|---|
-| site | gitlab | reddit |
-| site port | `8023` (+ `8024` ctrl) | `9999` (+ `9998` ctrl) |
-| container | `webarena-gitlab` | `webarena-reddit` |
-| toolkit server | `:8766` | `:8767` |
-| Chrome profile | `bench/profile` | `bench/profile-reddit` |
-| CDP port | `9222` | `9223` |
-| live trace | `:9100` | `:9101` |
-| results | `toolkit/results/wa-gitlab/` | `toolkit/results/wa-reddit/` |
-| launcher | `run-gitlab.sh` | `run-sweep-reddit.sh` |
-| tasks planned | 180 | 106 |
+| | worker 1 | worker 2 | worker 3 |
+|---|---|---|---|
+| site | shopping | shopping_admin (`/admin`) | reddit + shopping (multisite) |
+| site port | `7770` (+ `7771` ctrl) | `7780` (+ `7781` ctrl) | `9999` (+ `9998` ctrl) |
+| container | `webarena-shopping` | `webarena-shopping_admin` | `webarena-reddit` |
+| toolkit server | `:8766` | `:8767` | `:8768` |
+| Chrome profile | `bench/profile` | `bench/profile-reddit` | `bench/profile-multi` |
+| CDP port | `9222` | `9223` | `9224` |
+| live trace | `:9100` | `:9101` | `:9103` |
+| results | `toolkit/results/wa-shopping/` | `toolkit/results/wa-admin/` | `toolkit/results/wa-multisite/` |
+| launcher | `run-shopping.sh` | `run-admin.sh` | `run-multisite-shop.sh` |
+| tasks planned | 187 | 182 | 5 |
 
-Every column has to differ. Two workers sharing a profile, CDP port or trace
+Every column has to differ. Workers sharing a profile, CDP port or trace
 port break in a way that does not announce itself (see
 [`01-servers-and-tunnels.md`](01-servers-and-tunnels.md)).
+
+**This table is the current layout (2026-09-17).** The document below is the
+original two-worker **gitlab + reddit** build. GitLab has since been retired
+(it is the one image that needs a swapfile and does not fit comfortably), the
+shopping and shopping_admin containers took its place, and a third worker was
+added for the cross-site pass. Everywhere the sections below name gitlab or
+plan a gitlab sweep, [§13](#13-update--shopping-shopping_admin-and-a-third-worker-2026-09-17)
+gives the shopping-era replacement. The sections are kept as written because
+the reasoning still holds and the gitlab numbers are the reason the shopping
+layout was chosen.
 
 `ssh`/graft is how this host is reached. The host is `root@169.58.213.174`.
 Commands below are shown as they were run: wrapped in `graft -r contabo -sh`,
@@ -62,6 +72,12 @@ and now ship in the file, so a fresh checkout needs no edit:
   confirmed 32k is never *used*, only *allowed* — OpenRouter refuses a request
   outright if the ceiling exceeds the account balance, so the ceiling is the
   thing that must be safe.
+
+- **A 100-turn ceiling.** `--max-turns` defaults to **100** in all three entry
+  points — `sweep_webarena.py`, `run_webarena_one.py` and `loop_policy.py` —
+  and the number is copied into each `plan.json`. A plan records its own
+  ceiling, so a sweep keeps whatever its plan was built with; regenerate the
+  plan when you mean to change it.
 
 - **Identify the caller to OpenRouter.** Requests without `HTTP-Referer` /
   `X-Title` are fine but the official route is to send them. Shipped in
@@ -219,7 +235,9 @@ grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 The plan fixes everything the run must not change — model, provider, ports,
 turn ceiling, task list — and refuses to overwrite itself without `--force`.
 `--sites gitlab` / `--sites reddit` filters to tasks whose site is actually
-running; the rest are recorded `skipped_site`, never `failed`.
+running; the rest are recorded `skipped_site`, never `failed`. Leave
+`--max-turns` off and it is **100**; pass it only when deliberately deviating,
+and pass the same value everywhere that run is planned.
 
 ```bash
 cd /opt/webarena/bench/toolkit
@@ -417,3 +435,136 @@ swapoff /swapfile && sed -i '/swapfile/d' /etc/fstab && rm -f /swapfile
 
 Nothing was installed outside `/opt/webarena`, the two containers and the
 swapfile. The pre-existing containers on this host were never touched.
+
+---
+
+## 13. Update — shopping, shopping_admin and a third worker (2026-09-17)
+
+GitLab was retired and the two Magento sites took worker 1 and worker 2's
+places; a third worker was added so the cross-site pass no longer has to queue
+behind a single-site sweep. This section is what actually changed, superseding
+the gitlab lines above.
+
+### Sites now running (three containers, all `--restart unless-stopped`)
+
+Unlike gitlab (whose inside port is `8023`), **both Magento images expect `80`
+inside** — `-p 7770:80` / `-p 7780:80`. The ctrl responder is `8877` in both
+images, as with reddit:
+
+```bash
+docker run -d --name webarena-shopping --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:7770:80 -p 127.0.0.1:7771:8877 \
+  am1n3e/webarena-verified-shopping:latest
+
+docker run -d --name webarena-shopping_admin --restart unless-stopped --shm-size=256m \
+  -p 127.0.0.1:7780:80 -p 127.0.0.1:7781:8877 \
+  am1n3e/webarena-verified-shopping_admin:latest
+```
+
+Measured: shopping pulls ~5.4 GB but is ~19.5 GB on disk, ~1.4 GB RAM;
+shopping_admin pulls ~1.2 GB, ~4.5 GB on disk, ~1.1 GB RAM. Both fit beside
+reddit on the 96 GB disk (53 GB used / 44 GB free with all three up) — no
+swapfile and no Puma/Sidekiq caps, both of which existed only for gitlab.
+
+**Wait for `200`, not `302`.** Magento answers `302` in a second and takes
+minutes to serve the panel. shopping's root answers `200`; shopping_admin
+answers `200` on `/admin` (the storefront root redirects to `/admin`):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:7770/
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:7780/admin
+curl -s -m 10 http://localhost:7771/status | head -c 200   # ctrl responder
+```
+
+### The third worker
+
+Identical shape to the other two, one more set of unique values:
+
+```bash
+nohup setsid env ABT_CDP_URL=http://127.0.0.1:9224 \
+  ./venv/bin/python -m abt serve --port 8768 --headless --no-run-js \
+  --profile /opt/webarena/bench/profile-multi \
+  > /opt/webarena/bench/server-multi.log 2>&1 < /dev/null &
+
+nohup setsid /opt/webarena/bench/watchdog.sh 8768 9224 /opt/webarena/bench/profile-multi \
+  < /dev/null > /dev/null 2>&1 &
+```
+
+`trace_port` 9103, not 9102 — the dashboard owns 9102.
+
+### Plans and launchers (replacing the gitlab pair)
+
+```bash
+cd /opt/webarena/bench/toolkit
+export WA_SHOPPING=http://localhost:7770
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-shopping --sites shopping \
+  --server http://127.0.0.1:8766 --cdp-port 9222 --trace-port 9100 \
+  --provider openrouter --model stealth/union-alpha
+
+export WA_SHOPPING_ADMIN=http://localhost:7780/admin
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-admin --sites shopping_admin \
+  --server http://127.0.0.1:8767 --cdp-port 9223 --trace-port 9101 \
+  --provider openrouter --model stealth/union-alpha
+```
+
+`WA_SHOPPING_ADMIN` **must** carry the `/admin` path: BrowserGym's login does
+`goto(url)` and never appends it, so without the path the agent lands on the
+storefront and `get_by_label("Username")` finds nothing — every admin episode
+dies in ~20 s during login.
+
+The launchers are the gitlab/reddit ones with the site env swapped, and they
+pin the **host the site redirects to** (`localhost`, not `127.0.0.1` — see
+[§11](#11-the-traps-that-cost-hours-repeated-so-you-dont-repeat-them)):
+
+```bash
+# /opt/webarena/bench/run-shopping.sh
+set -a; source /opt/webarena/bench/run-sweep.sh; set +a
+export WA_SHOPPING='http://localhost:7770'
+cd /opt/webarena/bench/toolkit
+exec ../venv/bin/python benchmarks/browsergym/sweep_webarena.py run \
+  --out results/wa-shopping --timeout 2400
+```
+
+`run-admin.sh` is the same with `WA_SHOPPING_ADMIN='http://localhost:7780/admin'`
+and `--out results/wa-admin`.
+
+### Cross-site pass is now shopping × reddit
+
+With gitlab gone the only multisite pairing left servable is
+**shopping + reddit, 5 tasks** (ids 671-675), not the 18 gitlab+reddit ones.
+It gets worker 3's ports and no longer queues behind anyone:
+
+```bash
+export WA_SHOPPING=http://localhost:7770 WA_REDDIT=http://localhost:9999
+../venv/bin/python benchmarks/browsergym/sweep_webarena.py plan \
+  --out results/wa-multisite --sites shopping,reddit --cross-site \
+  --server http://127.0.0.1:8768 --cdp-port 9224 --trace-port 9103 \
+  --provider openrouter --model stealth/union-alpha
+# planned 5 tasks -> results/wa-multisite/plan.json
+```
+
+The full cross-site enumeration is in
+[`04-multisite-tasks.md`](04-multisite-tasks.md#what-the-multisite-pairs-are);
+the mechanism (the single access line) is unchanged.
+
+### Dashboard
+
+Tabs are now **All · Shopping · Shopping admin · Multisite · Reddit · Gitlab**
+(`SWEEPS` maps `shopping→wa-shopping`, `admin→wa-admin`, etc.). gitlab keeps a
+tab so the retired sweep's records stay readable; it is empty going forward.
+
+### Three operator traps from this pass (not toolkit bugs)
+
+- **`pkill -f 'dashboard.p[y]'` over graft kills its own wrapper.** The remote
+  command line contains the string it is searching for, so `pkill` matches the
+  `bash -c` running it and the call dies with `143` before the restart line
+  executes. The dashboard is then *down*. Don't combine stop and start in one
+  graft call: `pkill` in one call, start in the next — or skip `pkill` and let
+  a fresh `nohup setsid` start after confirming the port is free.
+- **graft strips quotes from the inner command.** Anything with inline Python,
+  `for` loops, or nested quotes arrives mangled (`"id=tab-$t"` → `id=tab-\`).
+  Whole scripts go up as base64 (`echo <b64> | base64 -d | sh`) instead.
+- **PowerShell parses `$i.b64` and `$p:` as property/drive access,** not as a
+  variable followed by text. Use `("dash_{0}.b64" -f $i)` and `${p}:`.

@@ -1,9 +1,9 @@
 # The servers, and how to see them from your machine
 
-Two workers, each with a site container, a toolkit server, a per-episode trace
-and a results directory — plus one dashboard. Everything binds `127.0.0.1` so
-nothing is exposed to the internet. Three of them are worth tunnelling. This
-says what each one is, how to start it, and how to look at it.
+Three workers, each with a site container, a toolkit server, a per-episode
+trace and a results directory — plus one dashboard. Everything binds
+`127.0.0.1` so nothing is exposed to the internet. Four of them are worth
+tunnelling. This says what each one is, how to start it, and how to look at it.
 
 Host: `root@169.58.213.174` (graft remote `contabo`). Everything lives under
 `/opt/webarena/bench/`.
@@ -14,18 +14,25 @@ Host: `root@169.58.213.174` (graft remote `contabo`). Everything lives under
 
 | port | what | lifetime | tunnel? |
 |---|---|---|---|
-| 8023 (+ 8024 ctrl) | gitlab site | container, always up | no |
+| 7770 (+ 7771 ctrl) | shopping site | container, always up | no |
+| 7780 (+ 7781 ctrl) | shopping_admin site (`/admin`) | container, always up | no |
 | 9999 (+ 9998 ctrl) | reddit site | container, always up | no |
-| 8766 | abt server, gitlab worker | long-running | optional — `/viewer` |
-| 8767 | abt server, reddit worker | long-running | optional — `/viewer` |
-| **9100** | **live trace, gitlab** | **per episode** | **yes** |
-| **9101** | **live trace, reddit** | **per episode** | **yes** |
+| 8766 | abt server, shopping worker | long-running | optional — `/viewer` |
+| 8767 | abt server, shopping_admin worker | long-running | optional — `/viewer` |
+| 8768 | abt server, multisite worker | long-running | optional — `/viewer` |
+| **9100** | **live trace, shopping** | **per episode** | **yes** |
+| **9101** | **live trace, shopping_admin** | **per episode** | **yes** |
+| **9103** | **live trace, multisite** | **per episode** | **yes** |
 | **9102** | **analytics dashboard** | **long-running** | **yes** |
 
-Each site answers a control endpoint on the port one above/below it (`8024`,
-`9998`) — that is the image's own env-ctrl responder, not ours.
+Each site answers a control endpoint on the port one above/below it (`7771`,
+`7781`, `9998`) — that is the image's own env-ctrl responder, not ours.
 
-The one thing that surprises people: **9100 and 9101 do not answer between
+**GitLab (`8023`/`8024`) was retired 2026-09-17** — its ports are no longer
+bound. The current three workers are shopping, shopping_admin and the
+shopping+reddit multisite worker.
+
+The one thing that surprises people: **the trace ports do not answer between
 tasks.** The trace server lives inside each `run_webarena_one.py` process, so
 it appears when an episode starts and disappears when it ends. A refused
 connection there means "no episode running right now", not "broken". 9102 is
@@ -36,8 +43,9 @@ always up, which is why it is the one to leave open.
 ## 9102 — the analytics dashboard
 
 The one to watch. Recomputes every episode's metrics on a timer and serves
-them as a page and as JSON. Four tabs: **All** (every sweep), **Gitlab**,
-**Reddit**, **Multisite** (the queued cross-site gitlab+reddit pass).
+them as a page and as JSON. Six tabs: **All** (every sweep), **Shopping**,
+**Shopping admin**, **Multisite** (the shopping+reddit cross-site pass),
+**Reddit**, and **Gitlab** (kept so the retired sweep's records stay readable).
 
 - **file:** `benchmarks/browsergym/dashboard.py` in this repo, deployed to
   `/opt/webarena/bench/dashboard.py` — same file
@@ -69,13 +77,13 @@ log.
 
 ---
 
-## 9100 / 9101 — live traces
+## 9100 / 9101 / 9103 — live traces
 
 Turn-by-turn narrative of the episode running right now: what the model
 thought, what ops it sent, what the page gave back.
 
 - **not a file** — served from memory inside the episode's own process
-- **enabled by:** `--trace-port` in the plan (`trace_port: 9100` / `9101`)
+- **enabled by:** `--trace-port` in the plan (`trace_port: 9100` / `9101` / `9103`)
 - **the same content, persisted:** `results/<sweep>/traces/<task>.log`
 
 ```
@@ -90,14 +98,19 @@ written line by line as the episode runs and survive it.
 
 ---
 
-## 8766 / 8767 — the abt servers
+## 8766 / 8767 / 8768 — the abt servers
 
 The toolkit itself, one per worker. Each **attaches** to a browser that
 BrowserGym launched, addressed by `ABT_CDP_URL` — it does not launch its own.
 
-- **gitlab worker:** port 8766, CDP 9222, profile `profile/`, log `server.log`
-- **reddit worker:** port 8767, CDP 9223, profile `profile-reddit/`, log
+- **shopping worker:** port 8766, CDP 9222, profile `profile/`, log `server.log`
+- **shopping_admin worker:** port 8767, CDP 9223, profile `profile-reddit/`, log
   `server-reddit.log`
+- **multisite worker:** port 8768, CDP 9224, profile `profile-multi/`, log
+  `server-multi.log`
+
+(The profile names are historical: worker 2's profile was created for reddit
+and is reused for shopping_admin; worker 3's is `profile-multi`.)
 
 `--headless` and `--no-run-js` are required by the sweep: the harness forbids
 the agent reaching for raw JavaScript.
@@ -110,10 +123,9 @@ nohup setsid env ABT_CDP_URL=http://127.0.0.1:9222 \
   > /opt/webarena/bench/server.log 2>&1 < /dev/null &
 ```
 
-The reddit worker is the same with `9223`, `8767`, `profile-reddit`,
-`server-reddit.log`.
+Worker 3 is the same with `9224`, `8768`, `profile-multi`, `server-multi.log`.
 
-**Every value must differ between the two.** Sharing the CDP port is the
+**Every value must differ between the workers.** Sharing the CDP port is the
 dangerous one: it does not error, it hands one worker's browser to the other
 worker's agent.
 
@@ -148,8 +160,10 @@ while true; do
       -N -L 9102:127.0.0.1:9102 \
          -L 9100:127.0.0.1:9100 \
          -L 9101:127.0.0.1:9101 \
+         -L 9103:127.0.0.1:9103 \
          -L 8766:127.0.0.1:8766 \
          -L 8767:127.0.0.1:8767 \
+         -L 8768:127.0.0.1:8768 \
       root@169.58.213.174
   echo "dropped $(date +%H:%M:%S), reconnecting"; sleep 3
 done
@@ -160,10 +174,12 @@ Then:
 | open | to see |
 |---|---|
 | <http://localhost:9102> | pass rate, tokens, per-sweep metrics, latest episodes |
-| <http://localhost:9100> | what the gitlab agent is thinking, right now |
-| <http://localhost:9101> | what the reddit agent is thinking, right now |
-| <http://localhost:8766/viewer> | the gitlab worker's op history |
-| <http://localhost:8767/viewer> | the reddit worker's op history |
+| <http://localhost:9100> | what the shopping agent is thinking, right now |
+| <http://localhost:9101> | what the shopping_admin agent is thinking, right now |
+| <http://localhost:9103> | what the multisite agent is thinking, right now |
+| <http://localhost:8766/viewer> | the shopping worker's op history |
+| <http://localhost:8767/viewer> | the shopping_admin worker's op history |
+| <http://localhost:8768/viewer> | the multisite worker's op history |
 
 **A dropped tunnel never affects the run.** Both sweeps are detached from any
 ssh session — `setsid`, no controlling terminal, reparented to PID 1, output

@@ -738,7 +738,7 @@ def run_episode(
     goal: str,
     server: str = "http://127.0.0.1:8766",
     model: str | None = None,
-    max_turns: int = 30,
+    max_turns: int = 100,
     provider: str = "anthropic",
     client=None,
     max_tokens: int | None = None,
@@ -794,7 +794,7 @@ def main() -> int:
     ap.add_argument("--server", default="http://127.0.0.1:8766")
     ap.add_argument("--provider", default="anthropic", choices=sorted(BACKENDS))
     ap.add_argument("--model", default=None, help="Defaults per provider.")
-    ap.add_argument("--max-turns", type=int, default=30)
+    ap.add_argument("--max-turns", type=int, default=100)
     ap.add_argument("--trace-port", type=int, default=None,
                     help="Serve a live view of the loop at "
                          "http://127.0.0.1:PORT while it runs.")

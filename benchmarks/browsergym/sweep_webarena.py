@@ -450,10 +450,11 @@ def main() -> int:
     p.add_argument("--sites", default="shopping")
     p.add_argument("--cross-site", action="store_true",
                    help="Only tasks needing more than one of the listed sites.")
-    p.add_argument("--max-turns", type=int, default=30,
-                   help="Turn ceiling for every episode in this plan. 25 cut "
-                        "off 7%% of shopping tasks mid-checkout. Cost grows "
-                        "with the square of turns.")
+    p.add_argument("--max-turns", type=int, default=100,
+                   help="Turn ceiling for every episode in this plan. The "
+                        "project default is 100, matching run_webarena_one.py "
+                        "and loop_policy.py; a plan records the value it was "
+                        "built with, so set it here and nowhere else per run.")
     p.add_argument("--cdp-port", type=int, default=None,
                    help="Debugging port for this sweep's browser. Give each "
                         "concurrent sweep its own; 9222 is the default when "

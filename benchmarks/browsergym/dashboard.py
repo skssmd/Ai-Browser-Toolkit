@@ -1,10 +1,14 @@
 """WebArena sweep dashboard. Serves on :9102.
 
-Four tabs: All (every sweep + main run logs), Gitlab, Reddit, Multisite (the
-queued cross-site gitlab+reddit pass). Every task row
-is clickable and opens a detail pane with the episode record (answer, tokens,
-cached %, op-success %, turns, ops, reward) and the live per-task run log --
-what the model ran, received, said and answered -- updated while you watch.
+Tabs: All (every sweep + main run logs), Shopping, Shopping admin, Multisite
+(the cross-site shopping+reddit pass), Reddit and Gitlab (earlier workers,
+kept because their recorded results are still under results/wa-*). Each sweep's
+summary card reports graded/passed/rate, running, total and per-task tokens,
+cached share, op success, ops per task, turns per task and ops per turn. Every
+task row is clickable and opens a detail pane with the episode record (answer,
+tokens, cached %, op-success %, turns, ops, ops/turn, reward) and the live
+per-task run log -- what the model ran, received, said and answered -- updated
+while you watch.
 
 Canonical JSON is GET /data (everything the page renders), GET
 /task/<sweep>/<task_id> (one episode record + its trace text), GET
@@ -92,18 +96,18 @@ def running_tasks(out: Path, records: list[dict]) -> list[str]:
     return running
 
 
-def summarize(out: Path) -> dict:
-    plan = {}
+def _load_plan(out: Path) -> dict:
     try:
-        plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+        return json.loads((out / "plan.json").read_text(encoding="utf-8"))
     except Exception:
-        pass
-    rows = best_rows(read_rows(out))
+        return {}
+
+
+def _stats_and_tasks(rows: list[dict], runs: list[dict]) -> dict:
     graded = [r for r in rows if r.get("status") == "ok"]
     passed = [r for r in graded if r.get("success")]
     skipped = [r for r in rows if r.get("status") == "skipped_site"]
     faults = [r for r in rows if r.get("status") in FAULTS]
-    running = running_tasks(out, rows)
     attempted = [r for r in rows if r.get("status") != "skipped_site"]
     total_ops = sum(r.get("ops") or 0 for r in attempted)
     total_fail = sum(r.get("op_failures") or 0 for r in attempted)
@@ -114,7 +118,7 @@ def summarize(out: Path) -> dict:
     cache_share = 100 * cache_read / max(cache_input, 1)
     tasks = []
     for r in rows:
-        tasks.append({
+        item = {
             "task": str(r.get("task_id")),
             "pass": bool(r.get("success")),
             "status": r.get("status"),
@@ -127,31 +131,24 @@ def summarize(out: Path) -> dict:
             "ops_per_turn": r.get("ops_per_turn"),
             "answer": (str(r.get("answer_sent") or "")[:80]),
             "wall_s": r.get("wall_s"),
-        })
-    for tid in running:
-        tasks.append({"task": tid, "pass": None, "status": "running",
-                      "running": True})
+        }
+        if r.get("_sweep"):
+            item["sweep"] = r["_sweep"]
+        tasks.append(item)
+    tasks.extend(runs)
     return {
-        "plan": {
-            "model": plan.get("model"),
-            "provider": plan.get("provider"),
-            "sites": plan.get("sites_running"),
-            "server": plan.get("server"),
-            "cdp_port": plan.get("cdp_port"),
-            "max_turns": plan.get("max_turns"),
-            "episodes": plan.get("episodes"),
-            "created": plan.get("created"),
-        },
         "stats": {
             "graded": len(graded),
             "passed": len(passed),
             "skipped": len(skipped),
             "faults": len(faults),
-            "running": len(running),
+            "running": len(runs),
             "rate": 100 * len(passed) / max(len(graded), 1),
             "ops": total_ops,
             "op_failures": total_fail,
             "op_success": 100 * (total_ops - total_fail) / max(total_ops, 1),
+            "turns": total_turns,
+            "turns_per_task": round(total_turns / max(len(attempted), 1), 1),
             "ops_per_turn": round(total_ops / max(total_turns, 1), 2),
             "ops_per_task": round(total_ops / max(len(attempted), 1)),
             "tokens": tokens,
@@ -160,14 +157,85 @@ def summarize(out: Path) -> dict:
             "cache_share": cache_share,
         },
         "tasks": tasks,
-        "log": log_tail(out.name),
     }
+
+
+def _plan_fields(plan: dict) -> dict:
+    return {
+        "model": plan.get("model"),
+        "provider": plan.get("provider"),
+        "sites": plan.get("sites_running"),
+        "server": plan.get("server"),
+        "cdp_port": plan.get("cdp_port"),
+        "max_turns": plan.get("max_turns"),
+        "episodes": plan.get("episodes"),
+        "created": plan.get("created"),
+    }
+
+
+def summarize(out: Path) -> dict:
+    plan = _load_plan(out)
+    rows = best_rows(read_rows(out))
+    runs = [{"task": tid, "pass": None, "status": "running", "running": True}
+            for tid in running_tasks(out, rows)]
+    return {"plan": _plan_fields(plan), **_stats_and_tasks(rows, runs),
+            "log": log_tail(out.name)}
+
+
+MULTISITE = "wa-multisite"
+
+
+def multisite_dirs() -> list[Path]:
+    """Every wa-multisite* results directory, so the Multisite tab can show the
+    whole cross-site history as one view (the 18-task gitlab+reddit pass was run
+    as two halves, wa-multisite-a/-b, and later the shopping+reddit pass as
+    wa-multisite)."""
+    if not RESULTS.is_dir():
+        return []
+    return sorted(
+        p for p in RESULTS.iterdir()
+        if p.is_dir() and p.name.startswith(MULTISITE) and (p / "plan.json").exists()
+    )
+
+
+def summarize_combined(outs: list[Path]) -> dict:
+    rows: list[dict] = []
+    runs: list[dict] = []
+    plans = []
+    for out in outs:
+        plans.append(_load_plan(out))
+        mine = best_rows(read_rows(out))
+        for r in mine:
+            merged = dict(r)
+            merged["_sweep"] = out.name
+            rows.append(merged)
+        for tid in running_tasks(out, mine):
+            runs.append({"task": tid, "pass": None, "status": "running",
+                         "running": True, "sweep": out.name})
+    first = plans[0] if plans else {}
+    sites = sorted({s for p in plans for s in (p.get("sites_running") or [])})
+    turns = sorted({p.get("max_turns") for p in plans if p.get("max_turns")})
+    plan = {
+        "model": first.get("model"),
+        "provider": first.get("provider"),
+        "sites": sites,
+        "server": "combined: " + " + ".join(out.name for out in outs),
+        "cdp_port": None,
+        "max_turns": ", ".join(str(t) for t in turns) or None,
+        "episodes": sum(len(p.get("task_ids") or []) for p in plans),
+        "created": min((p.get("created") for p in plans if p.get("created")),
+                       default=None),
+    }
+    return {"plan": plan, **_stats_and_tasks(rows, runs),
+            "log": log_tail(outs[0].name) if outs else None,
+            "logs": [log_tail(out.name) for out in outs],
+            "members": [out.name for out in outs]}
 
 
 class State:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.data: dict = {"generated": None, "sweeps": {}}
+        self.data: dict = {"generated": None, "sweeps": {}, "combined": {}}
 
     def refresh(self) -> None:
         sweeps = {}
@@ -178,8 +246,16 @@ class State:
                 sweeps[out.name] = summarize(out)
             except Exception as exc:
                 sweeps[out.name] = {"error": str(exc)}
+        combined = {}
+        members = multisite_dirs()
+        if len(members) > 1:
+            try:
+                combined["multisite"] = summarize_combined(members)
+            except Exception as exc:
+                combined["multisite"] = {"error": str(exc)}
         with self.lock:
-            self.data = {"generated": time.time(), "sweeps": sweeps}
+            self.data = {"generated": time.time(), "sweeps": sweeps,
+                         "combined": combined}
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -289,21 +365,25 @@ padding:0 .3rem;font-size:.78rem}
 </header>
 <nav>
   <button data-tab="all" class="on">All · main logs</button>
-  <button data-tab="gitlab">Gitlab</button>
-  <button data-tab="reddit">Reddit</button>
+  <button data-tab="shopping">Shopping</button>
+  <button data-tab="admin">Shopping admin</button>
   <button data-tab="multisite">Multisite</button>
+  <button data-tab="reddit">Reddit</button>
+  <button data-tab="gitlab">Gitlab</button>
 </nav>
 <div class="tab" id="tab-all"></div>
-<div class="tab hidden" id="tab-gitlab"></div>
-<div class="tab hidden" id="tab-reddit"></div>
+<div class="tab hidden" id="tab-shopping"></div>
+<div class="tab hidden" id="tab-admin"></div>
 <div class="tab hidden" id="tab-multisite"></div>
+<div class="tab hidden" id="tab-reddit"></div>
+<div class="tab hidden" id="tab-gitlab"></div>
 <div class="modal hidden" id="modal"><div id="panel">
   <div id="phead"></div>
   <div id="pbody"></div>
 </div></div>
 <script>
-const TABS=["all","gitlab","reddit","multisite"];
-const SWEEPS={gitlab:"wa-gitlab",reddit:"wa-reddit",multisite:"wa-multisite"};
+const TABS=["all","shopping","admin","multisite","reddit","gitlab"];
+const SWEEPS={shopping:"wa-shopping",admin:"wa-admin",multisite:"wa-multisite",reddit:"wa-reddit",gitlab:"wa-gitlab"};
 let state={sweeps:{}};let active="all";let openTask=null;let intvModal=null;const POLL=15;
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>
@@ -332,6 +412,7 @@ function summaryHTML(name,d){
     ["cached",st.cache_share.toFixed(1)+'% <span class="dim">('+fmt(st.cache_read)+')</span>'],
     ["op success",st.op_success.toFixed(1)+'%'],
     ["ops/task",fmt(st.ops_per_task)],
+    ["turns/task",fmt(st.turns_per_task)],
     ["ops/turn",st.ops_per_turn==null?"–":st.ops_per_turn.toFixed(2)],
     ["skipped/faults",'<span class="skip">'+st.skipped+'</span>/<span class="fail">'+st.faults+'</span>']];
   for(const[k,v]of m){h+='<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>';}
@@ -340,8 +421,11 @@ function summaryHTML(name,d){
 
 function tasksTable(d){
   const ts=d.tasks&&d.tasks.length?d.tasks:[];
-  const body=ts.map(t=>'<tr data-sweep="'+esc(d.name)+'" data-task="'+esc(t.task)+'">'
+  const sw=ts.some(t=>t.sweep);
+  const span=sw?11:10;
+  const body=ts.map(t=>'<tr data-sweep="'+esc(t.sweep||d.name)+'" data-task="'+esc(t.task)+'">'
     +'<td>'+badge(t)+'</td>'
+    +(sw?'<td class="dim">'+esc(t.sweep||"")+'</td>':'')
     +'<td>'+esc(t.task)+'</td>'
     +'<td class="ans">'+esc(t.answer||"")+'</td>'
     +'<td>'+fmt(t.turns)+'</td>'
@@ -352,19 +436,23 @@ function tasksTable(d){
     +'<td>'+pct(t.op_success_rate)+'</td>'
     +'<td>'+(t.wall_s==null?"":t.wall_s+'s')+'</td>'
     +'</tr>').join("");
-  return '<div class="card"><table><thead><tr><th>verdict</th><th>task</th>'
-    +'<th>answer</th><th>turns</th><th>ops</th><th>ops/turn</th><th>tokens</th><th>cached</th>'
-    +'<th>op %</th><th>wall</th></tr></thead><tbody>'
-    +(body||'<tr><td colspan="10" class="dim">no episodes yet</td></tr>')
+  return '<div class="card"><table><thead><tr><th>verdict</th>'
+    +(sw?'<th>sweep</th>':'')
+    +'<th>task</th><th>answer</th><th>turns</th><th>ops</th><th>ops/turn</th>'
+    +'<th>tokens</th><th>cached</th><th>op %</th><th>wall</th></tr></thead><tbody>'
+    +(body||'<tr><td colspan="'+span+'" class="dim">no episodes yet</td></tr>')
     +'</tbody></table></div>'; }
 
 function logHTML(d){
-  const lg=d.log||{};
-  const lines=(lg.tail||[]).length?lg.tail.map(esc).join("\\n"):"(no run log yet)";
-  return '<div class="card"><h2>Main run log — '+esc(lg.file||sweepOf(d.name))+'</h2>'
-    +'<pre class="log" style="max-height:26vh">'+lines+'</pre></div>'; }
+  const logs=(d.logs&&d.logs.length)?d.logs:(d.log?[d.log]:[]);
+  if(!logs.length)return '<div class="card"><h2>Main run log</h2>'
+    +'<pre class="log" style="max-height:26vh">(no run log yet)</pre></div>';
+  return logs.map(lg=>{
+    const lines=(lg.tail||[]).length?lg.tail.map(esc).join("\\n"):"(no run log yet)";
+    return '<div class="card"><h2>Main run log — '+esc(lg.file||sweepOf(d.name))+'</h2>'
+      +'<pre class="log" style="max-height:26vh">'+lines+'</pre></div>'; }).join(""); }
 
-function sweepOf(name){return name==="wa-gitlab"?"gitlab":name==="wa-reddit"?"reddit":name==="wa-multisite"?"multisite":name;}
+function sweepOf(name){return name==="wa-gitlab"?"gitlab":name==="wa-reddit"?"reddit":name==="wa-multisite"?"multisite":name==="wa-shopping"?"shopping":name==="wa-admin"?"admin":name;}
 
 function renderAll(){
   let h="";
@@ -375,11 +463,14 @@ function renderAll(){
   return h; }
 
 function renderOne(site){
-  const name=SWEEPS[site];
-  const d=state.sweeps[name];
   const el=document.getElementById("tab-"+site);
+  let name=SWEEPS[site];
+  let d=state.sweeps[name];
+  if(site==="multisite"&&state.combined&&state.combined.multisite){
+    d=state.combined.multisite;name="wa-multisite · combined"; }
   if(!d){el.innerHTML='<p class="dim">no sweep '+site+' yet</p>';return;}
-  el.innerHTML=summaryHTML(name,d)+tasksTable({name,tasks:d.tasks})+logHTML({name,log:d.log}); }
+  el.innerHTML=summaryHTML(name,d)+tasksTable({name,tasks:d.tasks})
+    +logHTML({name,log:d.log,logs:d.logs}); }
 
 function render(){
   if(active==="all")renderAll();else renderOne(active);
