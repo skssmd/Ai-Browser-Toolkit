@@ -61,10 +61,16 @@ private/
 !/benchmarks/browsergym/results/compare-102/TASK-102-BEFORE-AFTER.md
 
 # unbiased/pareto (union-alpha) sweep reports and the run logs that prove them.
+!/benchmarks/browsergym/results/wa-shopping
+!/benchmarks/browsergym/results/wa-admin
 !/benchmarks/browsergym/results/wa-gitlab
 !/benchmarks/browsergym/results/wa-reddit
 !/benchmarks/browsergym/results/wa-multisite
 !/benchmarks/browsergym/results/wa-gitlab-reddit
+/benchmarks/browsergym/results/wa-shopping/*
+!/benchmarks/browsergym/results/wa-shopping/REPORT.md
+/benchmarks/browsergym/results/wa-admin/*
+!/benchmarks/browsergym/results/wa-admin/REPORT.md
 /benchmarks/browsergym/results/wa-gitlab/*
 !/benchmarks/browsergym/results/wa-gitlab/REPORT.md
 /benchmarks/browsergym/results/wa-reddit/*

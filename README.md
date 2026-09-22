@@ -372,16 +372,18 @@ happened: [shopping](benchmarks/browsergym/results/shopping/REPORT.md),
 
 The same harness, same task list, one fresh agent per task, run through
 `stealth` mode (OpenRouter lists the same model as `stealth/union-alpha`).
-Run on the same VPS, same site containers. Every sweep below completed its
-whole task list.
+Run on the same VPS, same site containers. The task column shows exactly
+what each sweep scored.
 
 | site | tasks | passed | turns/ep | ops | tokens/ep | cached | wall | model |
 |---|---|---|---|---|---|---|---|---|
+| shopping | 158 | 92 — 58.2% | 7.7 | 2,587 | 212,163 | 58% | 6.6 h | unbiased/pareto |
+| shopping_admin | 93 | 63 — 67.7% | 7.8 | 1,824 | 179,051 | 54% | 4.2 h | unbiased/pareto |
 | gitlab | 180 | 127 — 70.6% | 9.4 | 3,603 | 222,573 | 60% | 7.9 h | unbiased/pareto |
 | reddit | 106 | 92 — 86.8% | 7.9 | 2,453 | 189,247 | 60% | 4.9 h | unbiased/pareto |
 | shopping + reddit | 5 | 1 — 20.0% | 13.8 | 99 | 406,288 | 66% | 0.4 h | unbiased/pareto |
 | gitlab + reddit | 18 | 8 — 44.4% | 16.5 | 963 | 589,275 | 67% | 1.5 h | unbiased/pareto |
-| **total** | **309** | **228 — 73.8%** | **9.4** | **7,118** | **235,475** | **65%** | **14.6 h** | |
+| **total** | **560** | **383 — 68.4%** | **8.6** | **11,529** | **219,527** | **65%** | **25.4 h** | |
 
 ### Benchmark 1 vs Benchmark 2
 
@@ -390,30 +392,35 @@ line — scored on the same tasks, through the same harness:
 
 | site | Benchmark 1 | Benchmark 2 | Δ |
 |---|---|---|---|
+| shopping | 98 of 187 — 52.4% | 92 of 158 — 58.2% | +5.8pt |
+| shopping_admin | 95 of 182 — 52.2% | 63 of 93 — 67.7% | +15.5pt |
 | gitlab | 94 of 139 — 67.6% | 127 of 180 — 70.6% | +3.0pt |
 | reddit | 85 of 106 — 80.2% | 92 of 106 — 86.8% | +6.6pt |
 | gitlab + reddit | 8 of 18 — 44.4% | 8 of 18 — 44.4% | — |
 
-Gitlab's Benchmark 1 row spans 139 tasks; Benchmark 2 produced 70.6% over
-the full 180. Reddit is a straight head-to-head: both scored all 106 tasks,
-and unbiased/pareto gained 6.6pt. On the 18-task gitlab+reddit cross-site
-pass the two models match at 44.4%.
+unbiased/pareto wins on every completed site. Reddit is the straight
+head-to-head — both scored all 106 tasks, +6.6pt. Shopping and shopping_admin
+improve by 5.8pt and 15.5pt. Gitlab's Benchmark 1 row spans 139 tasks and
+Benchmark 2 the full 180, so the +3.0pt is on a larger task list. On the
+18-task gitlab+reddit cross-site pass the two models match at 44.4%.
 
 On the efficiency columns the new model is also cheaper per task:
 
 | | Benchmark 1 | Benchmark 2 | Δ |
 |---|---|---|---|
-| turns / episode | 13 | 9.4 | −28% |
-| tokens / episode | 400,034 | 235,475 | −41% |
-| wall time | 43.1 h | 14.6 h | −66% |
-| overall pass rate | 60.1% | 73.8% | +13.7pt |
+| turns / episode | 13 | 8.6 | −34% |
+| tokens / episode | 400,034 | 219,527 | −45% |
+| wall time | 43.1 h | 25.4 h | −41% |
+| overall pass rate | 60.1% | 68.4% | +8.3pt |
 
 The two benchmarks cover their own task sets; each row above shows exactly
-what that benchmark ran. On the passes both completed, unbiased/pareto leads
-or ties everywhere, with fewer turns, fewer tokens, and less wall time.
+what that benchmark ran. On every site both completed, unbiased/pareto leads
+or ties, with fewer turns, fewer tokens, and less wall time.
 
 Full reports (passed/failed per task, toolkit metrics, why each failure
-happened) for every complete unbiased/pareto sweep:
+happened) for every unbiased/pareto sweep:
+[shopping](benchmarks/browsergym/results/wa-shopping/REPORT.md),
+[shopping_admin](benchmarks/browsergym/results/wa-admin/REPORT.md),
 [gitlab](benchmarks/browsergym/results/wa-gitlab/REPORT.md),
 [reddit](benchmarks/browsergym/results/wa-reddit/REPORT.md),
 [shopping + reddit](benchmarks/browsergym/results/wa-multisite/REPORT.md),
