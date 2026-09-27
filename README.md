@@ -468,6 +468,13 @@ network, deterministic, about seven minutes. The same suite also runs against
 Playwright (`--engine selenium` switches it the other way); both pass. Detail
 in [docs/reference.md](docs/reference.md#tests).
 
+## Privacy
+
+[PRIVACY.md](PRIVACY.md) — what the toolkit records, where it writes it, and the
+one thing about it worth knowing up front: a driven browser profile holds your
+logins, and a running server is not authenticated. Read the
+[security notes](PRIVACY.md#9-security-notes) before putting it anywhere shared.
+
 ## Licence
 
 [Apache License 2.0](LICENSE) — © the Ai-Browser-Toolkit contributors.

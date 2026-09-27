@@ -116,6 +116,80 @@ The project name is the field that goes wrong. It must match
 "Non-user identities cannot create new projects", which reads like an
 authentication problem and is not one.
 
+## The winget manifest needs a privacy policy
+
+WinGet repository policy
+[1.5.1](https://learn.microsoft.com/windows/package-manager/package/windows-package-manager-policies)
+asks any package that touches personal data to publish a product-specific
+privacy policy and point `PrivacyUrl` at it. ABT does: it drives a persistent
+browser profile, so it can reach cookies, authenticated sessions, page text,
+screenshots, session logs and Messenger threads. The moderation nudge on
+[microsoft/winget-pkgs#428651](https://github.com/microsoft/winget-pkgs/pull/428651)
+is the check-in policy asking for exactly that.
+
+The policy is [`PRIVACY.md`](../PRIVACY.md) at the repository root, published at
+<https://github.com/skssmd/Ai-Browser-Toolkit/blob/main/PRIVACY.md>.
+
+`PrivacyUrl` is a **locale manifest** field, not an installer one — it goes in
+`manifests/s/skssmd/AIBrowserToolkit/<version>/skssmd.AIBrowserToolkit.locale.en-US.yaml`,
+directly after `PublisherSupportUrl`. There is no MSIX manifest here to carry it;
+the Inno installer's `AppPublisherURL` is not the place, and WinGet reads nothing
+from the installer for this.
+
+The manifest is not in this repository — it lives in `microsoft/winget-pkgs`, and
+the PR's head branch lives in the `The-Graft-Project/winget-pkgs` fork.
+
+**Merge the policy before the manifest change.** `PrivacyUrl` is a link into this
+repository on `main`; it returns 404 until `PRIVACY.md` lands, and a `PrivacyUrl`
+that does not resolve is not going to satisfy anybody.
+
+### Pointing the PR at the current release
+
+A new-package PR is expected to submit the **latest** version, and PR 428651 was
+opened against 0.3.6 while the project is now further along. `winget-releaser`
+cannot fix this — it only *updates* an identifier that already exists upstream,
+so until the first version is merged every release has to be hand-advanced in
+the PR.
+
+`packaging/winget/manifest-v0.6.2.patch` does it in one step: it renames the
+version directory `0.3.6/` to `0.6.2/`, sets `PackageVersion`, the installer URL
+and SHA256, `ReleaseDate` and `ReleaseNotesUrl`, and adds `PrivacyUrl` in the
+same pass. Eight lines across three files, verified with `git apply --check`
+against the PR's actual contents.
+
+```bash
+git clone --branch skssmd.AIBrowserToolkit-0.3.6-ff27dee5-d0c7-4d7a-babb-9d87713da460 \
+  https://github.com/The-Graft-Project/winget-pkgs
+cd winget-pkgs
+git apply /path/to/aibrowsertoolkit/packaging/winget/manifest-v0.6.2.patch
+git add -A
+git commit -m "Add PrivacyUrl and update to 0.6.2"
+git push origin skssmd.AIBrowserToolkit-0.3.6-ff27dee5-d0c7-4d7a-babb-9d87713da460
+```
+
+The branch name is from PR 428651; re-read it from the PR if it has changed.
+
+The SHA256 in that patch —
+`D76ECB26A386CA80241AD610AA6D6DE171A2D7A4F2C96AF9D107F64F04D1922F` — is the one
+the release published in its own `checksums.txt`, and it matches the asset
+digest GitHub reports. A mistyped hash is the most common reason a manifest gets
+sent back, so take it from `checksums.txt` and never from a terminal transcript.
+
+For a later release, the same edit is four substitutions: `PackageVersion` in
+all three files, `InstallerUrl`, `InstallerSha256`, `ReleaseDate`, plus
+`ReleaseNotesUrl` in the locale file — and the version directory has to be
+renamed to match, or the validation pipeline rejects the PR. `wingetcreate new`
+does all of it interactively, including downloading the asset to hash it, and
+`wingetcreate.exe` is already in the repository root. Check afterwards that
+`PrivacyUrl` is still in the locale file: a regenerated manifest will not
+invent it.
+
+### If the version is already right
+
+`packaging/winget/privacy-url.patch` is the one-line change on its own, for when
+the manifest already points at the version you want to submit. Both patches are
+pinned to 0.3.6 in their paths; edit the header for a different version.
+
 ## No Intel Mac build
 
 `macos-13` is GitHub's last Intel image and is being retired; it queued badly
