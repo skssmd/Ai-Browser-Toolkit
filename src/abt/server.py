@@ -1,8 +1,10 @@
 """HTTP surface. The server process is the command loop.
 
-Selenium's WebDriver is not thread-safe, so every command runs inside one
-threading.Lock. The blocking work is pushed to a threadpool so a long command
-never stalls the event loop -- `GET /status` stays answerable meanwhile.
+Every request runs in a session. Each session owns a lock, and commands within
+a session run in order under it -- a driver is not thread-safe -- while
+different sessions never wait on each other. The blocking work is pushed to a
+threadpool so a long command never stalls the event loop -- `GET /status`
+stays answerable meanwhile.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from .recorder import (
     sites_index,
 )
 from .schema import OP_NAMES, op_signatures, parse_command
+from .sessions import Session, SingleSessionRegistry
 from .viewer import VIEWER_HTML
 
 # How long /status will wait for the browser before answering without it. A
@@ -72,40 +75,119 @@ def _unmapped(exc: Exception) -> OpError:
     return OpError("browser_dead", detail)
 
 
+def _strip(item: Any) -> tuple[Any, str | None, str | None]:
+    """Take the transport fields off one command, leaving the command."""
+    if isinstance(item, dict) and ("session" in item or "token" in item):
+        item = dict(item)
+        return item, item.pop("session", None), item.pop("token", None)
+    return item, None, None
+
+
+def _transport(headers: Any, body: Any) -> tuple[str | None, str | None, Any]:
+    """(session, token, body without them).
+
+    `session` and `token` say where a command runs, not what it does, so they
+    come off before validation -- the command models forbid unknown fields and
+    would otherwise reject every routed command. Headers win, then the batch
+    envelope, then the first command that names one.
+    """
+    name = headers.get("x-abt-session") or None
+    token = headers.get("x-abt-token") or None
+    if isinstance(body, dict) and "op" in body:
+        item, s, t = _strip(body)
+        return name or s, token or t, item
+    envelope = isinstance(body, dict)
+    items = (body.get("commands") or body.get("command_list")) if envelope else body
+    if not isinstance(items, list):
+        return name, token, body
+    cleaned, named, tokens = [], [], []
+    for item in items:
+        item, s, t = _strip(item)
+        cleaned.append(item)
+        if s:
+            named.append(s)
+        if t:
+            tokens.append(t)
+    chosen = (
+        name
+        or (body.get("session") if envelope else None)
+        or (named[0] if named else None)
+    )
+    stray = sorted({n for n in named if n != chosen})
+    if stray:
+        # A batch is one sequence in one session. Switching part way through
+        # would take and drop different locks mid-batch, which destroys the
+        # one thing a batch promises: nothing else ran in between.
+        raise OpError(
+            "invalid_op",
+            f"a command list runs in one session; this one also names {', '.join(stray)}",
+        )
+    chosen_token = (
+        token
+        or (body.get("token") if envelope else None)
+        or (tokens[0] if tokens else None)
+    )
+    if not envelope:
+        return chosen, chosen_token, cleaned
+    rest = {k: v for k, v in body.items() if k not in ("session", "token")}
+    rest["commands" if "commands" in body else "command_list"] = cleaned
+    return chosen, chosen_token, rest
+
+
+def _refused(exc: OpError) -> JSONResponse:
+    """A request that could not be routed. Malformed is a 400; the rest are
+    ordinary failures in the ordinary envelope, which is what agents branch on."""
+    return JSONResponse(
+        status_code=400 if exc.type == "invalid_op" else 200, content=fail(exc)
+    )
+
+
 def create_app(
-    session: BrowserSession,
+    session: BrowserSession | None = None,
     request_stop: Callable[[], None] | None = None,
     recorder: SessionRecorder | None = None,
     shots: bool = True,
     shot_quality: int = shots_util.DEFAULT_QUALITY,
     shot_width: int = shots_util.DEFAULT_WIDTH,
+    registry: Any = None,
 ) -> FastAPI:
+    if registry is None:
+        if session is None:
+            raise ValueError("create_app needs a BrowserSession or a registry")
+        registry = SingleSessionRegistry(session, recorder)
     app = FastAPI(title="aibrowsertoolkit", version="0.1.0")
-    app.state.session = session
+    app.state.registry = registry
+    # The default session's browser, for callers that predate sessions.
+    app.state.session = registry.get(None).browser
     app.state.recorder = recorder
     jobs = messenger_api.JobRegistry()
     cursors = messenger_api.MessageCursors()
     app.state.messenger_jobs = jobs
     app.state.messenger_cursors = cursors
-    lock = threading.Lock()
 
-    def run_one(data: Any, op_index: int) -> dict:
+    def _session_for(request: Request) -> Session:
+        name = request.headers.get("x-abt-session") or request.query_params.get("session")
+        token = request.headers.get("x-abt-token") or request.query_params.get("token")
+        return registry.get(name or None, token or None)
+
+    def run_one(sess: Session, data: Any, op_index: int) -> dict:
         """Validate then execute one command. Never raises."""
+        browser = sess.browser
         started = now_ms()
-        session.last_target = None
+        browser.last_target = None
         try:
             cmd = parse_command(data)
-            response = ok(dispatch(session, cmd))
+            response = ok(dispatch(browser, cmd))
         except OpError as exc:
             response = fail(exc, op_index)
         except Exception as exc:  # an unmapped Selenium surprise
             response = fail(_unmapped(exc), op_index)
-        if recorder is not None:
-            event = _record(data, response, now_ms() - started)
-            _attach_shot(data, response, event)
+        if sess.recorder is not None:
+            event = _record(sess, data, response, now_ms() - started)
+            _attach_shot(sess, data, response, event)
         return response
 
-    def _attach_shot(data: Any, response: dict, event: dict | None) -> None:
+    def _attach_shot(sess: Session, data: Any, response: dict, event: dict | None) -> None:
         """Point a `screenshot` reply at the frame just written for it.
 
         The recorder is the thing that writes frames, and it lives out here
@@ -120,6 +202,7 @@ def create_app(
         result = response.get("result")
         if not isinstance(result, dict) or "base64" in result:
             return
+        recorder = sess.recorder
         name = (event or {}).get("shot")
         if not name:
             result["path"] = None
@@ -131,13 +214,17 @@ def create_app(
             )
             return
         result["path"] = str((recorder.shots_dir / name).resolve())
-        result["url"] = f"/logs/{recorder.session_id}/shots/{name}"
+        url = f"/logs/{recorder.session_id}/shots/{name}"
+        # The default session's logs are what /logs serves unqualified.
+        result["url"] = url if sess.name == "default" else f"{url}?session={sess.name}"
         if event.get("shot_box"):
             # Where the targeted element sits in the frame, as fractions.
             result["box"] = event["shot_box"]
 
-    def _record(data: Any, response: dict, elapsed: float) -> dict | None:
+    def _record(sess: Session, data: Any, response: dict, elapsed: float) -> dict | None:
         """Logging must never be able to fail a command."""
+        session = sess.browser
+        recorder = sess.recorder
         tab_id = url = None
         try:
             tab_id = session.active_tab
@@ -160,11 +247,12 @@ def create_app(
         except Exception:
             return None
 
-    def execute(items: list[Any], continue_on_error: bool) -> list[dict]:
-        with lock:
+    def execute(sess: Session, items: list[Any], continue_on_error: bool) -> list[dict]:
+        with sess.lock:
+            registry.touch(sess)
             results = []
             for index, item in enumerate(items):
-                response = run_one(item, index)
+                response = run_one(sess, item, index)
                 results.append(response)
                 if response["ok"] and _is_shutdown(item):
                     break
@@ -175,9 +263,7 @@ def create_app(
     def teardown() -> None:
         # Let the response flush before the process goes away.
         time.sleep(0.25)
-        session.quit()
-        if recorder is not None:
-            recorder.close()
+        registry.close_all()
         if request_stop is not None:
             request_stop()
 
@@ -198,11 +284,16 @@ def create_app(
         body = await _json(request)
         if isinstance(body, JSONResponse):
             return body
+        try:
+            name, token, body = _transport(request.headers, body)
+            sess = registry.get(name, token)
+        except OpError as exc:
+            return _refused(exc)
 
         # One command, sent bare. Answered in the same shape it was sent, so a
         # caller that sends one thing gets one thing back.
         if isinstance(body, dict) and "op" in body:
-            results = await run_in_threadpool(execute, [body], False)
+            results = await run_in_threadpool(execute, sess, [body], False)
             response = results[0]
             if response["ok"] and _is_shutdown(body):
                 background.add_task(teardown)
@@ -227,7 +318,7 @@ def create_app(
                 ),
             )
 
-        results = await run_in_threadpool(execute, items, continue_on_error)
+        results = await run_in_threadpool(execute, sess, items, continue_on_error)
 
         ran = len(results)
         if ran and results[-1]["ok"] and _is_shutdown(items[ran - 1]):
@@ -253,26 +344,28 @@ def create_app(
 
     # --- messenger ------------------------------------------------------------
 
-    def run_locked(work: Callable[[], Any], request: dict) -> dict:
-        """Run one browser job under the command lock, logged like a command."""
+    def run_locked(sess: Session, work: Callable[[], Any], request: dict) -> dict:
+        """Run one browser job under the session's lock, logged like a command."""
         started = now_ms()
-        session.last_target = None
         try:
-            with lock:
-                session.health_check()
+            with sess.lock:
+                sess.browser.last_target = None
+                sess.browser.health_check()
                 response = ok(work())
         except OpError as exc:
             response = fail(exc)
         except Exception as exc:
             response = fail(OpError("browser_dead", f"{type(exc).__name__}: {exc}"))
-        if recorder is not None:
-            _record(request, response, now_ms() - started)
+        if sess.recorder is not None:
+            _record(sess, request, response, now_ms() - started)
         return response
 
-    def send_job(request: messenger_api.SendMessage, job_id: str) -> None:
+    def send_job(sess: Session, request: messenger_api.SendMessage, job_id: str) -> None:
         jobs.start(job_id)
         body = {"op": "messenger_send", "job_id": job_id, **request.model_dump()}
-        response = run_locked(lambda: messenger_api.send_in_new_tab(session, request), body)
+        response = run_locked(
+            sess, lambda: messenger_api.send_in_new_tab(sess.browser, request), body
+        )
         if response["ok"]:
             jobs.finish(job_id, response["result"])
         else:
@@ -284,17 +377,19 @@ def create_app(
         if isinstance(body, JSONResponse):
             return body
         try:
+            sess = _session_for(request)
             parsed = messenger_api.parse_send(body)
         except OpError as exc:
             return JSONResponse(status_code=400, content=fail(exc))
 
         if parsed.background:
             job = jobs.create(parsed)
-            background.add_task(send_job, parsed, job["job_id"])
+            background.add_task(send_job, sess, parsed, job["job_id"])
             return ok(job)
         return await run_in_threadpool(
             run_locked,
-            lambda: messenger_api.send(session, parsed),
+            sess,
+            lambda: messenger_api.send(sess.browser, parsed),
             {"op": "messenger_send", **body},
         )
 
@@ -310,11 +405,12 @@ def create_app(
                 content=fail(OpError("invalid_op", "body must be an object")),
             )
         try:
+            sess = _session_for(request)
             parsed = messenger_api.parse_send({**body, "background": True})
         except OpError as exc:
             return JSONResponse(status_code=400, content=fail(exc))
         job = jobs.create(parsed)
-        background.add_task(send_job, parsed, job["job_id"])
+        background.add_task(send_job, sess, parsed, job["job_id"])
         return ok(job)
 
     @app.get("/messenger/jobs")
@@ -332,42 +428,59 @@ def create_app(
         return ok(job)
 
     @app.get("/messenger/threads")
-    async def messenger_threads(limit: int = 50, url: str | None = None):
+    async def messenger_threads(request: Request, limit: int = 50, url: str | None = None):
         """The sidebar: every visible thread, its preview, and its link."""
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
 
         def work():
             if url:
-                session.goto(url)
-            return messenger_api.list_threads(session, limit)
+                sess.browser.goto(url)
+            return messenger_api.list_threads(sess.browser, limit)
 
-        return await run_locked_async(work, {"op": "messenger_threads", "limit": limit})
+        return await run_locked_async(
+            sess, work, {"op": "messenger_threads", "limit": limit}
+        )
 
     @app.get("/messenger/messages")
     async def messenger_messages(
+        request: Request,
         thread_url: str | None = None,
         limit: int = 50,
         since_last: bool = False,
         reset: bool = False,
     ):
         """Messages in a thread. `since_last` returns only what is new."""
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
 
         def work():
             if reset and thread_url:
                 cursors.reset(thread_url)
             return messenger_api.read_messages(
-                session, thread_url, limit, since_last, cursors
+                sess.browser, thread_url, limit, since_last, cursors
             )
 
         return await run_locked_async(
+            sess,
             work,
             {"op": "messenger_messages", "thread_url": thread_url, "since_last": since_last},
         )
 
-    async def run_locked_async(work, request: dict) -> dict:
-        return await run_in_threadpool(run_locked, work, request)
+    async def run_locked_async(sess: Session, work, request: dict) -> dict:
+        return await run_in_threadpool(run_locked, sess, work, request)
 
     @app.get("/status")
-    async def status():
+    async def status(request: Request):
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
+        session = sess.browser
         # Lock-free on purpose: usable while a long command is still running.
         #
         # Lock-free is not the same as instant, though. `session_status` asks
@@ -378,13 +491,13 @@ def create_app(
         # this route is for: the question is "is it alive and busy", and five
         # minutes of silence answers neither half.
         try:
-            return ok(
-                await asyncio.wait_for(
-                    run_in_threadpool(session_status, session), STATUS_TIMEOUT
-                )
+            result = await asyncio.wait_for(
+                run_in_threadpool(session_status, session), STATUS_TIMEOUT
             )
+            return ok({"session": sess.name, **result})
         except asyncio.TimeoutError:
             return ok({
+                "session": sess.name,
                 "running": session.is_running,
                 "busy": True,
                 "note": (
@@ -419,7 +532,7 @@ def create_app(
             )
 
     @app.get("/ops")
-    async def ops(names: bool = False):
+    async def ops(request: Request, names: bool = False):
         """Every op with its parameters -- which is what this always claimed.
 
         It returned bare names while `abt --help` advertised "every op and its
@@ -432,7 +545,11 @@ def create_app(
         # server that has it closed spends turns on a refusal, and the point of
         # closing it is to find out what the ops cannot express, not to watch
         # something discover a locked door.
-        hidden = () if session.run_js_enabled else ("run_js",)
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
+        hidden = () if sess.browser.run_js_enabled else ("run_js",)
         if names:
             return ok([name for name in OP_NAMES if name not in hidden])
         return ok({
@@ -526,11 +643,15 @@ def create_app(
         that purpose once the browser is optional: a healthy server with no
         browser would look like a failure to whatever started it.
         """
-        return {"ok": True, "running": session.is_running}
+        return {"ok": True, "running": registry.get(None).browser.is_running}
 
     @app.get("/browser")
-    async def browser():
-        return ok(browser_state(session))
+    async def browser(request: Request):
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
+        return ok(browser_state(sess.browser))
 
     async def _lifecycle(request: Request, op: str) -> dict:
         """Run a lifecycle op through the normal path: one lock, one log entry.
@@ -538,6 +659,10 @@ def create_app(
         Serialized against in-flight commands on purpose -- a start that raced
         a running command would launch Chrome underneath it.
         """
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
         payload: dict[str, Any] = {"op": op}
         if op in ("browser_start", "browser_restart", "browser_open_manual"):
             try:
@@ -551,7 +676,7 @@ def create_app(
                 for field in fields:
                     if body.get(field) is not None:
                         payload[field] = body[field]
-        results = await run_in_threadpool(execute, [payload], False)
+        results = await run_in_threadpool(execute, sess, [payload], False)
         return results[0]
 
     @app.post("/browser/start")
