@@ -115,9 +115,18 @@ def test_a_popup_stays_with_its_session(env, base_url):
         if len(own) == 2 or time.monotonic() > deadline:
             break
         time.sleep(0.1)
-    assert len(own) == 2
-    locked = [r for r in send(client, "s3", {"op": "tab_list"})["result"] if r.get("locked") == "s1"]
-    assert len(locked) == 2
+    assert len(own) == 2, rows
+    # Another session reads the page list from Chrome's own /json/list, which
+    # can trail the owning connection by a moment on a loaded runner (seen on
+    # Windows CI). Wait for it the same way, and say what was seen if not.
+    deadline = time.monotonic() + 5
+    while True:
+        seen = send(client, "s3", {"op": "tab_list"})["result"]
+        locked = [r for r in seen if r.get("locked") == "s1"]
+        if len(locked) == 2 or time.monotonic() > deadline:
+            break
+        time.sleep(0.1)
+    assert len(locked) == 2, seen
 
 
 def test_a_sealed_session_over_http(env):
