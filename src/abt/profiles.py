@@ -1,0 +1,438 @@
+"""Named browser profiles, and at most one hidden Chrome per profile.
+
+A profile is a Chrome user-data directory with a name. This registry owns the
+directories and the Chrome processes running on them; it knows nothing about
+sessions. A session asks for its profile's CDP endpoint with `attach` and says
+it is finished with `detach`.
+
+Chrome is launched as a plain process with `--remote-debugging-port=0`, not by
+Playwright, because every session connects a Playwright of its own to it --
+which is what lets two sessions on one profile run at the same moment. Remote
+debugging is allowed here because these are custom user-data directories;
+Chrome refuses it only on its own default profile.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable
+
+import httpx
+
+from .errors import OpError
+from .tabs import TabRegistry
+
+# A name becomes a path, so this is a security check rather than tidiness: it
+# rejects `..`, separators, drive letters and leading dots by construction.
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+DEFAULT = "default"
+LAUNCH_TIMEOUT = 60.0
+PORT_FILE = "DevToolsActivePort"
+
+# Chrome throttles what it thinks is in the background. With several sessions
+# driving several tabs at once, every tab is "in the background" to somebody.
+_UNTHROTTLED = (
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+)
+
+
+def check_name(name: Any, what: str = "profile") -> str:
+    if not isinstance(name, str) or not NAME.match(name):
+        raise OpError(
+            "invalid_op",
+            f"bad {what} name {name!r}: use letters, digits, '.', '_' and '-', "
+            "starting with a letter or digit, at most 64 characters",
+        )
+    return name
+
+
+def launch_argv(binary: Path, profile_dir: Path, headed: bool) -> list[str]:
+    argv = [
+        str(binary),
+        f"--user-data-dir={profile_dir}",
+        "--remote-debugging-port=0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        # The same anti-detection flag `BrowserSession._make_options` sets.
+        "--disable-blink-features=AutomationControlled",
+        *_UNTHROTTLED,
+    ]
+    if not headed:
+        argv += ["--headless=new", "--window-size=1440,900"]
+    argv.append("about:blank")
+    return argv
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _read_port(path: Path) -> int | None:
+    """The port Chrome chose, once it has finished writing the file."""
+    try:
+        return int(path.read_text(encoding="utf-8").splitlines()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _spawn(argv: list[str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _find_binary(browser: str) -> Path | None:
+    from . import doctor
+
+    return {b.name: b.path for b in doctor.find_browsers()}.get(browser)
+
+
+def _http_get(url: str) -> Any:
+    return httpx.get(url, timeout=3).json()
+
+
+@dataclass
+class Running:
+    process: Any
+    port: int
+    headed: bool
+    sessions: set[str] = field(default_factory=set)
+    watchers: int = 0
+    last_used: float = 0.0
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+
+class ProfileRegistry:
+    def __init__(
+        self,
+        root: Path,
+        default_dir: Path | None = None,
+        browser: str = "chrome",
+        max_running: int = 4,
+        idle_minutes: float = 30.0,
+        default_headed: bool = False,
+        spawn: Callable[[list[str]], Any] | None = None,
+        find_binary: Callable[[str], Path | None] | None = None,
+        http_get: Callable[[str], Any] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        launch_timeout: float = LAUNCH_TIMEOUT,
+    ) -> None:
+        self.root = Path(root).resolve()
+        self.default_dir = (
+            Path(default_dir).expanduser().resolve() if default_dir else self.root / DEFAULT
+        )
+        self.browser = browser
+        self.max_running = max_running
+        self.idle_seconds = idle_minutes * 60
+        self.default_headed = default_headed
+        self._spawn = spawn or _spawn
+        self._find_binary = find_binary or _find_binary
+        self._http_get = http_get or _http_get
+        self._clock = clock
+        self.launch_timeout = launch_timeout
+        # Guards the maps only. Launching and stopping take seconds, so they
+        # happen outside it -- one profile starting must never stall another
+        # session's `tab_list` on a different profile.
+        self._lock = threading.Lock()
+        self._running: dict[str, Running] = {}
+        self._launching: set[str] = set()
+        self._launch_locks: dict[str, threading.Lock] = {}
+        self._tabs: dict[str, TabRegistry] = {}
+
+    # --- names and directories -------------------------------------------------
+
+    def path(self, name: str) -> Path:
+        check_name(name)
+        if name == DEFAULT:
+            return self.default_dir
+        path = (self.root / name).resolve()
+        # Belt and braces: the regex already makes this impossible, and the
+        # cost of being wrong is deleting something outside the profile root.
+        if path.parent != self.root:
+            raise OpError("invalid_op", f"profile {name!r} resolves outside {self.root}")
+        return path
+
+    def exists(self, name: str) -> bool:
+        return name == DEFAULT or self.path(name).is_dir()
+
+    def require(self, name: str) -> str:
+        if not self.exists(name):
+            raise OpError("profile_not_found", f"no profile {name!r}")
+        return name
+
+    def _meta_path(self, name: str) -> Path:
+        return self.root / f"{name}.json"
+
+    def meta(self, name: str) -> dict:
+        try:
+            data = json.loads(self._meta_path(name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        headed = data.get("headed")
+        if headed is None:
+            # The default profile keeps whatever `abt serve` was told, so a
+            # server started without --headless still shows its window.
+            headed = self.default_headed if name == DEFAULT else False
+        return {"name": name, "created": data.get("created"), "headed": bool(headed)}
+
+    def _write_meta(self, name: str, meta: dict) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._meta_path(name).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    def describe(self, name: str) -> dict:
+        with self._lock:
+            running = self._live(name)
+            info = {
+                "running": running is not None,
+                "port": running.port if running else None,
+                "sessions": sorted(running.sessions) if running else [],
+            }
+        return {**self.meta(name), "path": str(self.path(name)), **info}
+
+    def list(self) -> list[dict]:
+        names = {DEFAULT}
+        if self.root.is_dir():
+            for entry in self.root.iterdir():
+                if entry.is_dir() and NAME.match(entry.name):
+                    names.add(entry.name)
+        return [self.describe(name) for name in sorted(names)]
+
+    def create(self, name: str) -> dict:
+        check_name(name)
+        if self.exists(name):
+            raise OpError("invalid_op", f"profile {name!r} already exists")
+        self.path(name).mkdir(parents=True)
+        self._write_meta(name, {"name": name, "created": _now(), "headed": False})
+        return self.describe(name)
+
+    def set_headed(self, name: str, headed: bool) -> dict:
+        self.require(name)
+        meta = self.meta(name)
+        meta["headed"] = bool(headed)
+        self._write_meta(name, meta)
+        return self.describe(name)
+
+    def remove(self, name: str, in_use: bool) -> None:
+        self.require(name)
+        if name == DEFAULT:
+            raise OpError("invalid_op", "the default profile cannot be removed")
+        with self._lock:
+            if in_use or self._live(name) is not None or name in self._launching:
+                raise OpError(
+                    "profile_in_use",
+                    f"profile {name!r} is used by a session or its browser is running",
+                )
+            self._tabs.pop(name, None)
+        shutil.rmtree(self.path(name))
+        self._meta_path(name).unlink(missing_ok=True)
+
+    # --- running browsers ------------------------------------------------------
+
+    def tabs(self, name: str) -> TabRegistry:
+        with self._lock:
+            return self._tabs_of(name)
+
+    def _tabs_of(self, name: str) -> TabRegistry:
+        found = self._tabs.get(name)
+        if found is None:
+            found = self._tabs[name] = TabRegistry(name)
+        return found
+
+    def _live(self, name: str) -> Running | None:
+        """The running Chrome for `name`, forgetting it if it has died."""
+        running = self._running.get(name)
+        if running is not None and not running.alive():
+            del self._running[name]
+            self._tabs_of(name).clear()
+            return None
+        return running
+
+    def running(self, name: str) -> Running | None:
+        with self._lock:
+            return self._live(name)
+
+    def attach(self, name: str, session: str) -> str:
+        """Make sure `name`'s Chrome is up and count `session` on it."""
+        with self._lock:
+            launch_lock = self._launch_locks.setdefault(name, threading.Lock())
+        with launch_lock:
+            with self._lock:
+                running = self._live(name)
+                if running is None:
+                    live = [n for n in list(self._running) if self._live(n) is not None]
+                    if len(live) + len(self._launching) >= self.max_running:
+                        raise OpError(
+                            "profile_limit",
+                            f"{len(live)} browsers already running "
+                            f"({', '.join(sorted(live)) or 'none'}); the limit is "
+                            f"{self.max_running}",
+                        )
+                    self._launching.add(name)
+            if running is None:
+                try:
+                    running = self._launch(name)
+                finally:
+                    with self._lock:
+                        self._launching.discard(name)
+                with self._lock:
+                    self._tabs_of(name).clear()
+                    self._running[name] = running
+            with self._lock:
+                running.sessions.add(session)
+                running.last_used = self._clock()
+                return running.url
+
+    def detach(self, name: str, session: str) -> None:
+        """`session` let go. The last one out stops Chrome, unless it is watched."""
+        with self._lock:
+            running = self._running.get(name)
+            if running is None:
+                return
+            running.sessions.discard(session)
+            if running.sessions or running.watchers:
+                return
+            del self._running[name]
+            self._tabs_of(name).clear()
+        self._close(running)
+
+    def touch(self, name: str) -> None:
+        with self._lock:
+            running = self._running.get(name)
+            if running is not None:
+                running.last_used = self._clock()
+
+    def watch(self, name: str, delta: int) -> None:
+        """A screencast opened (+1) or closed (-1). Watched means not idle."""
+        with self._lock:
+            running = self._running.get(name)
+            if running is not None:
+                running.watchers = max(0, running.watchers + delta)
+                running.last_used = self._clock()
+
+    def idle(self) -> list[str]:
+        if self.idle_seconds <= 0:
+            return []
+        now = self._clock()
+        with self._lock:
+            return sorted(
+                name
+                for name, running in self._running.items()
+                if running.watchers == 0 and now - running.last_used >= self.idle_seconds
+            )
+
+    def stop(self, name: str) -> bool:
+        with self._lock:
+            running = self._running.pop(name, None)
+            if running is None:
+                return False
+            self._tabs_of(name).clear()
+        self._close(running)
+        return True
+
+    def stop_all(self) -> None:
+        with self._lock:
+            names = list(self._running)
+        for name in names:
+            self.stop(name)
+
+    def targets(self, name: str) -> list[dict]:
+        """Every page in `name`'s Chrome, from Chrome's own /json/list."""
+        running = self.running(name)
+        if running is None:
+            return []
+        try:
+            rows = self._http_get(f"{running.url}/json/list")
+        except Exception:
+            return []
+        return [r for r in rows or [] if r.get("type") == "page"]
+
+    # --- process handling ------------------------------------------------------
+
+    def _launch(self, name: str) -> Running:
+        binary = self._find_binary(self.browser)
+        if binary is None:
+            raise OpError(
+                "browser_not_found",
+                f"no installed {self.browser} found; run `abt doctor --install-browser`.",
+            )
+        directory = self.path(name)
+        directory.mkdir(parents=True, exist_ok=True)
+        port_file = directory / PORT_FILE
+        # A file left by an earlier run names a port nobody is listening on.
+        port_file.unlink(missing_ok=True)
+        headed = self.meta(name)["headed"]
+        process = self._spawn(launch_argv(binary, directory, headed))
+        port = self._await_port(process, port_file, directory)
+        return Running(process=process, port=port, headed=headed, last_used=self._clock())
+
+    def _await_port(self, process: Any, port_file: Path, directory: Path) -> int:
+        deadline = time.monotonic() + self.launch_timeout
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                # Chrome single-instances per user-data-dir: a second launch
+                # hands off to the incumbent and exits at once. Say so, rather
+                # than leaving the caller to wait out the timeout.
+                from .browser import _profile_locked
+
+                if _profile_locked(SimpleNamespace(profile=directory)):
+                    raise OpError(
+                        "browser_dead",
+                        f"another browser is holding the profile at {directory} -- "
+                        "close it, then start again",
+                    )
+                raise OpError(
+                    "browser_dead",
+                    f"chrome exited during launch (exit code {process.returncode})",
+                )
+            port = _read_port(port_file)
+            if port is not None:
+                return port
+            time.sleep(0.1)
+        process.kill()
+        raise OpError(
+            "browser_dead",
+            f"chrome did not open its debugging port within {self.launch_timeout:g}s",
+        )
+
+    def _close(self, running: Running) -> None:
+        """Ask Chrome to close, then insist.
+
+        `Browser.close` over CDP lets Chrome flush the profile -- cookies
+        written in the last second are logins. Killing is the fallback.
+        """
+        try:
+            info = self._http_get(f"{running.url}/json/version")
+            from websockets.sync.client import connect
+
+            with connect(info["webSocketDebuggerUrl"], open_timeout=3) as ws:
+                ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+        except Exception:
+            pass
+        try:
+            running.process.wait(timeout=10)
+        except Exception:
+            running.process.kill()
+            try:
+                running.process.wait(timeout=5)
+            except Exception:
+                pass
