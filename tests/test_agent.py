@@ -117,3 +117,24 @@ def test_old_tool_results_are_trimmed_new_ones_kept():
 def test_the_system_prompt_names_the_rules():
     text = agent.system_prompt(["a.com", "!a.com/api"], run_js=False)
     assert "a.com, !a.com/api" in text and "run_js is switched off" in text
+
+
+def test_the_request_body_is_ascii_so_no_backend_chokes_on_it(monkeypatch):
+    """Seen live: a free model behind openrouter/free failed with "'ascii'
+    codec can't encode character '\u2014'" on page text holding an em dash."""
+    sent = {}
+
+    class Reply:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def post(url, headers=None, content=None, timeout=None, **kw):
+        sent["body"] = content
+        return Reply()
+
+    monkeypatch.setattr(agent.httpx, "post", post)
+    agent.complete("https://x.test/v1", "k", "m", [{"role": "user", "content": "a \u2014 b"}], [])
+    sent["body"].decode("ascii")  # raises if anything non-ASCII went out
+    assert json.loads(sent["body"])["messages"][0]["content"] == "a \u2014 b"

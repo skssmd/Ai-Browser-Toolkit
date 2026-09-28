@@ -660,6 +660,9 @@ function drawHistory() {
 function openChatSocket() {
   if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
   S.chatSock = null;
+  // A reply in flight belonged to the session being left; closing its socket
+  // stops it on the server. Without this "Working…" stuck to every session.
+  if (S.busy) setBusy(false);
   if (!S.session) return;
   sessionToken(S.session).then(token => {
     const q = new URLSearchParams({ session: S.session }); if (token) q.set("token", token);

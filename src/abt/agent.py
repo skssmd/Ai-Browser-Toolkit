@@ -81,11 +81,19 @@ def complete(
         headers["Authorization"] = f"Bearer {api_key}"
     # OpenRouter uses these to attribute traffic; other endpoints ignore them.
     headers["X-Title"] = "AI Browser Toolkit"
+    # Sent as ASCII-escaped JSON, not raw UTF-8. A router like openrouter/free
+    # hands the request to whichever backend is up, and some of them fail on a
+    # raw em dash from a page ("'ascii' codec can't encode character '—'").
+    # \u escapes are the same JSON to anything that parses it.
+    body = json.dumps(
+        {"model": model, "messages": messages, "tools": tool_list, "tool_choice": "auto"},
+        ensure_ascii=True,
+    )
     try:
         response = httpx.post(
             f"{endpoint.rstrip('/')}/chat/completions",
             headers=headers,
-            json={"model": model, "messages": messages, "tools": tool_list, "tool_choice": "auto"},
+            content=body.encode("ascii"),
             timeout=180,
         )
     except httpx.HTTPError as exc:

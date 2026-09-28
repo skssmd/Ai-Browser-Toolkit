@@ -1215,12 +1215,26 @@ def create_app(
                     emit({"type": "_end"})
 
             loop.run_in_executor(None, work)
+            gone = False
             while True:
                 event = await events.get()
                 if event.get("type") == "_end":
                     break
-                await ws.send_json(event)
-            await ws.send_json({"type": "done", "chat_id": chat["id"], "title": chat["title"]})
+                if gone:
+                    continue
+                try:
+                    await ws.send_json(event)
+                except (WebSocketDisconnect, RuntimeError):
+                    # The page went away -- another session picked, or a
+                    # reload. Stop the model rather than let it work unseen,
+                    # and keep draining so the chat is still saved.
+                    gone = True
+                    stop.set()
+            if not gone:
+                try:
+                    await ws.send_json({"type": "done", "chat_id": chat["id"], "title": chat["title"]})
+                except (WebSocketDisconnect, RuntimeError):
+                    pass
 
         try:
             while True:
