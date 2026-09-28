@@ -242,9 +242,22 @@ def to_op(tool: str, args: dict) -> Any:
 class Bridge:
     """Forwards tool calls to the HTTP API."""
 
-    def __init__(self, api: str = DEFAULT_API, timeout: float = 180.0) -> None:
+    def __init__(
+        self,
+        api: str = DEFAULT_API,
+        timeout: float = 180.0,
+        session: str | None = None,
+        token: str | None = None,
+    ) -> None:
         self.api = api.rstrip("/")
-        self.client = httpx.Client(timeout=timeout)
+        # Bound here, once, by whoever launched this process -- never by the
+        # model. No tool takes a session, so a model cannot leave its own.
+        headers = {}
+        if session:
+            headers["X-ABT-Session"] = session
+        if token:
+            headers["X-ABT-Token"] = token
+        self.client = httpx.Client(timeout=timeout, headers=headers)
 
     def call(self, tool: str, args: dict) -> tuple[str, bool]:
         """Returns (text, is_error). Never raises -- an agent needs a message."""
@@ -355,11 +368,17 @@ class Server:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def serve(api: str = DEFAULT_API, stdin=None, stdout=None) -> None:
+def serve(
+    api: str = DEFAULT_API,
+    stdin=None,
+    stdout=None,
+    session: str | None = None,
+    token: str | None = None,
+) -> None:
     """Read newline-delimited JSON-RPC from stdin, write replies to stdout."""
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
-    server = Server(Bridge(api))
+    server = Server(Bridge(api, session=session, token=token))
 
     for line in stdin:
         line = line.strip()

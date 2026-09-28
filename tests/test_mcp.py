@@ -305,3 +305,10 @@ def test_browser_session_omits_absent_overrides():
     from abt.mcp import to_op
 
     assert to_op("browser_session", {"action": "start"}) == {"op": "browser_start"}
+
+
+def test_the_bridge_carries_its_session_and_token():
+    bridge = Bridge("http://127.0.0.1:1", session="a", token="t")
+    assert bridge.client.headers["x-abt-session"] == "a"
+    assert bridge.client.headers["x-abt-token"] == "t"
+    assert "x-abt-session" not in Bridge("http://127.0.0.1:1").client.headers

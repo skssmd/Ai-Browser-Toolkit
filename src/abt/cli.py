@@ -219,8 +219,31 @@ browser_app = typer.Typer(
     help="Start, stop or restart the browser. The server runs without one.",
 )
 app.add_typer(browser_app, name="browser")
+session_app = typer.Typer(
+    add_completion=False,
+    help="Sessions: a profile, its settings, its tabs and its log. Whoever "
+    "launches an agent chooses its session; the agent never does.",
+)
+app.add_typer(session_app, name="session")
+profile_app = typer.Typer(
+    add_completion=False, help="Named browser profiles, each with its own logins."
+)
+app.add_typer(profile_app, name="profile")
 
 DEFAULT_PORT = 8765
+
+# Set once per invocation by the global --session/--token options, and sent
+# with every call to the server.
+_ROUTE: dict[str, str | None] = {"session": None, "token": None}
+
+
+def _headers() -> dict[str, str]:
+    headers = {}
+    if _ROUTE["session"]:
+        headers["X-ABT-Session"] = _ROUTE["session"]
+    if _ROUTE["token"]:
+        headers["X-ABT-Token"] = _ROUTE["token"]
+    return headers
 HOST = "127.0.0.1"
 
 
@@ -252,6 +275,17 @@ def _main(
         is_eager=True,
         help="Print the version and exit.",
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        envvar="ABT_SESSION",
+        help="Run in this session instead of `default`. Keeps cooperating "
+        "agents apart; it is NOT a security boundary -- any process can name "
+        "any open session.",
+    ),
+    token: Optional[str] = typer.Option(
+        None, "--token", envvar="ABT_TOKEN", help="The token of a sealed session."
+    ),
 ) -> None:
     """Agentic browser automation from the command line.
 
@@ -259,6 +293,8 @@ def _main(
     every packaging channel's smoke test is `abt --version`, and it has to
     work on a machine with no server running and no browser installed.
     """
+    _ROUTE["session"] = session
+    _ROUTE["token"] = token
 
 
 def _port_option() -> int:
@@ -341,10 +377,13 @@ def _call(
     if timeout is None:
         timeout = QUERY_TIMEOUT if method == "GET" else COMMAND_TIMEOUT
     try:
-        if method == "GET":
-            response = httpx.get(url, timeout=timeout)
-        else:
-            response = httpx.post(url, json=payload, timeout=timeout)
+        response = httpx.request(
+            method,
+            url,
+            json=None if method == "GET" else payload,
+            headers=_headers(),
+            timeout=timeout,
+        )
     except httpx.ConnectError:
         typer.secho(
             f"No server on {HOST}:{port}. Start one with `abt serve`.",
@@ -485,6 +524,18 @@ def serve(
         "--shots-max-mb",
         help="Stop capturing once one session's frames reach this size.",
     ),
+    max_profiles: int = typer.Option(
+        4,
+        "--max-profiles",
+        help="Most profile browsers running at once. A launch past it is "
+        "refused; nothing is ever closed to make room.",
+    ),
+    profile_idle_minutes: float = typer.Option(
+        30.0,
+        "--profile-idle-minutes",
+        help="Stop a profile's browser after this long with no commands and "
+        "nobody watching it. 0 keeps browsers running.",
+    ),
     engine: str = typer.Option(
         "playwright",
         "--engine",
@@ -523,10 +574,7 @@ def serve(
     _start_guideline_check(no_guideline_lookup)
 
     browser = _choose_browser(browser)
-    session = BrowserSession(
-        profile=profile,
-        browser=browser,
-        headless=headless,
+    behaviour = dict(
         action_timeout=action_timeout,
         diff_enabled=not no_diff,
         diff_max_tokens=diff_max_tokens,
@@ -539,37 +587,61 @@ def serve(
         max_frame_depth=max_frame_depth,
         engine=engine,
     )
-    if start_browser:
-        typer.echo(f"starting {browser} via {engine} (profile: {session.profile})")
-        session.start()
-    else:
-        typer.echo(
-            f"no browser running (default: {browser}, profile: {session.profile})"
-        )
-        typer.echo('start one with {"op": "browser_start"} or POST /browser/start')
-
-    recorder = None if no_log else SessionRecorder(log_dir, max_shot_mb=shots_max_mb)
-    if recorder is not None:
-        typer.echo(f"recording session {recorder.session_id} -> {recorder.path}")
-        if not no_shots:
-            typer.echo(f"capturing frames -> {recorder.shots_dir}")
-
     holder: dict[str, Any] = {}
-    application = create_app(
-        session,
-        request_stop=lambda: holder["server"].__setattr__("should_exit", True),
-        recorder=recorder,
-        shots=not no_shots,
-        shot_quality=shot_quality,
-        shot_width=shot_width,
+
+    def stop() -> None:
+        holder["server"].should_exit = True
+
+    shot_options = dict(
+        shots=not no_shots, shot_quality=shot_quality, shot_width=shot_width
     )
+
+    if engine == "playwright":
+        registry = _build_registry(
+            browser, profile, headless, log_dir, no_log, shots_max_mb,
+            max_profiles, profile_idle_minutes, behaviour,
+        )
+        default = registry.get(None).browser
+        if start_browser:
+            typer.echo(f"starting {browser} (profile: {default.profile})")
+            default.start()
+        else:
+            typer.echo(f"no browser running (default profile: {default.profile})")
+            typer.echo('start one with {"op": "browser_start"} or POST /browser/start')
+        typer.echo(f"sessions: {len(registry.list())} (`abt session list`)")
+        typer.echo(f"operator token -> {paths.sessions_dir() / 'operator.token'}")
+        application = create_app(registry=registry, request_stop=stop, **shot_options)
+        registry.start_reaper()
+        closer = registry.close_all
+    else:
+        session = BrowserSession(
+            profile=profile, browser=browser, headless=headless, **behaviour
+        )
+        if start_browser:
+            typer.echo(f"starting {browser} via {engine} (profile: {session.profile})")
+            session.start()
+        else:
+            typer.echo(
+                f"no browser running (default: {browser}, profile: {session.profile})"
+            )
+            typer.echo('start one with {"op": "browser_start"} or POST /browser/start')
+        recorder = None if no_log else SessionRecorder(log_dir, max_shot_mb=shots_max_mb)
+        if recorder is not None:
+            typer.echo(f"recording session {recorder.session_id} -> {recorder.path}")
+            if not no_shots:
+                typer.echo(f"capturing frames -> {recorder.shots_dir}")
+        application = create_app(
+            session, request_stop=stop, recorder=recorder, **shot_options
+        )
+        closer = session.quit
+
     config = uvicorn.Config(
         application, host=HOST, port=port, log_level="warning", access_log=False
     )
     holder["server"] = uvicorn.Server(config)
 
     typer.echo(f"listening on http://{HOST}:{port}  (POST /command-list)")
-    if recorder is not None:
+    if not no_log:
         typer.echo(f"log viewer at http://{HOST}:{port}/viewer")
     typer.echo("send {\"op\": \"shutdown\"} to stop")
     try:
@@ -577,8 +649,50 @@ def serve(
     except KeyboardInterrupt:
         pass
     finally:
-        session.quit()
+        closer()
     typer.echo("stopped")
+
+
+def _build_registry(
+    browser, profile, headless, log_dir, no_log, shots_max_mb,
+    max_profiles, idle_minutes, behaviour,
+):
+    """The sessions a playwright server runs: profiles, records, the operator."""
+    import secrets
+
+    from .browser import BrowserSession
+    from .profiles import ProfileRegistry
+    from .sessions import SessionRegistry, SessionStore, write_private
+
+    profiles = ProfileRegistry(
+        root=paths.profile_root(),
+        default_dir=profile,
+        browser=browser,
+        max_running=max_profiles,
+        idle_minutes=idle_minutes,
+        # A server started without --headless showed its window before
+        # sessions existed, and still does for the default profile.
+        default_headed=not headless,
+    )
+    store_dir = paths.sessions_dir()
+    # A fresh operator token per server run, readable only by this user. The
+    # desktop app reads it from here; nothing ever sends it to a model.
+    operator = secrets.token_urlsafe(32)
+    write_private(store_dir / "operator.token", operator)
+
+    def make_browser(directory, attach):
+        return BrowserSession(
+            profile=directory, browser=browser, headless=headless, attach=attach, **behaviour
+        )
+
+    return SessionRegistry(
+        SessionStore(store_dir),
+        profiles,
+        make_browser,
+        log_root=None if no_log else log_dir,
+        recorder_options={"max_shot_mb": shots_max_mb},
+        operator_token=operator,
+    )
 
 
 def _healthy(base: str) -> bool:
@@ -787,6 +901,13 @@ def mcp(
     api: str = typer.Option(
         "http://127.0.0.1:8765", "--api", help="Where the toolkit server is listening."
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        envvar="ABT_SESSION",
+        help="Bind this connection to a session. Fixed for its life; no tool can change it.",
+    ),
+    token: Optional[str] = typer.Option(None, "--token", envvar="ABT_TOKEN"),
 ) -> None:
     """Speak MCP on stdin/stdout, forwarding to a running toolkit server.
 
@@ -796,7 +917,9 @@ def mcp(
     """
     from . import mcp as mcp_module
 
-    mcp_module.serve(api)
+    mcp_module.serve(
+        api, session=session or _ROUTE["session"], token=token or _ROUTE["token"]
+    )
 
 
 @app.command()
@@ -1421,3 +1544,102 @@ def browser_open_manual(
     if profile is not None:
         payload["profile"] = str(profile)
     _call(port, "/browser/open-manual", payload)
+
+
+# --- sessions and profiles ----------------------------------------------------
+
+
+@session_app.command("list")
+def session_list(port: int = _port_option()) -> None:
+    """Every session, its profile, and whether its browser is connected."""
+    _call(port, "/sessions", method="GET")
+
+
+@session_app.command("new")
+def session_new(
+    name: str = typer.Argument(..., help="Letters, digits, '.', '_', '-'."),
+    profile: str = typer.Option("default", "--profile", help="Profile it runs on."),
+    sealed: bool = typer.Option(
+        False,
+        "--sealed",
+        help="Require a token for every command. Printed once, and saved "
+        "beside the session for the program that launches the agent.",
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Create a session. It starts with no browser: send browser_start in it."""
+    _call(port, "/sessions", {"name": name, "profile": profile, "sealed": sealed})
+
+
+@session_app.command("show")
+def session_show(name: str, port: int = _port_option()) -> None:
+    """One session's profile and settings."""
+    _call(port, f"/sessions/{name}", method="GET")
+
+
+@session_app.command("set")
+def session_set(
+    name: str,
+    profile: Optional[str] = typer.Option(
+        None, "--profile", help="Move to another profile. Closes the session's tabs."
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Change a session. Applies from its next command."""
+    payload = {}
+    if profile is not None:
+        payload["profile"] = profile
+    _call(port, f"/sessions/{name}", payload, method="PATCH")
+
+
+@session_app.command("rm")
+def session_rm(
+    name: str,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask."),
+    port: int = _port_option(),
+) -> None:
+    """Remove a session. Its tabs close; its logs are kept."""
+    if not _confirm(f"Remove session {name}? Its tabs close; its logs are kept.", yes):
+        raise typer.Exit(1)
+    _call(port, f"/sessions/{name}", method="DELETE")
+
+
+@profile_app.command("list")
+def profile_list(port: int = _port_option()) -> None:
+    """Every profile, and whether its browser is running."""
+    _call(port, "/profiles", method="GET")
+
+
+@profile_app.command("new")
+def profile_new(name: str, port: int = _port_option()) -> None:
+    """Create an empty profile. Sign in through a session on it."""
+    _call(port, "/profiles", {"name": name})
+
+
+@profile_app.command("set")
+def profile_set(
+    name: str,
+    headed: bool = typer.Option(
+        ...,
+        "--headed/--headless",
+        help="Show a real window for sites that misbehave hidden. Applies the "
+        "next time the profile's browser starts.",
+    ),
+    port: int = _port_option(),
+) -> None:
+    """Change how a profile's browser runs."""
+    _call(port, f"/profiles/{name}", {"headed": headed}, method="PATCH")
+
+
+@profile_app.command("rm")
+def profile_rm(
+    name: str,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask."),
+    port: int = _port_option(),
+) -> None:
+    """Delete a profile and every login in it. Cannot be undone."""
+    if not _confirm(
+        f"Delete profile {name} and every login in it? This cannot be undone.", yes
+    ):
+        raise typer.Exit(1)
+    _call(port, f"/profiles/{name}", method="DELETE")

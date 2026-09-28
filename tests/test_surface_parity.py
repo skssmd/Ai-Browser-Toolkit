@@ -30,6 +30,8 @@ LIFECYCLE = {
     "status", "health", "doctor", "logs", "ops", "guidelines", "mcp",  # look at it
     "messenger",                                          # a site shortcut
     "command-list",                                       # every page action
+    # sessions and profiles: where commands run, not what they do
+    "session", "profile",
 }
 
 # `health` is here rather than being a drift: there is no `health` op, so it
