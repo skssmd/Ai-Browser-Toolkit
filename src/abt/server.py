@@ -1283,7 +1283,8 @@ def create_app(
         def work() -> None:
             tool_list = agent_util.tools()
             system = agent_util.system_prompt(
-                sess.record.settings.get("rules"), sess.browser.run_js_enabled
+                sess.record.settings.get("rules"), sess.browser.run_js_enabled,
+                bool(sess.record.settings.get("only_listed")),
             )
             try:
                 used = agent_util.run_turn(

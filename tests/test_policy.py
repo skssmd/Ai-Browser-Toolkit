@@ -145,3 +145,41 @@ def test_a_rule_change_applies_to_the_next_command(client):
         headers={"X-ABT-Session": "a"},
     ).json()
     assert body["error"]["type"] == "url_blocked"
+
+
+def test_all_allows_every_site_and_limits_nothing():
+    policy = Policy(["all"], only_listed=True)
+    assert not policy  # no guard needed
+    assert policy.allows("https://anything.example/x")
+    assert not Policy(["*"])
+
+
+def test_all_with_a_block_is_everything_but_that():
+    policy = Policy(["all", "!app.example.com/api"], only_listed=True)
+    assert policy
+    assert policy.allows("https://example.org/")
+    assert policy.allows("https://app.example.com/admin")
+    assert not policy.allows("https://app.example.com/api/users")
+
+
+def test_only_listed_with_nothing_listed_reaches_nothing():
+    policy = Policy([], only_listed=True)
+    assert policy
+    assert not policy.allows("https://example.com/")
+    assert policy.allows("about:blank")
+    with pytest.raises(OpError, match="allowed-sites list is empty"):
+        policy.check("https://example.com/")
+    # Only blocks, and nothing allowed: still nothing.
+    assert not Policy(["!evil.example"], only_listed=True).allows("https://example.com/")
+
+
+def test_without_only_listed_an_empty_list_still_means_no_limit():
+    """Sessions made before `only_listed` keep working as they did."""
+    assert not Policy([])
+    assert Policy([]).allows("https://example.com/")
+    assert Policy(["!evil.example"]).allows("https://example.com/")
+
+
+def test_only_listed_must_be_a_boolean():
+    with pytest.raises(OpError):
+        validate_settings({"only_listed": "yes"})

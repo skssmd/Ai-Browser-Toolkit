@@ -2,7 +2,13 @@
 
 A session's `rules` are strings like `app.domain.com/admin` (allow) and
 `!app.domain.com/api` (deny). Deny wins; any allow rule turns the list into an
-allow-list. See the session-policy design for the full grammar.
+allow-list. `all` (or `*`) allows every site, so `all` plus `!` lines reads
+"everything but these". See the session-policy design for the full grammar.
+
+With the `only_listed` setting the list is the whole truth: a site is reachable
+only when an allow line covers it, so an empty list reaches nothing. Without
+it (the default, and every session made before it existed) an empty list
+means no limit.
 
 Pure: no browser, no I/O. The same object answers the op-level check before a
 `goto` and every request the network guard pauses, so the two can never
@@ -41,6 +47,8 @@ class Rule:
     path: str  # "" or "/segment[/...]", no trailing slash
 
     def matches(self, host: str, path: str) -> bool:
+        if self.host == ANY:
+            return True
         if self.host.startswith("*."):
             base = self.host[2:]
             if host != base and not host.endswith("." + base):
@@ -52,12 +60,19 @@ class Rule:
         return path == self.path or path.startswith(self.path + "/")
 
 
+# The rule that covers every site: `all` or `*`.
+ANY = "*"
+_ANY_WORDS = ("all", "*")
+
+
 def parse_rule(text: str) -> Rule:
     if not isinstance(text, str) or not text.strip():
         raise OpError("invalid_op", f"a URL rule must be a non-empty string, got {text!r}")
     raw = text.strip()
     deny = raw.startswith("!")
     body = raw[1:].strip() if deny else raw
+    if body.lower() in _ANY_WORDS:
+        return Rule(text=raw, deny=deny, host=ANY, path="")
     if "://" in body:
         body = body.split("://", 1)[1]
     host, _, path = body.partition("/")
@@ -73,19 +88,28 @@ def parse_rule(text: str) -> Rule:
 
 
 class Policy:
-    """A session's rules, compiled. Falsy when there are none."""
+    """A session's rules, compiled. Falsy when they limit nothing."""
 
-    def __init__(self, rules: list[str] | None = None, strict: bool = False) -> None:
+    def __init__(
+        self, rules: list[str] | None = None, strict: bool = False, only_listed: bool = False
+    ) -> None:
         self.rules = [parse_rule(r) for r in (rules or [])]
         self.strict = bool(strict)
-        self._allow_list = any(not r.deny for r in self.rules)
+        self.only_listed = bool(only_listed)
+        self._allow_list = self.only_listed or any(not r.deny for r in self.rules)
+        # `all` with nothing blocked limits nothing: no guard needed.
+        self._open = (
+            not self._allow_list and not self.rules
+        ) or (
+            not any(r.deny for r in self.rules) and any(r.host == ANY for r in self.rules)
+        )
 
     def __bool__(self) -> bool:
-        return bool(self.rules)
+        return not self._open
 
     def verdict(self, url: str) -> tuple[bool, str | None]:
         """(allowed, the rule that decided it -- None when no rule did)."""
-        if not self.rules:
+        if self._open:
             return True, None
         try:
             parts = urlsplit(url)
@@ -129,7 +153,12 @@ class Policy:
         allowed, rule = self.verdict(url)
         if allowed:
             return
-        why = f"it matches {rule!r}" if rule else "no allow rule covers it"
+        if rule:
+            why = f"it matches {rule!r}"
+        elif self.only_listed and not any(not r.deny for r in self.rules):
+            why = "its allowed-sites list is empty, so no site is allowed"
+        else:
+            why = "no allow rule covers it"
         raise OpError("url_blocked", f"this session's rules do not allow {url}: {why}")
 
 
@@ -148,7 +177,7 @@ def validate_settings(settings: object) -> dict:
             raise OpError("invalid_op", "settings.rules must be a list of strings")
         for rule in rules:
             parse_rule(rule)
-    for key in ("strict", "run_js", "uploads_only"):
+    for key in ("strict", "run_js", "uploads_only", "only_listed"):
         value = settings.get(key)
         if value is not None and not isinstance(value, bool):
             raise OpError("invalid_op", f"settings.{key} must be true or false")
@@ -157,4 +186,6 @@ def validate_settings(settings: object) -> dict:
 
 def from_settings(settings: dict | None) -> Policy:
     settings = settings or {}
-    return Policy(settings.get("rules") or [], bool(settings.get("strict")))
+    return Policy(
+        settings.get("rules") or [], bool(settings.get("strict")), bool(settings.get("only_listed"))
+    )

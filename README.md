@@ -405,7 +405,10 @@ abt mcp --session research                # an MCP client bound to it for its wh
   (default 30) stops idle ones.
 - **URL rules** per session: `abt session set research --rules
   "app.example.com/admin,!app.example.com/api"`. A rule allows a host and path;
-  `!` blocks one; any allow rule makes everything else blocked. They are
+  `!` blocks one; any allow rule makes everything else blocked; `all` (or `*`)
+  allows every site, so `all,!ads.example.com` is "everything but that". The
+  setting `only_listed` (what the app uses) makes the list the whole truth: an
+  empty list then blocks every site. They are
   enforced on the network too, so a link, a redirect or a `fetch()` from
   `run_js` cannot get around them. `--no-run-js` switches `run_js` off for the
   session; `--strict` checks every request, not just pages and API calls.

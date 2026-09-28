@@ -75,9 +75,14 @@ def tools(exclude: frozenset[str] = APP_EXCLUDED_TOOLS) -> list[dict]:
     ]
 
 
-def system_prompt(rules: list[str] | None, run_js: bool) -> str:
+def system_prompt(rules: list[str] | None, run_js: bool, only_listed: bool = False) -> str:
     text = mcp.INSTRUCTIONS + EXTRA
-    if rules:
+    if only_listed and not [r for r in rules or [] if not r.strip().startswith("!")]:
+        text += (
+            "\nThis session's allowed-sites list is empty: it may not open any site. "
+            "Tell the person, who can add sites in the chat settings.\n"
+        )
+    elif rules and [r.strip().lower() for r in rules] != ["all"]:
         text += (
             "\nThis session may only reach URLs its rules allow: "
             + ", ".join(rules)

@@ -102,6 +102,7 @@ APP_HTML = r"""<!doctype html>
     font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line);
     color: var(--muted); cursor: pointer; background: transparent;
   }
+  .pill.warn { color: var(--bad); border-color: var(--bad); }
   #model-btn .label { color: var(--muted); }
   #model-btn .value { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: bottom; }
 
@@ -167,7 +168,7 @@ APP_HTML = r"""<!doctype html>
   .card-head b { display: block; font-size: 13.5px; }
   .card-head small { display: block; color: var(--muted); font-size: 12px; line-height: 1.35; }
   .card-row {
-    display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px;
+    display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 10px;
     padding: 8px 12px; border-bottom: 1px solid var(--line); min-height: 42px;
   }
   .card-row:last-child { border-bottom: none; }
@@ -434,17 +435,17 @@ APP_HTML = r"""<!doctype html>
   <label class="field" id="ses-name-row"><span>Name</span>
     <input type="text" id="ses-name" placeholder="e.g. research" spellcheck="false">
     <span class="hint">Lowercase letters, numbers and dashes.</span></label>
-  <label class="field"><span>Logins from</span>
+  <label class="field"><span>Profile / logins</span>
     <span style="display:flex; gap:6px">
       <select id="ses-profile" style="flex:1"></select>
       <button class="icon" id="ses-profile-del" type="button" title="Delete this profile and its logins (only if no session uses it)">🗑</button>
     </span>
-    <span class="hint">A profile keeps logins and cookies. Sessions on the same profile share them.</span></label>
+    <span class="hint">A profile keeps logins and cookies. Chats on the same profile share them.</span></label>
   <label class="field" id="ses-newprofile-row" hidden><span>New profile name</span>
     <input type="text" id="ses-newprofile" placeholder="e.g. work" spellcheck="false"></label>
-  <label class="field"><span>Sites it may visit</span>
-    <textarea id="ses-rules" spellcheck="false" placeholder="Leave empty for any site.&#10;app.example.com/admin&#10;!app.example.com/api"></textarea>
-    <span class="hint">One per line. A line allows a site or page; a line starting with ! blocks it. Once anything is allowed, everything else is blocked.</span></label>
+  <label class="field"><span>Allowed sites</span>
+    <textarea id="ses-rules" spellcheck="false" placeholder="all&#10;app.example.com/admin&#10;!app.example.com/api"></textarea>
+    <span class="hint">One per line. <code>all</code> allows every site; a site or page allows just that; <code>!</code> blocks one. Only what is listed works: an empty list blocks every site.</span></label>
   <details class="more"><summary>More</summary>
     <label class="check"><input type="checkbox" id="ses-runjs" checked><span>Let the AI run scripts on the page<small>Scripts still cannot reach blocked sites.</small></span></label>
     <label class="check"><input type="checkbox" id="ses-strict"><span>Also check images, styles and scripts against the site list<small>Stricter, but pages that load from other sites may break.</small></span></label>
@@ -484,7 +485,7 @@ const S = {
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
   starting: false, lastStart: {}, downloadsSeen: {}, follow: null, draft: false, convs: [], pendingSend: null,
-  draftSettings: { profile: "default", newProfile: "", rules: "", runJs: true, strict: false, rulesOpen: false },
+  draftSettings: { profile: "default", newProfile: "", rules: "all", runJs: true, strict: false, rulesOpen: false },
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -593,16 +594,17 @@ function drawSessionButton() {
     return;
   }
   const info = S.sessions.find(s => s.name === S.session) || { name: S.session, profile: S.profile };
-  $("#context-text").textContent = `Logins: ${info.profile}` + (info.sealed ? " 🔒" : "");
+  $("#context-text").textContent = `Profile: ${info.profile}` + (info.sealed ? " 🔒" : "");
   $("#session-dot").className = "dot" + (S.runningChats.size ? " busy" : S.running ? " on" : "");
-  const rules = (info.settings && info.settings.rules) || S.rules || [];
+  const st = info.settings || {};
+  const rules = st.rules || S.rules || [];
+  const listed = st.only_listed ? rules : (rules.some(r => !r.startsWith("!")) ? rules : ["all", ...rules]);
+  const summary = rulesSummary(listed.join("\n"));
   const pill = $("#rules-pill");
-  pill.hidden = !rules.length;
-  if (rules.length) {
-    const allowed = rules.filter(r => !r.startsWith("!"));
-    pill.textContent = allowed.length ? `Limited to ${allowed.length === 1 ? allowed[0] : allowed.length + " sites"}` : `${rules.length} site${rules.length > 1 ? "s" : ""} blocked`;
-    pill.title = "Sites this chat may visit:\n" + rules.join("\n") + "\n\nClick to change.";
-  }
+  pill.hidden = summary === "All sites";
+  pill.classList.toggle("warn", summary === "No sites");
+  pill.textContent = summary;
+  pill.title = "Allowed sites:\n" + (listed.join("\n") || "(none)") + "\n\nClick to change.";
 }
 $("#context-btn").onclick = () => { if (S.session) openSessionDialog(true); };
 $("#rules-pill").onclick = () => openSessionDialog(true);
@@ -674,7 +676,9 @@ function openSessionDialog(edit) {
   if (edit) {
     api("GET", "/sessions/" + encodeURIComponent(S.session)).then(info => {
       const st = info.settings || {};
-      $("#ses-rules").value = (st.rules || []).join("\n");
+      // Before `only_listed`, an empty list meant any site: show that as `all`.
+      const rules = st.rules || [];
+      $("#ses-rules").value = (st.only_listed || rules.some(r => !r.startsWith("!")) ? rules : ["all", ...rules]).join("\n");
       $("#ses-strict").checked = !!st.strict;
       $("#ses-runjs").checked = st.run_js !== false;
     }).catch(fail);
@@ -687,6 +691,7 @@ function openSessionDialog(edit) {
   $("#ses-save").onclick = async () => {
     const settings = {
       rules: $("#ses-rules").value.split("\n").map(s => s.trim()).filter(Boolean),
+      only_listed: true,
       strict: $("#ses-strict").checked, run_js: $("#ses-runjs").checked,
     };
     const name = edit ? S.session : $("#ses-name").value.trim().toLowerCase();
@@ -1093,12 +1098,11 @@ $("#chat-new").onclick = () => enterDraft();
 
 function rulesSummary(text) {
   const rules = (text || "").split("\n").map(r => r.trim()).filter(Boolean);
-  if (!rules.length) return "Any site";
   const allow = rules.filter(r => !r.startsWith("!")), block = rules.length - allow.length;
-  const parts = [];
-  if (allow.length) parts.push(allow.length === 1 ? `Only ${allow[0]}` : `Only ${allow.length} sites`);
-  if (block) parts.push(`${block} blocked`);
-  return parts.join(", ");
+  if (!allow.length) return "No sites";
+  const all = allow.some(r => ["all", "*"].includes(r.toLowerCase()));
+  const head = all ? "All sites" : allow.length === 1 ? `Only ${allow[0]}` : `Only ${allow.length} sites`;
+  return block ? `${head}, ${block} blocked` : head;
 }
 
 function drawCreator() {
@@ -1111,21 +1115,21 @@ function drawCreator() {
         <span><b>New chat</b><small>It gets its own browser. Set it up, then type what to do below. Change it later from ⋯.</small></span>
       </div>
       <div class="card-row">
-        <span class="k" title="A profile keeps logins and cookies. Chats on the same profile share them.">Logins</span>
+        <span class="k" title="A profile keeps logins and cookies. Chats on the same profile share them.">Profile / logins</span>
         <span class="v">
-          <select id="new-profile" aria-label="Logins from">${profiles}<option value="__new__"${d.profile === "__new__" ? " selected" : ""}>＋ New profile (signed out)</option></select>
+          <select id="new-profile" aria-label="Profile / logins">${profiles}<option value="__new__"${d.profile === "__new__" ? " selected" : ""}>＋ New profile (signed out)</option></select>
           <input type="text" id="new-profile-name" placeholder="Name it, e.g. work" spellcheck="false" aria-label="New profile name" value="${esc(d.newProfile || "")}"${d.profile === "__new__" ? "" : " hidden"}>
         </span>
       </div>
       <div class="card-row stack">
-        <span class="k">Sites</span>
+        <span class="k" title="Where the AI may go. Only what is listed works.">Allowed sites</span>
         <span class="v">
           <button class="summary-btn" id="rules-toggle" aria-expanded="${d.rulesOpen ? "true" : "false"}"${d.rulesOpen ? " hidden" : ""}>
-            <span class="what" id="rules-what">${esc(rulesSummary(d.rules))}</span><span class="edit">Limit…</span>
+            <span class="what" id="rules-what">${esc(rulesSummary(d.rules))}</span><span class="edit">Edit…</span>
           </button>
           <span class="rules-edit" id="rules-edit"${d.rulesOpen ? "" : " hidden"}>
-            <textarea id="new-rules" spellcheck="false" aria-label="Sites it may visit" placeholder="app.example.com/admin&#10;!app.example.com/api">${esc(d.rules || "")}</textarea>
-            <small>One per line. A line allows a site or page, <code>!</code> blocks one. Once anything is allowed, the rest is blocked. Empty means any site.</small>
+            <textarea id="new-rules" spellcheck="false" aria-label="Allowed sites" placeholder="all&#10;app.example.com/admin&#10;!app.example.com/api">${esc(d.rules || "")}</textarea>
+            <small>One per line. <code>all</code> allows every site, a site or page allows just that, <code>!</code> blocks one. An empty list blocks every site.</small>
           </span>
         </span>
       </div>
@@ -1166,7 +1170,7 @@ async function createChatSession() {
   }
   const settings = {
     rules: (d.rules || "").split("\n").map(r => r.trim()).filter(Boolean),
-    run_js: !!d.runJs, strict: !!d.strict,
+    only_listed: true, run_js: !!d.runJs, strict: !!d.strict,
   };
   const out = await api("POST", "/sessions", { name, profile, sealed: true, settings }, { session: null });
   if (out.token) { S.tokens[name] = out.token; try { sessionStorage.setItem("abt.tok." + name, out.token); } catch (e) {} }
