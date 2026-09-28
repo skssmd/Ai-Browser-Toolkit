@@ -89,6 +89,24 @@ APP_HTML = r"""<!doctype html>
   .spacer { flex: 1; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
+  /* --- model settings: how to connect --- */
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 14px 0 4px; }
+  .seg label {
+    display: flex; align-items: center; gap: 9px; padding: 9px 11px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  }
+  .seg label:has(input:checked) { border-color: var(--ink); background: var(--raised); }
+  .seg input { accent-color: var(--ink); margin: 0; outline: none; }
+  .seg label:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .seg span { display: flex; flex-direction: column; line-height: 1.3; font-weight: 600; }
+  .seg small { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .soon {
+    display: flex; flex-direction: column; gap: 3px; margin: 12px 0 4px; padding: 10px 12px;
+    border: 1px dashed var(--line); border-radius: 9px; color: var(--muted);
+  }
+  .soon b { color: var(--ink); font-weight: 600; }
+  #set-keyfields[hidden], .soon[hidden] { display: none; }
+
   /* --- the chat's context line: profile and allowed sites --- */
   #context {
     display: flex; align-items: center; gap: 6px; padding: 4px 10px;
@@ -410,7 +428,16 @@ APP_HTML = r"""<!doctype html>
 
 <dialog id="dlg-settings">
   <h2>Model</h2>
-  <p class="lead">The AI that reads the page and decides what to do. Any OpenAI-compatible service works.</p>
+  <p class="lead">The AI that reads the page and decides what to do.</p>
+  <div class="seg" role="radiogroup" aria-label="How to connect">
+    <label><input type="radio" name="set-auth" value="oauth"><span>Sign in<small>OAuth</small></span></label>
+    <label><input type="radio" name="set-auth" value="key" checked><span>OpenRouter<small>personal API key</small></span></label>
+  </div>
+  <div id="set-oauth" class="soon" hidden>
+    <b>Sign-in isn't available yet.</b>
+    <span>Use an OpenRouter API key for now. It's free to create at openrouter.ai/keys.</span>
+  </div>
+  <div id="set-keyfields">
   <label class="field"><span>API key</span>
     <input type="password" id="set-key" placeholder="Leave empty to keep the saved key" autocomplete="off">
     <span class="hint" id="set-keyhint"></span></label>
@@ -423,6 +450,7 @@ APP_HTML = r"""<!doctype html>
       <input type="text" id="set-endpoint" spellcheck="false">
       <span class="hint">For example http://localhost:11434/v1 for Ollama.</span></label>
   </details>
+  </div>
   <div class="actions">
     <span class="spacer"></span>
     <button data-close>Cancel</button>
@@ -964,8 +992,18 @@ async function openModelDialog() {
   $("#set-key").value = "";
   $("#set-keyhint").textContent = S.settings.has_key ? `A key ending ${S.settings.key_hint} is saved.` : "No key saved yet.";
   $("#set-models").value = (S.settings.models || []).join("\n");
+  document.querySelector('input[name="set-auth"][value="key"]').checked = true;
+  drawAuth();
   $("#dlg-settings").showModal();
 }
+// Sign-in is a placeholder for now: choosing it explains, and saves nothing.
+function drawAuth() {
+  const oauth = document.querySelector('input[name="set-auth"]:checked').value === "oauth";
+  $("#set-oauth").hidden = !oauth;
+  $("#set-keyfields").hidden = oauth;
+  $("#set-save").disabled = oauth;
+}
+document.querySelectorAll('input[name="set-auth"]').forEach(r => r.onchange = drawAuth);
 async function freeModels() {
   return api("GET", "/app/models/free", undefined, { operator: true, session: null });
 }
