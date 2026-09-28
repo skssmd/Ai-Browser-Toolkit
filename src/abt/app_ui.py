@@ -154,6 +154,16 @@ APP_HTML = r"""<!doctype html>
     background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px;
   }
   #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #chooser {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 5;
+    width: min(460px, 92%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 14px 16px;
+  }
+  .chooser-title { font-weight: 600; margin-bottom: 10px; }
+  .chooser-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chooser-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .files-menu { left: auto; right: 0; top: calc(100% + 6px); width: 320px; }
+  .menu-empty { color: var(--muted); font-size: 12px; padding: 4px 8px 8px; }
 
   #splitter { width: 5px; cursor: col-resize; background: var(--line); flex: none; }
   #splitter:hover { background: var(--muted); }
@@ -305,11 +315,17 @@ APP_HTML = r"""<!doctype html>
       <button class="icon ghost" id="reload" title="Reload">⟳</button>
       <input id="url" placeholder="Type an address and press Enter (Ctrl+L)" spellcheck="false" aria-label="Address">
       <button class="icon ghost" id="newtab" title="New tab">＋</button>
+      <span style="position:relative">
+        <button class="icon ghost" id="files-btn" title="Files: what the AI may upload, and what was downloaded">📁</button>
+        <div class="menu files-menu" id="files-menu" hidden></div>
+      </span>
       <button class="icon ghost" id="restart" title="Restart this browser. It starts and recovers on its own; use this if a page is stuck.">⏻</button>
     </div>
     <div id="view">
       <img id="screen" tabindex="0" alt="The live browser page. Click and type here to use it yourself." draggable="false">
       <div id="viewmsg">Starting the browser…</div>
+      <div id="chooser" hidden></div>
+      <input type="file" id="file-pick" hidden>
       <div id="activity" hidden><span class="dot busy"></span><span class="text" id="activity-text"></span></div>
     </div>
   </section>
@@ -406,7 +422,7 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
-  starting: false, lastStart: {},
+  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null,
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -681,6 +697,7 @@ async function refreshBrowser() {
   if (shown && document.activeElement !== $("#url")) $("#url").value = shown.url === "about:blank" ? "" : (shown.url || "");
   drawTabs();
   if (S.tab) openScreen(S.tab);
+  checkDownloads();
 }
 
 function drawTabs() {
@@ -758,6 +775,8 @@ async function openScreen(tab) {
     if (m.type === "frame") {
       $("#screen").src = "data:image/jpeg;base64," + m.data; S.meta = m.metadata;
       $("#viewmsg").hidden = true;
+    } else if (m.type === "file_chooser") {
+      fileChooser(m);
     } else if (m.ok === false) {
       const err = m.error || {};
       viewMessage(err.message || "This tab cannot be shown");
@@ -795,7 +814,8 @@ $("#screen").addEventListener("wheel", (e) => {
 }, { passive: false });
 $("#screen").addEventListener("contextmenu", (e) => e.preventDefault());
 $("#screen").addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && ["b", "l"].includes(e.key.toLowerCase())) return;
+  // Ctrl+V is left alone so the browser raises "paste" -- see the handler.
+  if ((e.ctrlKey || e.metaKey) && ["b", "l", "v"].includes(e.key.toLowerCase())) return;
   e.preventDefault();
   if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { sendInput({ type: "text", text: e.key }); return; }
   sendInput({ type: "key", event: "rawKeyDown", key: e.key, code: e.code, windowsVirtualKeyCode: e.keyCode, modifiers: mods(e) });
@@ -1265,6 +1285,102 @@ function enhanceSelect(sel, opts = {}) {
   sync();
   return { sync };
 }
+
+// --- files: uploads, downloads, the page's file picker ----------------------------
+
+async function loadFiles() {
+  try { return await api("GET", "/app/files"); } catch (e) { return null; }
+}
+
+// A download that landed since the last look gets a toast, once.
+async function checkDownloads() {
+  const session = S.session;
+  const out = await loadFiles(); if (!out || S.session !== session) return;
+  const names = out.downloads.files.map(f => f.name);
+  const seen = S.downloadsSeen[session];
+  S.downloadsSeen[session] = new Set(names);
+  if (!seen) return;
+  for (const name of names) if (!seen.has(name)) toast(`Downloaded ${name} — in Files`);
+}
+
+function fileRows(list, which) {
+  if (!list.files.length) return `<div class="menu-empty">${which === "uploads" ? "Nothing here yet. Put files here for the AI to upload." : "Nothing downloaded yet."}</div>`;
+  return list.files.slice(0, 12).map(f =>
+    `<button class="row" data-open="${which}" data-name="${esc(f.name)}" title="Open ${esc(f.name)}">` +
+    `<span class="grow">${esc(f.name)}</span><span class="meta">${sizeOf(f.size)}</span></button>`).join("");
+}
+function sizeOf(n) { return n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`; }
+
+async function toggleFiles(open) {
+  const menu = $("#files-menu");
+  const show = open === undefined ? menu.hidden : open;
+  if (!show) { menu.hidden = true; return; }
+  const out = await loadFiles();
+  if (!out) return toast("This session has no folders yet", true);
+  menu.innerHTML = `<h4>Uploads — the only files the AI can hand to a page</h4>${fileRows(out.uploads, "uploads")}
+    <button class="row" data-folder="uploads"><span class="grow">Open the uploads folder</span></button>
+    <hr><h4>Downloads</h4>${fileRows(out.downloads, "downloads")}
+    <button class="row" data-folder="downloads"><span class="grow">Open the downloads folder</span></button>`;
+  menu.hidden = false;
+}
+$("#files-btn").onclick = () => toggleFiles();
+document.addEventListener("click", (e) => { if (!e.target.closest("#files-menu, #files-btn")) $("#files-menu").hidden = true; });
+$("#files-menu").onclick = async (e) => {
+  const row = e.target.closest(".row"); if (!row) return;
+  const body = row.dataset.folder ? { which: row.dataset.folder } : { which: row.dataset.open, name: row.dataset.name };
+  try { await api("POST", "/app/files/open", body); $("#files-menu").hidden = true; } catch (err) { fail(err); }
+};
+
+// The page asked for a file. Offer what is already in the uploads folder,
+// or let the person pick one -- which is copied there first, so the rule
+// "only files from the uploads folder" holds for people and AI alike.
+async function fileChooser(m) {
+  const banner = $("#chooser");
+  S.chooser = m;
+  const out = await loadFiles();
+  const ready = out ? out.uploads.files.slice(0, 6) : [];
+  banner.innerHTML = `<div class="chooser-title">The page is asking for a file</div>
+    ${ready.length ? `<div class="chooser-files">${ready.map(f => `<button data-path="${esc(f.path)}">${esc(f.name)}</button>`).join("")}</div>` : ""}
+    <div class="chooser-actions">
+      <button class="primary" id="chooser-pick">Choose file…</button>
+      <button id="chooser-folder">Open uploads folder</button>
+      <button class="ghost" id="chooser-cancel">Cancel</button>
+    </div>`;
+  banner.hidden = false;
+  banner.querySelectorAll("[data-path]").forEach(b => b.onclick = () => handFiles([b.dataset.path], [b.textContent]));
+  $("#chooser-cancel").onclick = () => { banner.hidden = true; };
+  $("#chooser-folder").onclick = () => api("POST", "/app/files/open", { which: "uploads" }).catch(fail);
+  $("#chooser-pick").onclick = () => { const input = $("#file-pick"); input.multiple = m.mode === "selectMultiple"; input.value = ""; input.click(); };
+}
+$("#file-pick").onchange = async (e) => {
+  const picked = [...e.target.files]; if (!picked.length) return;
+  const paths = [], names = [];
+  for (const file of picked) {
+    const data = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => rej(reader.error);
+      reader.readAsDataURL(file);
+    });
+    try { const out = await api("POST", "/app/upload", { name: file.name, data }); paths.push(out.path); names.push(out.name); }
+    catch (err) { return fail(err); }
+  }
+  handFiles(paths, names);
+};
+function handFiles(paths, names) {
+  if (!S.chooser || !S.screenSock) return;
+  S.screenSock.send(JSON.stringify({ type: "files", node: S.chooser.node, paths }));
+  $("#chooser").hidden = true; S.chooser = null;
+  toast(`Added ${names.join(", ")}`);
+}
+
+// Ctrl+V in the live view types the clipboard into the page.
+document.addEventListener("paste", (e) => {
+  if (document.activeElement !== $("#screen")) return;
+  const text = (e.clipboardData && e.clipboardData.getData("text")) || "";
+  if (!text) return;
+  e.preventDefault(); sendInput({ type: "text", text });
+});
 
 // --- start -------------------------------------------------------------------------------
 

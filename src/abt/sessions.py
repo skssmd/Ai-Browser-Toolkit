@@ -187,8 +187,11 @@ class SessionRegistry:
         log_root: Path | None = None,
         recorder_options: dict[str, Any] | None = None,
         operator_token: str | None = None,
+        files_root: Path | None = None,
     ) -> None:
         self.store = store
+        # Each session's uploads and downloads folders live under here.
+        self.files_root = Path(files_root) if files_root is not None else None
         self.profiles = profiles
         self.operator_token = operator_token
         self._make_browser = make_browser
@@ -257,6 +260,13 @@ class SessionRegistry:
             gate=TabGate(self.profiles.tabs(profile), name),
         )
         browser = self._make_browser(self.profiles.path(profile), attach)
+        if self.files_root is not None:
+            browser.uploads_dir = self.files_root / name / "uploads"
+            browser.downloads_dir = self.files_root / name / "downloads"
+            # Only files the person put in the uploads folder reach a page --
+            # except in `default`, which keeps what scripts driving it
+            # have always been able to do, unless its settings say otherwise.
+            browser.uploads_only_default = name != DEFAULT
         browser.apply_settings(record.settings)
         return browser
 

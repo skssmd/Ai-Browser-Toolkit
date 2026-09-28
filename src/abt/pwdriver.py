@@ -601,6 +601,7 @@ class PlaywrightDriver:
         action_timeout: float = 5.0,
         cdp_url: str | None = None,
         gate=None,
+        downloads=None,
     ) -> None:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="abt-pw")
         self._owner: int | None = None
@@ -639,6 +640,9 @@ class PlaywrightDriver:
         # session owns; see `window_handles`.
         self._cdp_url = cdp_url
         self._gate = gate
+        # Where this session's downloads are saved. Playwright otherwise keeps
+        # them in a temporary folder it deletes when the connection closes.
+        self._downloads = downloads
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
@@ -868,6 +872,24 @@ class PlaywrightDriver:
                 pass
 
         page.on("dialog", on_dialog)
+
+        if self._downloads is not None:
+            def on_download(download) -> None:
+                try:
+                    folder = self._downloads
+                    folder.mkdir(parents=True, exist_ok=True)
+                    name = download.suggested_filename or "download"
+                    target = folder / name
+                    stem, suffix = target.stem, target.suffix
+                    n = 1
+                    while target.exists():
+                        target = folder / f"{stem} ({n}){suffix}"
+                        n += 1
+                    download.save_as(str(target))
+                except Exception:
+                    pass
+
+            page.on("download", on_download)
 
         def on_request(request) -> None:
             self._net_started[id(request)] = time.monotonic()

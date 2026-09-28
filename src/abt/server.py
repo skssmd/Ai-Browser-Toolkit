@@ -961,17 +961,24 @@ def create_app(
 
     def _screencast_target(
         name: str | None, profile: str | None, tab: str | None, token: str | None
-    ) -> tuple[str, str, int]:
+    ) -> tuple[str, str, int, Path | None]:
         profiles = _profiles()
         if not tab:
             raise OpError("invalid_op", "screencast needs ?tab=")
+        uploads = None
         if registry.is_operator(token):
             # The human at the GUI: any tab, locks included.
             profile = profile or (registry.info(name)["profile"] if name else DEFAULT)
             watcher = None
+            if name:
+                # The operator is trusted with any session; this reads its
+                # folder, not its commands.
+                live = registry._live.get(name)
+                uploads = live.browser.uploads_dir if live is not None else None
         else:
             sess = registry.get(name or None, token)
             profile, watcher = sess.record.profile, sess.name
+            uploads = sess.browser.uploads_dir
         tabs = profiles.tabs(profile)
         target = tabs.target_of(tab)
         if target is None:
@@ -985,7 +992,7 @@ def create_app(
         running = profiles.running(profile)
         if running is None:
             raise OpError("browser_dead", NO_BROWSER_MESSAGE)
-        return profile, target, running.port
+        return profile, target, running.port, uploads
 
     def _local_origin(ws: WebSocket) -> bool:
         """Browsers apply no CORS to WebSockets, so without this any web page
@@ -1004,7 +1011,7 @@ def create_app(
         token = ws.headers.get("x-abt-token") or params.get("token")
         await ws.accept()
         try:
-            profile, target, port = await run_in_threadpool(
+            profile, target, port, uploads = await run_in_threadpool(
                 _screencast_target,
                 params.get("session"),
                 params.get("profile"),
@@ -1018,7 +1025,7 @@ def create_app(
         registry.profiles.watch(profile, +1)
         try:
             await screencast_util.relay(
-                ws, f"ws://127.0.0.1:{port}/devtools/page/{target}"
+                ws, f"ws://127.0.0.1:{port}/devtools/page/{target}", upload_root=uploads
             )
         except Exception:
             pass
@@ -1160,6 +1167,11 @@ def create_app(
                 if any(_is_shutdown(item) for item in items):
                     raise OpError("invalid_op", "shutdown is not available from the chat")
                 keep_going = bool(envelope and payload.get("continue_on_error"))
+                # The chat's model may hand a page only files from the
+                # session's uploads folder, whatever the session's setting.
+                from .ops.interact import STRICT_UPLOADS
+
+                STRICT_UPLOADS.set(True)
                 # The person never presses "start": a chat that needs the page
                 # gets a browser, and one that died under it gets a new one
                 # and the same commands again, once.
@@ -1274,6 +1286,67 @@ def create_app(
 
         loop.run_in_executor(None, work)
         return None
+
+    # --- files: the session's uploads and downloads folders ------------------------
+
+    @app.get("/app/files")
+    async def app_files(request: Request):
+        return await _admin(lambda: _chat_session(request).browser.files())
+
+    @app.post("/app/files/open")
+    async def app_files_open(request: Request):
+        """Show a folder, or open one downloaded file, on this computer."""
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+
+        def work():
+            from .browser import open_in_file_manager
+
+            browser = _chat_session(request).browser
+            folder = browser.downloads_dir if body.get("which") == "downloads" else browser.uploads_dir
+            if folder is None:
+                raise OpError("invalid_op", NO_SESSIONS)
+            name = body.get("name")
+            target = folder
+            if name:
+                target = (folder / str(name)).resolve()
+                if folder.resolve() not in target.parents or not target.is_file():
+                    raise OpError("file_blocked", f"no file {name!r} in {folder}")
+            return {"opened": open_in_file_manager(target), "path": str(target)}
+
+        return await _admin(work)
+
+    @app.post("/app/upload")
+    async def app_upload(request: Request):
+        """Save a file the person picked into the session's uploads folder."""
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+
+        def work():
+            import base64
+
+            folder = _chat_session(request).browser.uploads_dir
+            if folder is None:
+                raise OpError("invalid_op", NO_SESSIONS)
+            name = Path(str(body.get("name") or "upload")).name.strip() or "upload"
+            try:
+                data = base64.b64decode(body.get("data") or "", validate=True)
+            except Exception:
+                raise OpError("invalid_op", "data must be base64")
+            if len(data) > 200 * 1024 * 1024:
+                raise OpError("invalid_op", "files over 200 MB are not accepted")
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / name
+            stem, suffix, n = target.stem, target.suffix, 1
+            while target.exists():
+                target = folder / f"{stem} ({n}){suffix}"
+                n += 1
+            target.write_bytes(data)
+            return {"path": str(target.resolve()), "name": target.name, "size": len(data)}
+
+        return await _admin(work)
 
     @app.get("/app/runs")
     async def app_runs(request: Request):

@@ -104,6 +104,11 @@ HINTS = {
         "runs the session, not by you: say what you needed and why, and let "
         "them decide. Do not try to reach it another way."
     ),
+    "file_blocked": (
+        "Only files in this session's uploads folder can be handed to a page. "
+        "Call the `files` op to see what is there -- with open: true it opens "
+        "the folder for the person to drop the file in -- then use that path."
+    ),
     "profile_not_found": (
         "`abt profile list` shows what exists; `abt profile new NAME` "
         "creates one."

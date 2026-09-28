@@ -356,6 +356,17 @@ class RunJs(Diffable):
     args: list[Any] = Field(default_factory=list)
 
 
+class Files(Base):
+    """This session's uploads and downloads folders: names, sizes and paths.
+
+    Only files in the uploads folder can be given to a page's file input. With
+    open: true the uploads folder is shown to the person, so they can put the
+    file you need there -- ask them to, then call this again."""
+
+    op: Literal["files"]
+    open: bool = False
+
+
 class Alert(Base):
     """A native browser dialog (alert/confirm/prompt), which lives outside the
     page DOM and so never shows up in a diff.
@@ -537,7 +548,7 @@ Command = Annotated[
         GetHtml, GetText, Find, FindFull, Screenshot,
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
         TabNew, TabList, TabSwitch, TabClose, TabClaim, TabRelease,
-        RunJs, Diff, Status, Shutdown, Alert,
+        RunJs, Diff, Status, Shutdown, Alert, Files,
         ReadConsole, ReadNetwork,
         GuidelinesSearch, GuidelinesRead, GuidelinesNote,
         BrowserStart, BrowserStop, BrowserRestart, BrowserStatus,

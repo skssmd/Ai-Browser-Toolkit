@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+from pathlib import Path
 from typing import Any
 
 MOUSE = {"mousePressed", "mouseReleased", "mouseMoved", "mouseWheel"}
@@ -64,8 +65,39 @@ def to_cdp(event: Any) -> tuple[str, dict] | None:
     return None
 
 
-async def relay(client, devtools_url: str, quality: int = 60, max_width: int = 1600) -> None:
-    """Pump frames to `client` and its input to Chrome until either side goes."""
+def upload_paths(event: dict, root: Path | None) -> list[str] | None:
+    """The files a "files" message may hand to the page, or None to refuse.
+
+    Only files the app uploaded -- under `root` -- are accepted, so whoever
+    holds this socket cannot point the page at an arbitrary file on disk.
+    """
+    if root is None or not isinstance(event.get("paths"), list):
+        return None
+    base = Path(root).resolve()
+    out = []
+    for raw in event["paths"]:
+        if not isinstance(raw, str):
+            return None
+        path = Path(raw).resolve()
+        if base not in path.parents or not path.is_file():
+            return None
+        out.append(str(path))
+    return out
+
+
+async def relay(
+    client,
+    devtools_url: str,
+    quality: int = 60,
+    max_width: int = 1600,
+    upload_root: Path | None = None,
+) -> None:
+    """Pump frames to `client` and its input to Chrome until either side goes.
+
+    Also stands in for the file picker. A headless page cannot show one, so
+    Chrome is asked to report the request instead; the app asks the person
+    for a file, uploads it, and it is handed to the page's file input.
+    """
     from websockets.asyncio.client import connect
 
     ids = itertools.count(1)
@@ -74,6 +106,9 @@ async def relay(client, devtools_url: str, quality: int = 60, max_width: int = 1
         async def send(method: str, params: dict | None = None) -> None:
             await chrome.send(json.dumps({"id": next(ids), "method": method, "params": params or {}}))
 
+        await send("Page.enable")
+        if upload_root is not None:
+            await send("Page.setInterceptFileChooserDialog", {"enabled": True})
         await send("Page.startScreencast", {
             "format": "jpeg",
             "quality": quality,
@@ -94,12 +129,25 @@ async def relay(client, devtools_url: str, quality: int = 60, max_width: int = 1
                         "data": params["data"],
                         "metadata": params.get("metadata", {}),
                     })
+                elif method == "Page.fileChooserOpened":
+                    params = message.get("params", {})
+                    await client.send_json({
+                        "type": "file_chooser",
+                        "mode": params.get("mode", "selectSingle"),
+                        "node": params.get("backendNodeId"),
+                    })
                 elif method == "Inspector.detached":
                     return
 
         async def from_client() -> None:
             while True:
-                call = to_cdp(await client.receive_json())
+                event = await client.receive_json()
+                if isinstance(event, dict) and event.get("type") == "files":
+                    paths = upload_paths(event, upload_root)
+                    if paths is not None and isinstance(event.get("node"), int):
+                        await send("DOM.setFileInputFiles", {"files": paths, "backendNodeId": event["node"]})
+                    continue
+                call = to_cdp(event)
                 if call is not None:
                     await send(*call)
 

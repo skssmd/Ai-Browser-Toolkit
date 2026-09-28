@@ -218,6 +218,10 @@ def browser_open_manual(session: BrowserSession, cmd) -> dict:
     }
 
 
+def files(session: BrowserSession, cmd) -> dict:
+    return session.files(open_folder=cmd.open)
+
+
 def status(session: BrowserSession, cmd) -> dict:
     return session_status(session)
 

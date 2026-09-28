@@ -70,6 +70,25 @@ def _profile_locked(config) -> bool:
     return False
 
 
+def open_in_file_manager(folder: Path) -> bool:
+    """Show a folder in Explorer, Finder or the desktop's file manager."""
+    import os
+    import subprocess
+    import sys
+
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(folder))  # noqa: S606 -- a folder the toolkit made
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class Attach:
     """How a session reaches a browser it shares rather than owns.
@@ -158,6 +177,13 @@ class BrowserSession:
         # This session's URL rules. Empty for a session that has none, and
         # always empty outside shared mode -- see `apply_settings`.
         self.policy = Policy()
+        # Where this session's files live, when it has a folder at all (a
+        # session in a registry does; a bare BrowserSession does not). With
+        # uploads_only, a file input takes nothing from outside `uploads_dir`.
+        self.uploads_dir: Path | None = None
+        self.downloads_dir: Path | None = None
+        self.uploads_only_default = False
+        self.uploads_only = False
         self._guard = None
         self._cdp_port: int | None = None
         self.max_frames = max_frames
@@ -310,6 +336,7 @@ class BrowserSession:
                         action_timeout=self.action_timeout,
                         cdp_url=url,
                         gate=self._attach.gate,
+                        downloads=self.downloads_dir,
                     )
                 except Exception:
                     self._attach.disconnect()
@@ -694,6 +721,8 @@ class BrowserSession:
         self.policy = from_settings(settings)
         run_js = settings.get("run_js")
         self.run_js_enabled = self._run_js_default if run_js is None else bool(run_js)
+        only = settings.get("uploads_only")
+        self.uploads_only = self.uploads_only_default if only is None else bool(only)
         if self.is_running:
             self.sync_guard()
 
@@ -716,6 +745,70 @@ class BrowserSession:
                 owned=lambda: set(gate.registry.owned_by(gate.session)),
             )
         self._guard.sync()
+
+    def check_upload(self, value: str, strict: bool = False) -> str:
+        """The file path(s) a file input may be given, or `file_blocked`.
+
+        Each path is resolved -- `..` walked, links followed -- before it is
+        compared, so no spelling reaches outside the uploads folder. Several
+        files arrive newline-separated, as a file input takes them.
+        """
+        if not (self.uploads_only or strict):
+            return value
+        if self.uploads_dir is None:
+            raise OpError("file_blocked", "this session has no uploads folder")
+        base = self.uploads_dir.resolve()
+        accepted = []
+        for raw in str(value).split("\n"):
+            raw = raw.strip()
+            if not raw:
+                continue
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = base / path
+            path = path.resolve()
+            if base not in path.parents:
+                raise OpError(
+                    "file_blocked",
+                    f"{raw} is not in this session's uploads folder ({base})",
+                )
+            if not path.is_file():
+                raise OpError("file_blocked", f"there is no file {path.name!r} in {base}")
+            accepted.append(str(path))
+        if not accepted:
+            raise OpError("file_blocked", "no file was named")
+        return "\n".join(accepted)
+
+    def files(self, open_folder: bool = False) -> dict:
+        """What is in this session's uploads and downloads folders.
+
+        Names, sizes and paths -- never contents. `open_folder` shows the
+        uploads folder in the system file manager so a person can add to it.
+        """
+        if self.uploads_dir is None or self.downloads_dir is None:
+            raise OpError("invalid_op", "files needs sessions: run `abt serve` on the playwright engine")
+        if self._driver is not None:
+            # A finished download is saved by an event, and a sync Playwright
+            # connection only hands events over during a call. One cheap call
+            # first, so a download that already landed is listed.
+            try:
+                self._driver.current_url
+            except Exception:
+                pass
+
+        def listing(folder: Path) -> dict:
+            folder.mkdir(parents=True, exist_ok=True)
+            rows = [
+                {"name": p.name, "path": str(p.resolve()), "size": p.stat().st_size}
+                for p in sorted(folder.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+                if p.is_file()
+            ]
+            return {"folder": str(folder.resolve()), "files": rows}
+
+        out = {"uploads": listing(self.uploads_dir), "downloads": listing(self.downloads_dir)}
+        if open_folder:
+            out["opened"] = open_in_file_manager(self.uploads_dir)
+        return out
 
     def check_url(self, url: str | None) -> None:
         if url:

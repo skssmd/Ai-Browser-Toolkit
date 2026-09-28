@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import contextvars
+
+# Set by the desktop app's chat around the commands its model sends: that
+# model may hand a page only files from the session's uploads folder,
+# whatever the session's own setting says.
+STRICT_UPLOADS: contextvars.ContextVar[bool] = contextvars.ContextVar("strict_uploads", default=False)
+
 import time
 
 from ..browser import BrowserSession
@@ -471,8 +478,11 @@ def _write_hidden_file(session: BrowserSession, cmd, element) -> dict:
         previous = session.driver.execute_script(UNHIDE_FILE_INPUT_JS, element)
     except EngineError:
         previous = ""
+    # Refused before the page is touched: only files from the session's
+    # uploads folder reach a page. See BrowserSession.check_upload.
+    value = session.check_upload(cmd.value, strict=STRICT_UPLOADS.get())
     try:
-        element.send_keys(cmd.value)
+        element.send_keys(value)
     except EngineError as exc:
         raise OpError(
             "not_interactable",

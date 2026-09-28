@@ -157,6 +157,15 @@ def config_file(
     return _data_root(kind, home, env) / "config.json"
 
 
+def files_home(home: Path | None = None) -> Path:
+    """Where each session's uploads and downloads folders live.
+
+    In Documents, where a person looks for files, rather than beside the
+    toolkit's own data: the point is that they put a file here by hand.
+    """
+    return (Path(home) if home is not None else Path.home()) / "Documents" / "AI Browser Toolkit"
+
+
 def profile_root(
     kind: str | None = None,
     home: Path | None = None,

@@ -148,7 +148,7 @@ def validate_settings(settings: object) -> dict:
             raise OpError("invalid_op", "settings.rules must be a list of strings")
         for rule in rules:
             parse_rule(rule)
-    for key in ("strict", "run_js"):
+    for key in ("strict", "run_js", "uploads_only"):
         value = settings.get(key)
         if value is not None and not isinstance(value, bool):
             raise OpError("invalid_op", f"settings.{key} must be true or false")

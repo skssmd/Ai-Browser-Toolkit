@@ -43,6 +43,7 @@ REGISTRY: dict[str, Handler] = {
     "read_network": inspect.read_network,
     "run_js": control.run_js,
     "alert": control.alert,
+    "files": control.files,
     "diff": control.diff,
     "status": control.status,
     "shutdown": control.shutdown,
@@ -90,6 +91,7 @@ NO_HEALTH_CHECK = frozenset(
         "guidelines_search",
         "guidelines_read",
         "guidelines_note",
+        "files",
     }
 )
 

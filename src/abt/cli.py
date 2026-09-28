@@ -704,6 +704,7 @@ def _build_registry(
         log_root=None if no_log else log_dir,
         recorder_options={"max_shot_mb": shots_max_mb},
         operator_token=operator,
+        files_root=paths.files_home(),
     )
 
 

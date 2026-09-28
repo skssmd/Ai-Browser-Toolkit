@@ -1,0 +1,11 @@
+<title>Download</title>
+<body>
+  <a id="dl" href="cards.html" download="catalogue.html">Download the catalogue</a>
+  <input type="file" id="doc">
+  <p id="picked"></p>
+  <script>
+    document.getElementById("doc").addEventListener("change", (e) => {
+      document.getElementById("picked").textContent = [...e.target.files].map(f => f.name).join(",");
+    });
+  </script>
+</body>
