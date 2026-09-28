@@ -1107,6 +1107,25 @@ def create_app(
 
         return await _admin(work)
 
+    def browser_gone(sess: Session) -> bool:
+        """Whether this session's browser has died, as opposed to a command
+        merely failing in a live one."""
+        if registry.profiles is None:
+            return False
+        running = registry.profiles.running(sess.record.profile)
+        if running is None:
+            return True
+        # Ask Chrome itself. The process can still look alive for a moment
+        # after it was killed, and the driver's own health check passes on a
+        # dead browser -- it answers from pages it has cached.
+        import httpx
+
+        try:
+            httpx.get(f"{running.url}/json/version", timeout=2)
+        except Exception:
+            return True
+        return False
+
     def call_tool(sess: Session, name: str, args: dict) -> tuple[str, bool]:
         """Run one tool call from the chat, in the chat's session.
 
@@ -1140,7 +1159,25 @@ def create_app(
                 items = [_strip(item)[0] for item in items]
                 if any(_is_shutdown(item) for item in items):
                     raise OpError("invalid_op", "shutdown is not available from the chat")
-                results = execute(sess, items, bool(envelope and payload.get("continue_on_error")))
+                keep_going = bool(envelope and payload.get("continue_on_error"))
+                # The person never presses "start": a chat that needs the page
+                # gets a browser, and one that died under it gets a new one
+                # and the same commands again, once.
+                needs_page = any(
+                    isinstance(item, dict)
+                    and not str(item.get("op", "")).startswith(("browser_", "guidelines_"))
+                    and item.get("op") != "status"
+                    for item in items
+                )
+                if needs_page and not sess.browser.is_running:
+                    execute(sess, [{"op": "browser_start"}], False)
+                results = execute(sess, items, keep_going)
+                # A dead Chrome does not always say so: a goto into it fails
+                # as navigation_failed. So on any failure, ask the browser
+                # itself whether it is still there.
+                if needs_page and any(not r["ok"] for r in results) and browser_gone(sess):
+                    if execute(sess, [{"op": "browser_restart"}], False)[0]["ok"]:
+                        results = execute(sess, items, keep_going)
                 if envelope:
                     failed = [r for r in results if not r["ok"]]
                     body = {"ok": not failed, "results": results, "ran": len(results), "total": len(items)}

@@ -134,7 +134,6 @@ APP_HTML = r"""<!doctype html>
     <button class="icon" id="session-edit" title="Session settings">⚙</button>
     <button class="icon" id="session-del" title="Delete this session">🗑</button>
   </div>
-  <button id="power" class="primary">Start browser</button>
   <span id="status" class="muted"></span>
   <span class="spacer"></span>
   <button class="icon" id="dock" title="Move the chat to the other side">⇆</button>
@@ -148,13 +147,14 @@ APP_HTML = r"""<!doctype html>
     <div id="nav">
       <button class="icon" id="back" title="Back">←</button>
       <button class="icon" id="fwd" title="Forward">→</button>
-      <button class="icon" id="reload" title="Reload">⟳</button>
+      <button class="icon" id="reload" title="Reload the page">⟳</button>
+      <button class="icon" id="restart" title="Restart this session's browser (it starts and recovers on its own; this is for when a page is wedged)">⏻</button>
       <input id="url" placeholder="Type a URL and press Enter" spellcheck="false">
       <button class="icon" id="newtab" title="New tab">＋ tab</button>
     </div>
     <div id="view">
       <img id="screen" tabindex="0" alt="" draggable="false">
-      <div id="viewmsg">Start the browser to see it here.</div>
+      <div id="viewmsg">Starting the browser…</div>
     </div>
   </section>
   <div id="splitter" title="Drag to resize"></div>
@@ -237,6 +237,7 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: null, runningChats: new Set(), buffers: {},
+  starting: false, lastStart: {},
 };
 
 // --- tokens ---------------------------------------------------------------------
@@ -427,13 +428,16 @@ async function refreshBrowser() {
   try { status = await api("GET", "/browser?session=" + encodeURIComponent(S.session)); }
   catch (e) { fail(e); return; }
   S.running = !!status.running;
-  $("#power").textContent = S.running ? "Stop browser" : "Start browser";
   if (!S.running) {
+    // Nobody presses start: a session that is shown gets its browser.
     S.tabs = []; drawTabs(); closeScreen();
-    $("#viewmsg").style.display = ""; $("#viewmsg").textContent = "Start the browser to see it here.";
-    return;
+    return ensureBrowser("browser_start");
   }
-  try { S.tabs = await run({ op: "tab_list" }); } catch (e) { S.tabs = []; }
+  try { S.tabs = await run({ op: "tab_list" }); }
+  catch (e) {
+    S.tabs = [];
+    if (e.type === "browser_dead") return ensureBrowser("browser_restart");
+  }
   const own = S.tabs.filter(t => !t.locked && !t.unowned && !t.pending);
   const active = own.find(t => t.active) || own[0];
   if (!S.tab || !S.tabs.find(t => t.tab_id === S.tab)) S.tab = active ? active.tab_id : null;
@@ -462,13 +466,28 @@ $("#tabs").onclick = async (e) => {
   } catch (err) { fail(err); }
 };
 
-$("#power").onclick = async () => {
-  $("#power").disabled = true;
-  say(S.running ? "Stopping…" : "Starting the browser…");
-  try { await run({ op: S.running ? "browser_stop" : "browser_start" }); await loadAll(); await refreshBrowser(); say(S.running ? "Browser running" : "Browser stopped"); }
-  catch (e) { fail(e); }
-  $("#power").disabled = false;
-};
+// Start or restart this session's browser, once at a time and not in a loop:
+// a browser that will not come up says why instead of retrying forever.
+async function ensureBrowser(op) {
+  const session = S.session;
+  if (!session || S.starting) return;
+  const last = S.lastStart[session] || 0;
+  if (Date.now() - last < 15000) {
+    $("#viewmsg").style.display = ""; $("#viewmsg").textContent = "The browser did not come up. ⏻ tries again.";
+    return;
+  }
+  S.starting = true; S.lastStart[session] = Date.now();
+  $("#viewmsg").style.display = "";
+  $("#viewmsg").textContent = op === "browser_restart" ? "Restarting the browser…" : "Starting the browser…";
+  try { await run({ op }); }
+  catch (e) {
+    // A browser already up (another page started it) is what we wanted.
+    if (!/already running/.test(e.message || "")) { fail(e); $("#viewmsg").textContent = e.message; }
+  }
+  S.starting = false;
+  if (S.session === session) { await loadAll(); await refreshBrowser(); }
+}
+$("#restart").onclick = () => { S.lastStart[S.session] = 0; ensureBrowser("browser_restart"); };
 
 async function nav(cmd) { try { await run(cmd); await refreshBrowser(); } catch (e) { fail(e); } }
 $("#back").onclick = () => nav({ op: "back", diff: false });
@@ -505,7 +524,10 @@ async function openScreen(tab) {
       $("#screen").src = "data:image/jpeg;base64," + m.data; S.meta = m.metadata;
       $("#viewmsg").style.display = "none";
     } else if (m.ok === false) {
-      $("#viewmsg").style.display = ""; $("#viewmsg").textContent = (m.error && m.error.message) || "Cannot show this tab";
+      const err = m.error || {};
+      $("#viewmsg").style.display = ""; $("#viewmsg").textContent = err.message || "Cannot show this tab";
+      // The page's browser went away: bring it back rather than show a corpse.
+      if (err.type === "browser_dead") ensureBrowser("browser_restart");
     }
   };
   ws.onclose = () => { if (S.screenSock === ws) { S.screenSock = null; setTimeout(() => S.running && refreshBrowser(), 1500); } };
