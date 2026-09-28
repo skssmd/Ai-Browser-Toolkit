@@ -639,7 +639,6 @@ class PlaywrightDriver:
         # session owns; see `window_handles`.
         self._cdp_url = cdp_url
         self._gate = gate
-        self._tids: dict[int, str] = {}
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
@@ -767,16 +766,30 @@ class PlaywrightDriver:
         page.on("dialog", _ignore)
 
     def _tid(self, page) -> str:
-        """Chrome's target id for a page: the same on every connection."""
-        key = id(page)
-        found = self._tids.get(key)
+        """Chrome's target id for a page: the same on every connection.
+
+        Kept on the page object itself, never in a dict keyed by id(page): a
+        closed page's id() is reused by the next object CPython allocates, and
+        a new tab reporting a dead tab's target id would record ownership of
+        the wrong tab. The CDP session opened to ask is detached again unless
+        this connection already keeps one for the page -- otherwise every other
+        session's page would hold a session open here for good.
+        """
+        found = getattr(page, "_abt_target_id", None)
         if found is None:
-            session = self._cdp.get(key)
-            if session is None:
+            session = self._cdp.get(id(page))
+            temporary = session is None
+            if temporary:
                 session = self._context.new_cdp_session(page)
-                self._cdp[key] = session
-            found = session.send("Target.getTargetInfo")["targetInfo"]["targetId"]
-            self._tids[key] = found
+            try:
+                found = session.send("Target.getTargetInfo")["targetInfo"]["targetId"]
+            finally:
+                if temporary:
+                    try:
+                        session.detach()
+                    except Exception:
+                        pass
+            page._abt_target_id = found
         return found
 
     def _handle(self, page) -> str:

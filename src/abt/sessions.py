@@ -145,6 +145,9 @@ class Session:
         # while holding `lock`.
         self.browser = browser
         self.lock = threading.Lock()
+        # Set by `remove`. A request that fetched this session before it was
+        # removed must not bring it back to life by running afterwards.
+        self.closed = False
         self.log_root = log_root
         self._recorder = recorder
         self._recorder_factory = recorder_factory
@@ -324,11 +327,26 @@ class SessionRegistry:
             raise OpError("invalid_op", "the default session cannot be removed")
         session = self.get(name, token)
         with session.lock:
+            session.closed = True
             session.close()
         with self._lock:
             self._live.pop(name, None)
             self._records.pop(name, None)
         self.store.delete(name)
+        self._retire_logs(name, session.log_root)
+
+    def _retire_logs(self, name: str, root: Path | None) -> None:
+        """Keep a removed session's logs, but not where its name points.
+
+        Otherwise the next session created under the same name -- by anyone --
+        would read every event and frame of the one removed, sealed or not.
+        """
+        if root is None or not root.exists() or self._log_root is None:
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        retired = self._log_root / "removed-sessions" / f"{name}-{stamp}"
+        retired.parent.mkdir(parents=True, exist_ok=True)
+        root.rename(retired)
 
     def info(self, name: str, token: str | None = None) -> dict:
         with self._lock:

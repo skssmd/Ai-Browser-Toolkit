@@ -24,6 +24,7 @@ to avoid a process launch per command.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -596,7 +597,7 @@ def serve(
         shots=not no_shots, shot_quality=shot_quality, shot_width=shot_width
     )
 
-    if engine == "playwright":
+    if _use_sessions(engine):
         registry = _build_registry(
             browser, profile, headless, log_dir, no_log, shots_max_mb,
             max_profiles, profile_idle_minutes, behaviour,
@@ -651,6 +652,17 @@ def serve(
     finally:
         closer()
     typer.echo("stopped")
+
+
+def _use_sessions(engine: str) -> bool:
+    """Whether this server runs sessions, or the single browser it always did.
+
+    `ABT_CDP_URL` means someone else owns the browser -- the BrowserGym harness
+    launches it and scores what happens in it. Sessions launch browsers of
+    their own, so with it set the agent would drive a browser the harness never
+    sees, and every score would be silently meaningless.
+    """
+    return engine == "playwright" and not os.environ.get("ABT_CDP_URL")
 
 
 def _build_registry(

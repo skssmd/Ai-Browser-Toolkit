@@ -734,9 +734,12 @@ class JobRegistry:
         self._lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
 
-    def create(self, request: SendMessage) -> dict:
+    def create(self, request: SendMessage, session: str = "default") -> dict:
         job = {
             "job_id": uuid.uuid4().hex[:12],
+            # Whose job it is. A job carries the message text, so another
+            # session -- a sealed one's especially -- must not be able to read it.
+            "session": session,
             "state": "queued",
             "thread_url": request.thread_url,
             "message": request.message,
@@ -773,9 +776,13 @@ class JobRegistry:
             job = self._jobs.get(job_id)
             return dict(job) if job else None
 
-    def list(self) -> list[dict]:
+    def list(self, session: str | None = None) -> list[dict]:
         with self._lock:
-            return [dict(job) for job in self._jobs.values()]
+            return [
+                dict(job)
+                for job in self._jobs.values()
+                if session is None or job.get("session") == session
+            ]
 
 
 def _now() -> str:

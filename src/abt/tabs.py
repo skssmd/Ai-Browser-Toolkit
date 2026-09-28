@@ -59,6 +59,11 @@ class TabRegistry:
         with self._lock:
             return self._owner.get(target)
 
+    def placed(self, target: str) -> bool:
+        """Whether any connection has decided who owns this page yet."""
+        with self._lock:
+            return target in self._owner
+
     def opened(self, target: str, session: str) -> str:
         """A tab `session` opened itself. Returns its id.
 
@@ -176,6 +181,9 @@ class TabGate:
 
     def owner(self, target: str) -> str | None:
         return self.registry.owner_of(target)
+
+    def placed(self, target: str) -> bool:
+        return self.registry.placed(target)
 
     def label(self, target: str) -> str:
         return self.registry.label(target)

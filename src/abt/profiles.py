@@ -33,7 +33,10 @@ from .tabs import TabRegistry
 
 # A name becomes a path, so this is a security check rather than tidiness: it
 # rejects `..`, separators, drive letters and leading dots by construction.
-NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Lowercase only, and no trailing dot, because NTFS folds case and drops a
+# trailing dot: `Default` and `default.` both *are* `default` on Windows, and
+# `abt profile rm Default` would otherwise delete the default profile's logins.
+NAME = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9_-])?$")
 DEFAULT = "default"
 LAUNCH_TIMEOUT = 60.0
 PORT_FILE = "DevToolsActivePort"
@@ -51,8 +54,9 @@ def check_name(name: Any, what: str = "profile") -> str:
     if not isinstance(name, str) or not NAME.match(name):
         raise OpError(
             "invalid_op",
-            f"bad {what} name {name!r}: use letters, digits, '.', '_' and '-', "
-            "starting with a letter or digit, at most 64 characters",
+            f"bad {what} name {name!r}: use lowercase letters, digits, '.', '_' "
+            "and '-', starting with a letter or digit and not ending in '.', at "
+            "most 64 characters",
         )
     return name
 
@@ -167,8 +171,9 @@ class ProfileRegistry:
             return self.default_dir
         path = (self.root / name).resolve()
         # Belt and braces: the regex already makes this impossible, and the
-        # cost of being wrong is deleting something outside the profile root.
-        if path.parent != self.root:
+        # cost of being wrong is deleting something outside the profile root --
+        # or, on a case-folding disk, a different profile inside it.
+        if path.parent != self.root or path.name != name:
             raise OpError("invalid_op", f"profile {name!r} resolves outside {self.root}")
         return path
 
@@ -330,6 +335,9 @@ class ProfileRegistry:
                 running.last_used = self._clock()
 
     def idle(self) -> list[str]:
+        """Profiles nobody has used for a while. Never the default one: it
+        stayed up for the server's whole life before sessions existed, and an
+        agent that pauses for half an hour must not come back to no browser."""
         if self.idle_seconds <= 0:
             return []
         now = self._clock()
@@ -337,7 +345,9 @@ class ProfileRegistry:
             return sorted(
                 name
                 for name, running in self._running.items()
-                if running.watchers == 0 and now - running.last_used >= self.idle_seconds
+                if name != DEFAULT
+                and running.watchers == 0
+                and now - running.last_used >= self.idle_seconds
             )
 
     def stop(self, name: str) -> bool:
@@ -394,7 +404,13 @@ class ProfileRegistry:
                 # than leaving the caller to wait out the timeout.
                 from .browser import _profile_locked
 
-                if _profile_locked(SimpleNamespace(profile=directory)):
+                # POSIX Chrome leaves Singleton* files; Windows Chrome holds
+                # `lockfile`, and a handoff to the incumbent exits cleanly.
+                if (
+                    _profile_locked(SimpleNamespace(profile=directory))
+                    or (directory / "lockfile").exists()
+                    or process.returncode == 0
+                ):
                     raise OpError(
                         "browser_dead",
                         f"another browser is holding the profile at {directory} -- "

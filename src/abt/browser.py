@@ -697,6 +697,12 @@ class BrowserSession:
             if not tid or tid in own:
                 continue
             label = gate.label(tid)
+            if not gate.placed(tid):
+                # No connection has worked out whose it is yet -- it may be a
+                # sealed session's popup, carrying an OAuth code in its URL.
+                # Say it exists and nothing more until it is placed.
+                rows.append({"tab_id": label, "pending": True})
+                continue
             owner = gate.owner(tid)
             if owner is None:
                 rows.append({
@@ -719,6 +725,19 @@ class BrowserSession:
             target = gate.target_of(tab_id)
         if target is None:
             raise OpError("tab_not_found", f"no tab {tab_id!r}")
+        # A page is claimable only once it has been placed -- given to its
+        # opener's owner if it is a popup. Claiming before that would let any
+        # session take someone else's popup in the moment before its owner's
+        # connection noticed it.
+        deadline = time.monotonic() + CLAIM_VISIBLE_TIMEOUT
+        while not gate.placed(target):
+            if time.monotonic() >= deadline:
+                raise OpError(
+                    "tab_not_found",
+                    f"{tab_id} is not ready to claim yet; list tabs and try again",
+                )
+            time.sleep(0.05)
+            self._sync_tabs()
         gate.claim(target, self.driver.opener_of(target))
         # Each session has its own connection, and a page another connection
         # opened reaches this one's page list a moment after the registry knew

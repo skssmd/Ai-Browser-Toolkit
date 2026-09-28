@@ -83,3 +83,14 @@ def test_opener_of_names_the_popups_parent(pair):
     drivers["a"].execute_script("window.open('about:blank')")
     popup = [h for h in handles_until(drivers["a"], 2) if h != parent][0]
     assert drivers["a"].opener_of(popup) == parent
+
+
+def test_other_sessions_pages_hold_no_cdp_session_here(pair):
+    """Asking a foreign page its target id must not keep a CDP session open
+    on it for the life of this connection."""
+    drivers, _ = pair
+    for _ in range(3):
+        drivers["b"].switch_to.new_window("tab")
+    drivers["a"].window_handles
+    own = {id(p) for p in drivers["a"]._pages}
+    assert set(drivers["a"]._cdp) <= own

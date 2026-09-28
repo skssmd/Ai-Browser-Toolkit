@@ -73,7 +73,7 @@ def test_names_that_are_paths_are_refused(bad):
     assert exc.value.type == "invalid_op"
 
 
-@pytest.mark.parametrize("good", ["work", "a.b-c_1", "A1", "x" * 64])
+@pytest.mark.parametrize("good", ["work", "a.b-c_1", "a1", "x" * 64])
 def test_ordinary_names_pass(good):
     assert check_name(good) == good
 
@@ -210,13 +210,15 @@ def test_no_browser_installed(make):
 def test_idle_skips_watched_and_disabled(make):
     now = [100.0]
     reg = make(clock=lambda: now[0], idle_minutes=1)
+    reg.create("quiet")
     reg.create("watched")
-    reg.attach(DEFAULT, "a")
+    reg.attach(DEFAULT, "d")  # never idle: see ProfileRegistry.idle
+    reg.attach("quiet", "a")
     reg.attach("watched", "b")
     reg.watch("watched", +1)
     now[0] += 61
-    assert reg.idle() == [DEFAULT]
-    reg.touch(DEFAULT)
+    assert reg.idle() == ["quiet"]
+    reg.touch("quiet")
     assert reg.idle() == []
     assert make(idle_minutes=0).idle() == []
 

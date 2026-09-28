@@ -142,7 +142,7 @@ every op inside a tab the session owns.
 - `abt profile list | new NAME | rm NAME | set NAME --headed/--headless`; HTTP
   `GET /profiles`, `POST /profiles {"name"}`, `PATCH /profiles/NAME`,
   `DELETE /profiles/NAME`.
-- Names must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, and the resolved path
+- Names must match `^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9_-])?$` (lowercase, no trailing dot: NTFS folds case and drops a trailing dot), and the resolved path
   is asserted to sit inside the profile root before anything is created or
   removed. A name becomes a path, so this is a security check, not tidiness.
 - `rm` is refused with `profile_in_use` while any session references the
@@ -350,7 +350,9 @@ server started the way it always was still shows its window.
   listing the running profiles. Nothing is evicted.
 - `--profile-idle-minutes` (default 30; 0 disables): a profile's Chrome stops
   when none of its sessions has sent a command for that long **and** no
-  screencast is open on it.
+  screencast is open on it. The `default` profile is never stopped this way, as
+  it was never stopped before sessions existed. A stopped profile stays stopped
+  until a session sends `browser_start`.
 - If a profile's Chrome dies, its sessions' commands return `browser_dead`,
   and `browser_restart` in any of them relaunches it — explicit, like every
   other start. The existing attach-mode

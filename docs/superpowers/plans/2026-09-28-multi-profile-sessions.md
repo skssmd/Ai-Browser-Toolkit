@@ -16,7 +16,7 @@
 - **Push only with the user's go-ahead.** Pushing triggers CI; ask before each push.
 - **Commit messages carry no `Co-Authored-By` or AI attribution.** (Standing user rule.)
 - **Never run `abt serve` from a tool call.** Use `start-server.bat` / `./start-server.sh` / `abt up` if a server is needed.
-- Profile and session names: `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, resolved path asserted inside its root.
+- Profile and session names: `^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9_-])?$` (lowercase, no trailing dot: NTFS folds case and drops a trailing dot), resolved path asserted inside its root.
 - Transport: headers `X-ABT-Session`, `X-ABT-Token`; body fields `session`, `token`; env `ABT_SESSION`, `ABT_TOKEN`.
 - New error types: `unknown_session`, `session_exists`, `session_sealed`, `tab_locked`, `profile_limit`, `profile_in_use`, `profile_not_found`. Malformed input stays `invalid_op`.
 - Defaults: `--max-profiles 4`, `--profile-idle-minutes 30`.

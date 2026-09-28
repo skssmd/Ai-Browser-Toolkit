@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -167,6 +168,12 @@ def create_app(
     cursors = messenger_api.MessageCursors()
     app.state.messenger_jobs = jobs
     app.state.messenger_cursors = cursors
+    # One cursor set per session: `since_last` in one session must not use up
+    # what another has not read yet.
+    cursor_sets: dict[str, messenger_api.MessageCursors] = {DEFAULT: cursors}
+
+    def _cursors(sess: Session) -> messenger_api.MessageCursors:
+        return cursor_sets.setdefault(sess.name, messenger_api.MessageCursors())
 
     def _session_for(request: Request) -> Session:
         name = request.headers.get("x-abt-session") or request.query_params.get("session")
@@ -252,10 +259,28 @@ def create_app(
 
     def execute(sess: Session, items: list[Any], continue_on_error: bool) -> list[dict]:
         with sess.lock:
+            if sess.closed:
+                return [fail(OpError("unknown_session", f"session {sess.name!r} was removed"))]
             registry.touch(sess)
             results = []
             for index, item in enumerate(items):
-                response = run_one(sess, item, index)
+                if (
+                    _is_shutdown(item)
+                    and registry.profiles is not None
+                    and sess.name != DEFAULT
+                ):
+                    # `shutdown` stops every session on the server. A model in
+                    # one session must not be able to end everyone else's work.
+                    response = fail(
+                        OpError(
+                            "invalid_op",
+                            "shutdown stops the whole server; send it from the "
+                            "default session, or run `abt shutdown`",
+                        ),
+                        index,
+                    )
+                else:
+                    response = run_one(sess, item, index)
                 results.append(response)
                 if response["ok"] and _is_shutdown(item):
                     break
@@ -352,6 +377,9 @@ def create_app(
         started = now_ms()
         try:
             with sess.lock:
+                if sess.closed:
+                    raise OpError("unknown_session", f"session {sess.name!r} was removed")
+                registry.touch(sess)
                 sess.browser.last_target = None
                 sess.browser.health_check()
                 response = ok(work())
@@ -386,7 +414,7 @@ def create_app(
             return JSONResponse(status_code=400, content=fail(exc))
 
         if parsed.background:
-            job = jobs.create(parsed)
+            job = jobs.create(parsed, session=sess.name)
             background.add_task(send_job, sess, parsed, job["job_id"])
             return ok(job)
         return await run_in_threadpool(
@@ -412,17 +440,28 @@ def create_app(
             parsed = messenger_api.parse_send({**body, "background": True})
         except OpError as exc:
             return JSONResponse(status_code=400, content=fail(exc))
-        job = jobs.create(parsed)
+        job = jobs.create(parsed, session=sess.name)
         background.add_task(send_job, sess, parsed, job["job_id"])
         return ok(job)
 
     @app.get("/messenger/jobs")
-    async def messenger_jobs():
-        return ok(jobs.list())
+    async def messenger_jobs(request: Request):
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
+        return ok(jobs.list(session=sess.name))
 
     @app.get("/messenger/jobs/{job_id}")
-    async def messenger_job(job_id: str):
+    async def messenger_job(job_id: str, request: Request):
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
         job = jobs.get(job_id)
+        if job is not None and job.get("session") != sess.name:
+            # Someone else's job is indistinguishable from no job.
+            job = None
         if job is None:
             return JSONResponse(
                 status_code=404,
@@ -462,10 +501,11 @@ def create_app(
             return _refused(exc)
 
         def work():
+            session_cursors = _cursors(sess)
             if reset and thread_url:
-                cursors.reset(thread_url)
+                session_cursors.reset(thread_url)
             return messenger_api.read_messages(
-                sess.browser, thread_url, limit, since_last, cursors
+                sess.browser, thread_url, limit, since_last, session_cursors
             )
 
         return await run_locked_async(
@@ -943,6 +983,14 @@ def create_app(
 
     @app.websocket("/screencast")
     async def screencast(ws: WebSocket):
+        # Browsers apply no CORS to WebSockets, so without this any web page
+        # open anywhere on the machine could watch a logged-in tab and type
+        # into it. The app's own page is served from here; nothing else has a
+        # reason to connect with an Origin at all.
+        origin = ws.headers.get("origin")
+        if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
+            await ws.close(code=1008)
+            return
         params = ws.query_params
         token = ws.headers.get("x-abt-token") or params.get("token")
         await ws.accept()
