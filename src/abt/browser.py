@@ -310,13 +310,20 @@ class BrowserSession:
         config.profile.mkdir(parents=True, exist_ok=True)
         self._driver = self._launch_driver(config)
         self.launch = config
-        # Implicit waits interact badly with explicit waits and make every failed
-        # lookup cost the full timeout. All waiting here is explicit.
-        self._driver.implicitly_wait(0)
-        self._verify_session()
-        self._install_console_capture()
-        self._sync_tabs()
-        self.sync_guard()
+        try:
+            # Implicit waits interact badly with explicit waits and make every
+            # failed lookup cost the full timeout. All waiting here is explicit.
+            self._driver.implicitly_wait(0)
+            self._verify_session()
+            self._install_console_capture()
+            self._sync_tabs()
+            self.sync_guard()
+        except Exception:
+            # A shared start that fails part way must let go of the profile,
+            # or the connection leaks and the session stays counted on it.
+            if self._attach is not None and self._driver is not None:
+                self.stop()
+            raise
         return {
             "running": True,
             "config": config.to_dict(),

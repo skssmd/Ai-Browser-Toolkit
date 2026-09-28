@@ -687,10 +687,18 @@ def _build_registry(
         default_headed=not headless,
     )
     store_dir = paths.sessions_dir()
-    # A fresh operator token per server run, readable only by this user. The
-    # desktop app reads it from here; nothing ever sends it to a model.
-    operator = secrets.token_urlsafe(32)
-    write_private(store_dir / "operator.token", operator)
+    # The operator token, readable only by this user. The desktop app reads it
+    # from here; nothing ever sends it to a model. Kept across restarts, so an
+    # open app keeps working when the server comes back, and two servers
+    # started from one folder do not overwrite each other's.
+    token_file = store_dir / "operator.token"
+    try:
+        operator = token_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        operator = ""
+    if len(operator) < 32:
+        operator = secrets.token_urlsafe(32)
+        write_private(token_file, operator)
 
     def make_browser(directory, attach):
         return BrowserSession(

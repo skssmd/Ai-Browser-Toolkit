@@ -1089,8 +1089,18 @@ class PlaywrightDriver:
             self._closed = True
             try:
                 if self._gate is not None:
-                    # A session's tabs go with it. The browser, and every
-                    # other session's tabs, stay.
+                    # A session's tabs go with it -- including a popup it owns
+                    # but never looked at. The browser, and every other
+                    # session's tabs, stay.
+                    mine = set(self._gate.registry.owned_by(self._gate.session))
+                    for page in list(self._context.pages):
+                        if page in self._pages or page.is_closed():
+                            continue
+                        try:
+                            if self._tid(page) in mine:
+                                self._pages.append(page)
+                        except Exception:
+                            pass
                     for page in list(self._pages):
                         try:
                             target = self._tid(page)

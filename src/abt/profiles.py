@@ -212,9 +212,10 @@ class ProfileRegistry:
     def describe(self, name: str) -> dict:
         with self._lock:
             running = self._live(name)
+            # No port: it is a direct way into the browser, around every
+            # session's rules and locks, and nothing that reads this needs it.
             info = {
                 "running": running is not None,
-                "port": running.port if running else None,
                 "sessions": sorted(running.sessions) if running else [],
             }
         return {**self.meta(name), "path": str(self.path(name)), **info}
@@ -283,9 +284,7 @@ class ProfileRegistry:
 
     def attach(self, name: str, session: str) -> str:
         """Make sure `name`'s Chrome is up and count `session` on it."""
-        with self._lock:
-            launch_lock = self._launch_locks.setdefault(name, threading.Lock())
-        with launch_lock:
+        with self._launch_lock(name):
             with self._lock:
                 running = self._live(name)
                 if running is None:
@@ -312,18 +311,28 @@ class ProfileRegistry:
                 running.last_used = self._clock()
                 return running.url
 
-    def detach(self, name: str, session: str) -> None:
-        """`session` let go. The last one out stops Chrome, unless it is watched."""
+    def _launch_lock(self, name: str) -> threading.Lock:
         with self._lock:
-            running = self._running.get(name)
-            if running is None:
-                return
-            running.sessions.discard(session)
-            if running.sessions or running.watchers:
-                return
-            del self._running[name]
-            self._tabs_of(name).clear()
-        self._close(running)
+            return self._launch_locks.setdefault(name, threading.Lock())
+
+    def detach(self, name: str, session: str) -> None:
+        """`session` let go. The last one out stops Chrome, unless it is watched.
+
+        Chrome is closed under the profile's launch lock, so an `attach` from
+        another session waits for it to be gone and launches a fresh one,
+        rather than connecting to a browser on its way out.
+        """
+        with self._launch_lock(name):
+            with self._lock:
+                running = self._running.get(name)
+                if running is None:
+                    return
+                running.sessions.discard(session)
+                if running.sessions or running.watchers:
+                    return
+                del self._running[name]
+                self._tabs_of(name).clear()
+            self._close(running)
 
     def touch(self, name: str) -> None:
         with self._lock:
@@ -356,12 +365,13 @@ class ProfileRegistry:
             )
 
     def stop(self, name: str) -> bool:
-        with self._lock:
-            running = self._running.pop(name, None)
-            if running is None:
-                return False
-            self._tabs_of(name).clear()
-        self._close(running)
+        with self._launch_lock(name):
+            with self._lock:
+                running = self._running.pop(name, None)
+                if running is None:
+                    return False
+                self._tabs_of(name).clear()
+            self._close(running)
         return True
 
     def stop_all(self) -> None:
@@ -418,8 +428,12 @@ class ProfileRegistry:
                 ):
                     raise OpError(
                         "browser_dead",
-                        f"another browser is holding the profile at {directory} -- "
-                        "close it, then start again",
+                        f"another browser is holding the profile at {directory}. "
+                        "Close any Chrome window using it. If none is open, a hidden "
+                        "browser left by an earlier abt server may still hold it: end "
+                        "the chrome processes whose command line names this folder "
+                        "(Task Manager > Details, or `pkill -f` with the path), then "
+                        "start again",
                     )
                 raise OpError(
                     "browser_dead",

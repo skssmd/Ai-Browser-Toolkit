@@ -78,6 +78,14 @@ def _unmapped(exc: Exception) -> OpError:
     detail = f"{name}: {exc}"
     if "Timeout" in name:
         return OpError("timeout", detail)
+    if "NoSuchWindow" in name:
+        # A shared session whose last tab was released or taken over has no
+        # page at all. The browser is fine; the session needs a tab.
+        return OpError(
+            "tab_not_found",
+            f"this session has no tab to act on ({detail})",
+            hint="Open one with tab_new, or tab_claim an unowned tab from tab_list.",
+        )
     return OpError("browser_dead", detail)
 
 
@@ -952,7 +960,13 @@ def create_app(
                 )
             owner = body.get("session")
             if owner is not None:
-                registry.info(owner)  # unknown_session if there is no such session
+                # unknown_session if there is no such session; and a tab can
+                # only belong to a session on the profile it is open in.
+                if registry.info(owner)["profile"] != profile:
+                    raise OpError(
+                        "invalid_op",
+                        f"session {owner!r} is not on profile {profile!r}, where this tab is",
+                    )
             return {"tab_id": tabs.set_owner(target, owner), "session": owner}
 
         return await _admin(work)
