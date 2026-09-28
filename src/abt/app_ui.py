@@ -128,14 +128,8 @@ APP_HTML = r"""<!doctype html>
 <div id="top">
   <span class="brand">AI Browser Toolkit</span>
   <div class="group">
-    <span class="muted small">Profile</span>
-    <select id="profile" title="Browser profile: its own logins and cookies"></select>
-    <button class="icon" id="profile-new" title="New profile">+</button>
-    <button class="icon" id="profile-del" title="Delete this profile">🗑</button>
-  </div>
-  <div class="group">
     <span class="muted small">Session</span>
-    <select id="session" title="Session: a profile, its rules, its tabs and its chats"></select>
+    <select id="session" title="Session: a browser profile with its logins, plus its own rules, tabs and chats"></select>
     <button class="icon" id="session-new" title="New session">+</button>
     <button class="icon" id="session-edit" title="Session settings">⚙</button>
     <button class="icon" id="session-del" title="Delete this session">🗑</button>
@@ -203,7 +197,14 @@ APP_HTML = r"""<!doctype html>
 <dialog id="dlg-session">
   <h2 id="ses-title">Session</h2>
   <label class="field" id="ses-name-row">Name<input type="text" id="ses-name" placeholder="lowercase, e.g. research" spellcheck="false"></label>
-  <label class="field">Profile<select id="ses-profile"></select></label>
+  <label class="field">Browser profile <span class="hint">— its logins and cookies</span>
+    <span style="display:flex; gap:6px">
+      <select id="ses-profile" style="flex:1"></select>
+      <button class="icon" id="ses-profile-del" type="button" title="Delete the selected profile (only when no session uses it)">🗑</button>
+    </span>
+  </label>
+  <label class="field" id="ses-newprofile-row" style="display:none">New profile name
+    <input type="text" id="ses-newprofile" placeholder="lowercase, e.g. work" spellcheck="false"></label>
   <label class="field">Allowed and blocked URLs, one per line
     <textarea id="ses-rules" spellcheck="false" placeholder="app.example.com/admin&#10;!app.example.com/api"></textarea></label>
   <div class="hint">A line allows a host and path; a line starting with ! blocks it. Any allowed line makes everything else blocked. Empty means no limits.</div>
@@ -311,16 +312,18 @@ async function loadAll() {
   if (!S.sessions.find(s => s.name === S.session)) S.session = "default";
   const current = S.sessions.find(s => s.name === S.session);
   S.profile = current ? current.profile : "default";
-  $("#profile").innerHTML = S.profiles.map(p =>
-    `<option value="${esc(p.name)}"${p.name === S.profile ? " selected" : ""}>${esc(p.name)}${p.running ? " ●" : ""}</option>`).join("");
   drawSessions();
 }
 
 function drawSessions() {
-  const mine = S.sessions.filter(s => s.profile === S.profile);
-  $("#session").innerHTML = mine.map(s =>
-    `<option value="${esc(s.name)}"${s.name === S.session ? " selected" : ""}>${esc(s.name)}${s.sealed ? " 🔒" : ""}${s.running ? " ●" : ""}</option>`).join("")
-    || `<option value="">no sessions on this profile</option>`;
+  // One list, grouped by the profile each session runs on: the profile is a
+  // property of the session, not a second thing to pick.
+  const byProfile = {};
+  for (const s of S.sessions) (byProfile[s.profile] = byProfile[s.profile] || []).push(s);
+  $("#session").innerHTML = Object.keys(byProfile).sort().map(profile =>
+    `<optgroup label="profile: ${esc(profile)}">` + byProfile[profile].map(s =>
+      `<option value="${esc(s.name)}"${s.name === S.session ? " selected" : ""}>${esc(s.name)}${s.sealed ? " 🔒" : ""}${s.running ? " ●" : ""}</option>`).join("") +
+    `</optgroup>`).join("");
 }
 
 async function selectSession(name) {
@@ -328,39 +331,43 @@ async function selectSession(name) {
   S.session = name; store.set("session", name);
   const info = S.sessions.find(s => s.name === name);
   S.profile = info ? info.profile : S.profile;
-  $("#profile").value = S.profile; drawSessions();
+  drawSessions();
   closeScreen();
   // Chats first, then the socket: what it replays lands on the drawn chat.
   await refreshBrowser(); await loadChats(); openChatSocket();
 }
 
-$("#profile").onchange = async (e) => {
-  S.profile = e.target.value; drawSessions();
-  const first = S.sessions.find(s => s.profile === S.profile);
-  if (first) await selectSession(first.name);
-  else { closeScreen(); S.session = null; $("#messages").innerHTML = ""; $("#chatpick").innerHTML = ""; say("No session on this profile yet — create one with +"); }
-};
 $("#session").onchange = (e) => selectSession(e.target.value);
-
-$("#profile-new").onclick = async () => {
-  const name = (prompt("New profile name (lowercase letters, digits, - _ .):") || "").trim();
-  if (!name) return;
-  try { await api("POST", "/profiles", { name }, { session: null }); await loadAll(); $("#profile").value = name; $("#profile").onchange({ target: $("#profile") }); say("Profile created"); }
-  catch (e) { fail(e); }
-};
-$("#profile-del").onclick = async () => {
-  if (S.profile === "default") return say("The default profile cannot be removed", true);
-  if (!confirm(`Delete profile "${S.profile}" and every login in it? This cannot be undone.`)) return;
-  try { await api("DELETE", "/profiles/" + encodeURIComponent(S.profile), undefined, { session: null }); await loadAll(); say("Profile deleted"); }
-  catch (e) { fail(e); }
-};
 
 function openSessionDialog(edit) {
   const dlg = $("#dlg-session");
   $("#ses-title").textContent = edit ? `Session: ${S.session}` : "New session";
   $("#ses-name-row").style.display = edit ? "none" : "";
   $("#ses-sealed-row").style.display = edit ? "none" : "";
-  $("#ses-profile").innerHTML = S.profiles.map(p => `<option${p.name === S.profile ? " selected" : ""}>${esc(p.name)}</option>`).join("");
+  const drawProfiles = (pick) => {
+    $("#ses-profile").innerHTML = S.profiles.map(p =>
+      `<option value="${esc(p.name)}"${p.name === pick ? " selected" : ""}>${esc(p.name)}${p.running ? " ●" : ""}</option>`).join("")
+      + `<option value="__new__">+ New profile…</option>`;
+    $("#ses-newprofile-row").style.display = "none";
+  };
+  drawProfiles(S.profile);
+  $("#ses-newprofile").value = "";
+  $("#ses-profile").onchange = () => {
+    const isNew = $("#ses-profile").value === "__new__";
+    $("#ses-newprofile-row").style.display = isNew ? "" : "none";
+    if (isNew) $("#ses-newprofile").focus();
+  };
+  $("#ses-profile-del").onclick = async () => {
+    const name = $("#ses-profile").value;
+    if (name === "__new__") return;
+    if (name === "default") return say("The default profile cannot be removed", true);
+    if (!confirm(`Delete profile "${name}" and every login in it? This cannot be undone.`)) return;
+    try {
+      await api("DELETE", "/profiles/" + encodeURIComponent(name), undefined, { session: null });
+      S.profiles = await api("GET", "/profiles", undefined, { session: null });
+      drawProfiles(S.profile); say("Profile deleted");
+    } catch (e) { fail(e); }
+  };
   $("#ses-name").value = ""; $("#ses-rules").value = ""; $("#ses-strict").checked = false; $("#ses-runjs").checked = true;
   if (edit) {
     api("GET", "/sessions/" + encodeURIComponent(S.session)).then(info => {
@@ -376,15 +383,23 @@ function openSessionDialog(edit) {
       strict: $("#ses-strict").checked, run_js: $("#ses-runjs").checked,
     };
     try {
+      // A new profile is made first, then the session on it.
+      let profile = $("#ses-profile").value;
+      if (profile === "__new__") {
+        profile = $("#ses-newprofile").value.trim();
+        if (!profile) return say("Name the new profile", true);
+        await api("POST", "/profiles", { name: profile }, { session: null });
+        S.profiles = await api("GET", "/profiles", undefined, { session: null });
+      }
       if (edit) {
         const body = { settings };
-        if ($("#ses-profile").value !== S.profile) body.profile = $("#ses-profile").value;
+        if (profile !== S.profile) body.profile = profile;
         const out = await api("PATCH", "/sessions/" + encodeURIComponent(S.session), body);
         if (out.warning) say(out.warning);
         await loadAll(); await selectSession(S.session);
       } else {
         const name = $("#ses-name").value.trim();
-        const out = await api("POST", "/sessions", { name, profile: $("#ses-profile").value, sealed: $("#ses-sealed").checked, settings }, { session: null });
+        const out = await api("POST", "/sessions", { name, profile, sealed: $("#ses-sealed").checked, settings }, { session: null });
         if (out.token) { S.tokens[name] = out.token; try { sessionStorage.setItem("abt.tok." + name, out.token); } catch (e) {} }
         await loadAll(); await selectSession(name);
       }
@@ -708,6 +723,9 @@ async function onChatEvent(e) {
     return;
   }
   if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); }
+  // Refused before it started (say, that chat was already replying): nothing
+  // else will clear "Working…", so this does.
+  if (e.type === "error" && !S.runningChats.has(id)) { if (here) { bubble("error", e.text); setBusy(false); } return; }
   if (!S.buffers[id]) S.buffers[id] = [];
   S.buffers[id].push(e);
   if (here) renderEvent(e);
