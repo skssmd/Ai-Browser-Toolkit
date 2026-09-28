@@ -1,8 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
-  <title>AI Browser Toolkit</title>
-  <!-- A browser window, a pointer acting in it, and a spark: the AI doing the acting. -->
-  <rect x="5" y="8" width="54" height="48" rx="11" stroke-width="4"/>
-  <path d="M5 20H59" stroke-width="4"/>
-  <path d="M31 26.5V45.5l4.9-4.9 3.6 7.6 3.4-1.6-3.6-7.5h6.7z" stroke-width="3.5"/>
-  <path d="M21.5 24.5Q22.9 28.1 26.5 29.5Q22.9 30.9 21.5 34.5Q20.1 30.9 16.5 29.5Q20.1 28.1 21.5 24.5Z" stroke-width="3"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>AI Browser Toolkit</title>
+  <!-- // from https:// (the web), a pointer acting on it, and a spark: the AI doing the acting. -->
+  <circle class="disc" cx="32" cy="32" r="31" fill="#ffffff"/>
+  <g transform="translate(32 32) scale(0.64) translate(-32.5 -31.5)">
+    <path class="mark" d="M6 56 L19 8 L27 8 L14 56 Z" fill="#111111"/>
+    <path class="mark" d="M20 56 L33 8 L41 8 L28 56 Z" fill="#111111"/>
+    <path class="mark" d="M51.00 6.00 L52.76 12.24 L59.00 14.00 L52.76 15.76 L51.00 22.00 L49.24 15.76 L43.00 14.00 L49.24 12.24Z" fill="#111111"/>
+    <path class="gap" d="M34.50 25.00 L34.50 53.80 L41.94 47.08 L46.98 58.12 L52.02 55.84 L47.10 45.04 L57.06 45.04Z" fill="#ffffff" stroke="#ffffff" stroke-width="7" stroke-linejoin="miter" stroke-miterlimit="10"/>
+    <path class="mark" d="M34.50 25.00 L34.50 53.80 L41.94 47.08 L46.98 58.12 L52.02 55.84 L47.10 45.04 L57.06 45.04Z" fill="#111111"/>
+  </g>
 </svg>
