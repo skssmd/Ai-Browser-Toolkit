@@ -93,6 +93,25 @@ APP_HTML = r"""<!doctype html>
   .msg { padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; }
   .msg.user { background: var(--user); align-self: flex-end; max-width: 90%; }
   .msg.assistant { background: var(--soft); max-width: 95%; }
+  .msg.md { white-space: normal; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 6px 0; }
+  .md h1, .md h2, .md h3, .md h4 { margin: 10px 0 4px; line-height: 1.3; }
+  .md h1 { font-size: 16px; } .md h2 { font-size: 15px; } .md h3, .md h4 { font-size: 13.5px; }
+  .md ul, .md ol { padding-left: 20px; }
+  .md li { margin: 2px 0; }
+  .md code {
+    background: var(--code); border-radius: 4px; padding: 1px 4px;
+    font: 12px ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  .md pre { background: var(--code); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+  .md pre code { background: none; padding: 0; white-space: pre; }
+  .md blockquote { border-left: 3px solid var(--line); padding-left: 8px; color: var(--muted); }
+  .md a { color: var(--accent); }
+  .md table { border-collapse: collapse; font-size: 12px; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; }
+  .md th { background: var(--code); }
+  .md hr { border: none; border-top: 1px solid var(--line); }
   .msg.notice { color: var(--muted); font-size: 12px; background: none; padding: 0 4px; }
   .msg.error { color: var(--bad); font-size: 12px; background: none; padding: 0 4px; }
   details.tool { background: var(--tool); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
@@ -675,7 +694,80 @@ $("#chat-del").onclick = async () => {
 };
 
 function add(html) { const m = $("#messages"); m.insertAdjacentHTML("beforeend", html); m.scrollTop = m.scrollHeight; }
-function bubble(role, text) { add(`<div class="msg ${role}">${esc(text)}</div>`); }
+function bubble(role, text) {
+  if (role === "assistant") return add(`<div class="msg assistant md">${markdown(text)}</div>`);
+  add(`<div class="msg ${role}">${esc(text)}</div>`);
+}
+
+// Markdown for the model's replies. Small and self-contained -- the page
+// loads nothing from the network -- and safe by construction: every piece of
+// text is escaped before any markup is added, and links must be http(s).
+function markdown(src) {
+  const inline = (text) => {
+    const codes = [];
+    let t = esc(text).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+    t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+         .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+         .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+         .replace(/(^|[\s(])_([^_\s][^_]*)_(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>")
+         .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+  };
+  const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  const bullet = /^\s*[-*+]\s+/, number = /^\s*\d+[.)]\s+/;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
+      i++;
+      out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) { const n = heading[1].length; out.push(`<h${n}>${inline(heading[2])}</h${n}>`); i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+    if (isTableRow(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) rows.push(cells(lines[i++]));
+      out.push("<table><thead><tr>" + head.map(c => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>" +
+        rows.map(r => "<tr>" + r.map(c => `<td>${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table>");
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const quote = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${markdown(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+    if (bullet.test(line) || number.test(line)) {
+      const ordered = number.test(line), marker = ordered ? number : bullet;
+      const items = [];
+      while (i < lines.length && marker.test(lines[i])) {
+        let item = lines[i++].replace(marker, "");
+        // A wrapped continuation line belongs to the item above it.
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !bullet.test(lines[i]) && !number.test(lines[i])) item += " " + lines[i++].trim();
+        items.push(`<li>${inline(item)}</li>`);
+      }
+      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,4}\s|>|[-*+]\s|\d+[.)]\s)/.test(lines[i]) && !isTableRow(lines[i])) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
+    out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
 function toolBlock(name, args, result, bad) {
   const shown = result === undefined ? "…running" : String(result).slice(0, 4000);
   add(`<details class="tool${bad ? " fail" : ""}"><summary>${bad ? "✗" : "▸"} ${esc(name)}</summary><pre>${esc(JSON.stringify(args, null, 1))}</pre><pre>${esc(shown)}</pre></details>`);
