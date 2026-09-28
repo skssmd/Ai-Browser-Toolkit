@@ -108,8 +108,9 @@ def test_the_chat_drives_a_real_tool_call(client, registry, monkeypatch):
             if event["type"] == "done":
                 break
     kinds = [e["type"] for e in events]
-    assert kinds == ["tool_call", "tool_result", "assistant", "done"]
-    result = json.loads(events[1]["text"])
+    assert kinds == ["user", "tool_call", "tool_result", "assistant", "done"]
+    assert all(e["chat_id"] == chat["id"] for e in events)
+    result = json.loads(events[2]["text"])
     assert result["ok"] is True and result["results"][0]["result"]["running"] is False
     saved = client.get(f"/app/chats/{chat['id']}").json()["result"]
     assert saved["title"] == "is the browser up?"
@@ -136,3 +137,48 @@ def test_the_chat_cannot_shut_the_server_down(client, monkeypatch):
     result = next(e for e in events if e["type"] == "tool_result")
     assert result["error"] is True and "shutdown" in result["text"]
     assert client.get("/health").json()["ok"] is True
+
+
+def test_replies_keep_running_when_the_page_leaves_and_run_side_by_side(client, registry, monkeypatch):
+    """Switching profile or session in the app must not stop anything: each
+    chat replies on the server, and a page that comes back sees what it missed."""
+    import threading
+    import time
+
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+    registry.profiles.create("other")
+    registry.create("b", profile="other")
+    gate = threading.Event()
+    started = []
+
+    def complete(endpoint, key, model, messages, tools):
+        started.append(model)
+        gate.wait(10)  # both replies are in flight at once until released
+        return {"content": "finished"}
+
+    monkeypatch.setattr(agent, "complete", complete)
+    first = client.post("/app/chats", json={}).json()["result"]
+    second = client.post("/app/chats", json={}, headers={"X-ABT-Session": "b"}).json()["result"]
+    with client.websocket_connect("/app/chat?session=default") as ws:
+        ws.send_json({"type": "send", "chat_id": first["id"], "text": "one"})
+        assert ws.receive_json()["type"] == "user"
+    # The page left mid-reply. The other session's chat starts regardless.
+    with client.websocket_connect("/app/chat?session=b") as ws:
+        ws.send_json({"type": "send", "chat_id": second["id"], "text": "two"})
+        assert ws.receive_json()["type"] == "user"
+    deadline = time.monotonic() + 5
+    while len(started) < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(started) == 2, "the two chats did not run side by side"
+    assert set(client.get("/app/runs").json()["result"]) == {first["id"]}
+    # Back on the first session: what was missed is replayed, then the rest.
+    with client.websocket_connect("/app/chat?session=default") as ws:
+        assert ws.receive_json() == {"type": "resume", "chat_id": first["id"]}
+        assert ws.receive_json()["type"] == "user"
+        gate.set()
+        kinds = []
+        while (event := ws.receive_json())["type"] != "done":
+            kinds.append(event["type"])
+        assert kinds == ["assistant"]
+    saved = client.get(f"/app/chats/{first['id']}").json()["result"]
+    assert saved["messages"][-1]["content"] == "finished"

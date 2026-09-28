@@ -1152,6 +1152,101 @@ def create_app(
             body = fail(exc)
         return json.dumps(body, separators=(",", ":"), default=str), body.get("ok") is False
 
+    # Chat replies run on the server, not on the page's socket. The page only
+    # watches: switching profile or session, or reloading, leaves every reply
+    # running, and coming back replays what was missed. Each chat runs one
+    # reply at a time; different chats -- in any session, on any profile -- run
+    # side by side, because each session has its own browser and lock.
+
+    class ChatRun:
+        def __init__(self, session: str, chat_id: str) -> None:
+            self.session = session
+            self.chat_id = chat_id
+            self.events: list[dict] = []
+            self.stop = threading.Event()
+            self.finished = False
+
+    runs: dict[tuple[str, str], ChatRun] = {}
+    watchers: dict[str, set] = {}  # session -> the queues of pages watching it
+
+    def publish(run: ChatRun, event: dict) -> None:
+        """Called on the event loop. Buffer the event and hand it to watchers."""
+        event = {**event, "chat_id": run.chat_id}
+        if event["type"] != "done":
+            run.events.append(event)
+        for queue in list(watchers.get(run.session, ())):
+            queue.put_nowait(event)
+
+    async def start_run(sess: Session, message: dict) -> str | None:
+        """Begin a reply. Returns an error message, or None when started."""
+        chat_id = str(message.get("chat_id"))
+        key = (sess.name, chat_id)
+        current = runs.get(key)
+        if current is not None and not current.finished:
+            return "this chat is still working on the last message"
+        text = str(message.get("text") or "").strip()
+        try:
+            chat = await run_in_threadpool(chats.get, sess.name, chat_id)
+        except OpError as exc:
+            return exc.message
+        settings = app_settings.load()
+        models = [m for m in [message.get("model"), chat.get("model"), *settings["models"]] if m]
+        chat["messages"].append({"role": "user", "content": text})
+        if chat.get("title") in (None, "", "New chat"):
+            chat["title"] = text[:60] or "New chat"
+        run = ChatRun(sess.name, chat_id)
+        runs[key] = run
+        loop = asyncio.get_running_loop()
+        publish(run, {"type": "user", "text": text})
+
+        def emit(event: dict) -> None:
+            loop.call_soon_threadsafe(publish, run, event)
+
+        def work() -> None:
+            tool_list = agent_util.tools()
+            system = agent_util.system_prompt(
+                sess.record.settings.get("rules"), sess.browser.run_js_enabled
+            )
+            try:
+                used = agent_util.run_turn(
+                    chat["messages"],
+                    models=models,
+                    complete_fn=lambda model, msgs: agent_util.complete(
+                        settings["endpoint"], settings["api_key"], model, msgs, tool_list
+                    ),
+                    call_tool=lambda name, args: call_tool(sess, name, args),
+                    emit=emit,
+                    should_stop=run.stop.is_set,
+                    system=system,
+                )
+                if used:
+                    chat["model"] = used
+            except Exception as exc:  # the chat must say so, not go quiet
+                emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
+            finally:
+                chats.save(sess.name, chat)
+
+                def finish() -> None:
+                    run.finished = True
+                    publish(run, {"type": "done", "title": chat["title"]})
+
+                loop.call_soon_threadsafe(finish)
+
+        loop.run_in_executor(None, work)
+        return None
+
+    @app.get("/app/runs")
+    async def app_runs(request: Request):
+        """Which chats in this session are replying right now."""
+
+        def work():
+            sess = _chat_session(request)
+            return [
+                r.chat_id for (name, _), r in runs.items() if name == sess.name and not r.finished
+            ]
+
+        return await _admin(work)
+
     @app.websocket("/app/chat")
     async def app_chat(ws: WebSocket):
         if not _local_origin(ws):
@@ -1168,88 +1263,41 @@ def create_app(
             await ws.close(code=1008)
             return
 
-        loop = asyncio.get_running_loop()
-        stop = threading.Event()
-        running: asyncio.Task | None = None
+        queue: asyncio.Queue = asyncio.Queue()
+        watchers.setdefault(sess.name, set()).add(queue)
+        # What this page missed: every reply still running in this session,
+        # from its first event.
+        for (name, _), run in list(runs.items()):
+            if name == sess.name and not run.finished:
+                queue.put_nowait({"type": "resume", "chat_id": run.chat_id})
+                for event in run.events:
+                    queue.put_nowait(event)
 
-        async def turn(message: dict) -> None:
-            text = str(message.get("text") or "").strip()
-            try:
-                chat = await run_in_threadpool(chats.get, sess.name, str(message.get("chat_id")))
-            except OpError as exc:
-                await ws.send_json({"type": "error", "text": exc.message})
-                return
-            settings = app_settings.load()
-            models = [m for m in [message.get("model"), chat.get("model"), *settings["models"]] if m]
-            chat["messages"].append({"role": "user", "content": text})
-            if chat.get("title") in (None, "", "New chat"):
-                chat["title"] = text[:60] or "New chat"
-            events: asyncio.Queue = asyncio.Queue()
-
-            def emit(event: dict) -> None:
-                loop.call_soon_threadsafe(events.put_nowait, event)
-
-            def work() -> None:
-                tool_list = agent_util.tools()
-                system = agent_util.system_prompt(
-                    sess.record.settings.get("rules"), sess.browser.run_js_enabled
-                )
-                try:
-                    used = agent_util.run_turn(
-                        chat["messages"],
-                        models=models,
-                        complete_fn=lambda model, msgs: agent_util.complete(
-                            settings["endpoint"], settings["api_key"], model, msgs, tool_list
-                        ),
-                        call_tool=lambda name, args: call_tool(sess, name, args),
-                        emit=emit,
-                        should_stop=stop.is_set,
-                        system=system,
-                    )
-                    if used:
-                        chat["model"] = used
-                except Exception as exc:  # the chat must say so, not go quiet
-                    emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
-                finally:
-                    chats.save(sess.name, chat)
-                    emit({"type": "_end"})
-
-            loop.run_in_executor(None, work)
-            gone = False
+        async def writer() -> None:
             while True:
-                event = await events.get()
-                if event.get("type") == "_end":
-                    break
-                if gone:
-                    continue
-                try:
-                    await ws.send_json(event)
-                except (WebSocketDisconnect, RuntimeError):
-                    # The page went away -- another session picked, or a
-                    # reload. Stop the model rather than let it work unseen,
-                    # and keep draining so the chat is still saved.
-                    gone = True
-                    stop.set()
-            if not gone:
-                try:
-                    await ws.send_json({"type": "done", "chat_id": chat["id"], "title": chat["title"]})
-                except (WebSocketDisconnect, RuntimeError):
-                    pass
+                event = await queue.get()
+                await ws.send_json(event)
 
+        sender = asyncio.create_task(writer())
         try:
             while True:
                 message = await ws.receive_json()
                 kind = message.get("type") if isinstance(message, dict) else None
                 if kind == "stop":
-                    stop.set()
+                    run = runs.get((sess.name, str(message.get("chat_id"))))
+                    if run is not None:
+                        run.stop.set()
                 elif kind == "send":
-                    if running is not None and not running.done():
-                        await ws.send_json({"type": "error", "text": "still working on the last message"})
-                        continue
-                    stop.clear()
-                    running = asyncio.create_task(turn(message))
+                    error = await start_run(sess, message)
+                    if error:
+                        queue.put_nowait(
+                            {"type": "error", "text": error, "chat_id": message.get("chat_id")}
+                        )
         except (WebSocketDisconnect, RuntimeError):
-            stop.set()
+            pass  # the page left; its replies keep running
+        finally:
+            watchers.get(sess.name, set()).discard(queue)
+            sender.cancel()
 
     return app
 

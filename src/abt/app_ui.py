@@ -235,7 +235,7 @@ const store = {
 const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
-  meta: null, running: false, busy: false, settings: null,
+  meta: null, running: false, busy: false, settings: null, runningChats: new Set(), buffers: {},
 };
 
 // --- tokens ---------------------------------------------------------------------
@@ -329,8 +329,9 @@ async function selectSession(name) {
   const info = S.sessions.find(s => s.name === name);
   S.profile = info ? info.profile : S.profile;
   $("#profile").value = S.profile; drawSessions();
-  closeScreen(); openChatSocket();
-  await refreshBrowser(); await loadChats();
+  closeScreen();
+  // Chats first, then the socket: what it replays lands on the drawn chat.
+  await refreshBrowser(); await loadChats(); openChatSocket();
 }
 
 $("#profile").onchange = async (e) => {
@@ -512,7 +513,7 @@ $("#screen").addEventListener("mousedown", (e) => {
 $("#screen").addEventListener("mouseup", (e) => {
   const p = pagePoint(e); if (!p) return;
   sendInput({ type: "mouse", event: "mouseReleased", ...p, button: BUTTONS[e.button] || "left", clickCount: e.detail || 1, modifiers: mods(e) });
-  if (!S.busy) setTimeout(refreshBrowser, 800);
+  if (!S.runningChats.size) setTimeout(refreshBrowser, 800);
 });
 let lastMove = 0;
 $("#screen").addEventListener("mousemove", (e) => {
@@ -625,6 +626,9 @@ async function openChat(id) {
   try { S.chat = await api("GET", "/app/chats/" + encodeURIComponent(id)); } catch (e) { return fail(e); }
   store.set("chat." + S.session, id);
   drawModels(); drawHistory();
+  // A reply still running: its saved history lags, so show what it has done.
+  for (const e of S.buffers[id] || []) renderEvent(e);
+  setBusy(S.runningChats.has(id));
 }
 $("#chatpick").onchange = (e) => openChat(e.target.value);
 $("#chat-new").onclick = async () => { try { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); await loadChats(c.id); } catch (e) { fail(e); } };
@@ -658,25 +662,25 @@ function drawHistory() {
 }
 
 function openChatSocket() {
+  // Leaving a session no longer stops its replies: they run on the server,
+  // and this socket only watches. Coming back replays what was missed.
   if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
-  S.chatSock = null;
-  // A reply in flight belonged to the session being left; closing its socket
-  // stops it on the server. Without this "Working…" stuck to every session.
-  if (S.busy) setBusy(false);
+  S.chatSock = null; S.runningChats = new Set(); S.buffers = {};
+  setBusy(false);
   if (!S.session) return;
   sessionToken(S.session).then(token => {
     const q = new URLSearchParams({ session: S.session }); if (token) q.set("token", token);
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/app/chat?${q}`);
     S.chatSock = ws;
     ws.onmessage = (ev) => onChatEvent(JSON.parse(ev.data));
-    ws.onclose = () => { if (S.chatSock === ws) { S.chatSock = null; setBusy(false); } };
+    ws.onclose = () => { if (S.chatSock === ws) S.chatSock = null; };
   });
 }
 
 let pendingTool = null;
-function onChatEvent(e) {
-  if (e.ok === false) { bubble("error", (e.error && e.error.message) || "chat unavailable"); return setBusy(false); }
-  if (e.type === "assistant") bubble("assistant", e.text);
+function renderEvent(e) {
+  if (e.type === "user") bubble("user", e.text);
+  else if (e.type === "assistant") bubble("assistant", e.text);
   else if (e.type === "tool_call") { pendingTool = e; }
   else if (e.type === "tool_result") {
     // No refresh here: the live view already shows the page, and a tab_list
@@ -684,12 +688,29 @@ function onChatEvent(e) {
     toolBlock(e.name, pendingTool ? pendingTool.args : {}, e.text, e.error); pendingTool = null;
   }
   else if (e.type === "notice") bubble("notice", e.text);
-  else if (e.type === "error") { bubble("error", e.text); }
-  else if (e.type === "done") {
-    setBusy(false);
-    const opt = [...$("#chatpick").options].find(o => o.value === e.chat_id); if (opt) opt.textContent = e.title;
-    refreshBrowser();
+  else if (e.type === "error") bubble("error", e.text);
+}
+
+async function onChatEvent(e) {
+  if (e.ok === false) { bubble("error", (e.error && e.error.message) || "chat unavailable"); return; }
+  const id = e.chat_id;
+  const here = S.chat && S.chat.id === id;
+  if (e.type === "resume") {
+    // A reply that was already running when this page connected.
+    S.runningChats.add(id); S.buffers[id] = [];
+    if (here) { drawHistory(); setBusy(true); }
+    return;
   }
+  if (e.type === "done") {
+    S.runningChats.delete(id); delete S.buffers[id];
+    const opt = [...$("#chatpick").options].find(o => o.value === id); if (opt) opt.textContent = e.title;
+    if (here) { await openChat(id); refreshBrowser(); }
+    return;
+  }
+  if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); }
+  if (!S.buffers[id]) S.buffers[id] = [];
+  S.buffers[id].push(e);
+  if (here) renderEvent(e);
 }
 
 function setBusy(busy) {
@@ -701,11 +722,11 @@ async function send() {
   const text = $("#prompt").value.trim();
   if (!text || S.busy || !S.chat) return;
   if (!S.chatSock || S.chatSock.readyState !== 1) { openChatSocket(); return say("Reconnecting the chat — send again in a moment", true); }
-  bubble("user", text); $("#prompt").value = ""; setBusy(true);
+  $("#prompt").value = ""; setBusy(true);
   S.chatSock.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
 }
 $("#send").onclick = send;
-$("#stop").onclick = () => S.chatSock && S.chatSock.send(JSON.stringify({ type: "stop" }));
+$("#stop").onclick = () => S.chatSock && S.chat && S.chatSock.send(JSON.stringify({ type: "stop", chat_id: S.chat.id }));
 $("#prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
 // --- start -------------------------------------------------------------------------------
@@ -719,7 +740,7 @@ $("#prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.prev
     await loadModels();
     await selectSession(S.session);
   } catch (e) { fail(e); }
-  setInterval(() => { if (!document.hidden && !S.busy) refreshBrowser(); }, 5000);
+  setInterval(() => { if (!document.hidden && !S.runningChats.size) refreshBrowser(); }, 5000);
 })();
 </script>
 </body>
