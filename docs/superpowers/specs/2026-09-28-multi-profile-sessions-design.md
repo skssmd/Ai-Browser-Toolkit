@@ -280,8 +280,10 @@ For a session S and tab T:
 | owned by another session, same profile | listed with `locked: "<owner>"` | `tab_locked` |
 | in a different profile | not listed | `tab_not_found` (same as a tab that does not exist) |
 
-A sealed session's tabs follow the same table for everyone else; the owner's
-name is shown, nothing else.
+A locked tab, sealed session or not, is listed with its owner's name and
+nothing else: what is on another session's tab is that session's business.
+An unowned tab shows its url and title, since claiming it is the only thing to
+do with it.
 
 `tab_new`, `tab_switch` and `tab_close` act only on owned tabs. Each session
 has its own current tab; switching never affects another session. Playwright
@@ -321,7 +323,9 @@ In registry mode `default` goes through the same path. The
 legacy `create_app(browser_session)` path and direct library use.
 
 A profile can be marked `headed` (`abt profile set NAME --headed`) for sites
-that misbehave headless. The GUI remains the intended way to see it.
+that misbehave headless. The GUI remains the intended way to see it. Until it
+is set, the `default` profile follows `abt serve`'s `--headless` flag, so a
+server started the way it always was still shows its window.
 
 ### Connections and locks
 
@@ -347,12 +351,14 @@ that misbehave headless. The GUI remains the intended way to see it.
 - `--profile-idle-minutes` (default 30; 0 disables): a profile's Chrome stops
   when none of its sessions has sent a command for that long **and** no
   screencast is open on it.
-- If a profile's Chrome dies, its sessions' next command returns `browser_dead`
-  once, and the command after that relaunches it. The existing attach-mode
+- If a profile's Chrome dies, its sessions' commands return `browser_dead`,
+  and `browser_restart` in any of them relaunches it — explicit, like every
+  other start. The existing attach-mode
   `browser_dead` hint ("externally owned, cannot restart") applies only when
   `ABT_CDP_URL` is set; profile-registry browsers get a relaunch hint.
-- `/status` reports each running profile (pid, port, headed, sessions, tab
-  count) and each session (profile, sealed, owned tab count, last command).
+- `/status` names the session it answered for. `GET /profiles` reports each
+  profile (running, port, headed, connected sessions) and `GET /sessions` each
+  session (profile, sealed, running, owned tab count).
 
 ## Logs
 
