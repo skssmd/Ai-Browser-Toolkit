@@ -96,6 +96,17 @@ abt doctor          # what browsers are installed, and where
 ./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
 ```
 
+**The desktop app** — a window with the browser and a chat side by side, for
+driving it yourself with a model of your choice:
+
+```bash
+pip install "ai-browser-toolkit[app]"   # adds the window; without it the app opens in a browser tab
+abt app                                   # starts the server if needed, then opens the window
+```
+
+It asks for an OpenRouter key (or any OpenAI-compatible service) and a model
+the first time. See [Desktop app](#desktop-app).
+
 `abt serve` is a command loop that never returns on its own; running it inline
 from an agent or script hangs forever. `abt up` and the start scripts exist so
 nothing has to know that — they background it correctly and return once it
