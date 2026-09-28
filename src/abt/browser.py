@@ -16,6 +16,7 @@ from . import diff as diff_util
 from . import frames as frame_util
 from .errors import OpError
 from .launch import LaunchConfig
+from .policy import Policy, from_settings
 from .tabs import TabGate
 
 # How long the DOM must hold still before a freshly loaded page counts as
@@ -152,6 +153,13 @@ class BrowserSession:
         # of learning them -- so it can be closed, and the refusal names what to
         # use instead.
         self.run_js_enabled = run_js_enabled
+        # What `abt serve` said, so a session's own setting can be undone.
+        self._run_js_default = run_js_enabled
+        # This session's URL rules. Empty for a session that has none, and
+        # always empty outside shared mode -- see `apply_settings`.
+        self.policy = Policy()
+        self._guard = None
+        self._cdp_port: int | None = None
         self.max_frames = max_frames
         self.max_frame_depth = max_frame_depth
         self.diff_enabled = diff_enabled
@@ -282,6 +290,7 @@ class BrowserSession:
         self._verify_session()
         self._install_console_capture()
         self._sync_tabs()
+        self.sync_guard()
         return {
             "running": True,
             "config": config.to_dict(),
@@ -294,6 +303,7 @@ class BrowserSession:
 
             if self._attach is not None:
                 url = self._attach.connect()
+                self._cdp_port = int(url.rsplit(":", 1)[1].split("/")[0])
                 try:
                     return PlaywrightDriver(
                         config,
@@ -319,6 +329,9 @@ class BrowserSession:
         than call quit().
         """
         was_running = self.is_running
+        if self._guard is not None:
+            self._guard.stop()
+            self._guard = None
         if self._driver is not None:
             try:
                 self._driver.quit()
@@ -619,10 +632,14 @@ class BrowserSession:
         return out
 
     def new_tab(self, url: str | None, activate: bool) -> str:
+        self.check_url(url)
         before = self.driver.current_window_handle
         self.driver.switch_to.new_window("tab")
         self._install_console_capture()  # before anything loads in it
         self._sync_tabs()
+        # Guarded before it loads anything, not a poll later.
+        if self.policy:
+            self.sync_guard()
         tab_id = self.active_tab
         if url:
             self.goto(url)
@@ -664,6 +681,45 @@ class BrowserSession:
         neighbour = self._order[min(position, len(self._order) - 1)]
         self.driver.switch_to.window(self._handles[neighbour])
         self._install_console_capture()
+
+    # --- policy -----------------------------------------------------------------
+
+    def apply_settings(self, settings: dict | None) -> None:
+        """Take a session's settings: its URL rules and its run_js switch.
+
+        Applies at once -- the network guard picks up new rules on its next
+        request, and the next command sees the rest.
+        """
+        settings = settings or {}
+        self.policy = from_settings(settings)
+        run_js = settings.get("run_js")
+        self.run_js_enabled = self._run_js_default if run_js is None else bool(run_js)
+        if self.is_running:
+            self.sync_guard()
+
+    def sync_guard(self) -> None:
+        """Start, stop or refresh the network guard to match the rules."""
+        if self._attach is None or self._cdp_port is None:
+            return
+        if not self.policy:
+            if self._guard is not None:
+                self._guard.stop()
+                self._guard = None
+            return
+        if self._guard is None:
+            from .guard import Guard
+
+            gate = self._attach.gate
+            self._guard = Guard(
+                self._cdp_port,
+                policy=lambda: self.policy,
+                owned=lambda: set(gate.registry.owned_by(gate.session)),
+            )
+        self._guard.sync()
+
+    def check_url(self, url: str | None) -> None:
+        if url:
+            self.policy.check(url)
 
     # --- sharing ----------------------------------------------------------------
 

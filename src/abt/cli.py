@@ -1561,6 +1561,26 @@ def browser_open_manual(
 # --- sessions and profiles ----------------------------------------------------
 
 
+_RULES_HELP = (
+    "Comma-separated URL rules: 'app.example.com/admin' allows, "
+    "'!app.example.com/api' denies, '*.example.com' covers subdomains. Any "
+    "allow rule makes it an allow-list. '' clears them."
+)
+_STRICT_HELP = "Check every request, not only pages and API calls."
+_RUN_JS_HELP = "Allow or refuse run_js in this session."
+
+
+def _policy_settings(rules, strict, run_js) -> dict:
+    settings: dict = {}
+    if rules is not None:
+        settings["rules"] = [r.strip() for r in rules.split(",") if r.strip()]
+    if strict is not None:
+        settings["strict"] = strict
+    if run_js is not None:
+        settings["run_js"] = run_js
+    return settings
+
+
 @session_app.command("list")
 def session_list(port: int = _port_option()) -> None:
     """Every session, its profile, and whether its browser is connected."""
@@ -1577,10 +1597,17 @@ def session_new(
         help="Require a token for every command. Printed once, and saved "
         "beside the session for the program that launches the agent.",
     ),
+    rules: Optional[str] = typer.Option(None, "--rules", help=_RULES_HELP),
+    strict: Optional[bool] = typer.Option(None, "--strict/--no-strict", help=_STRICT_HELP),
+    run_js: Optional[bool] = typer.Option(None, "--run-js/--no-run-js", help=_RUN_JS_HELP),
     port: int = _port_option(),
 ) -> None:
     """Create a session. It starts with no browser: send browser_start in it."""
-    _call(port, "/sessions", {"name": name, "profile": profile, "sealed": sealed})
+    payload = {"name": name, "profile": profile, "sealed": sealed}
+    settings = _policy_settings(rules, strict, run_js)
+    if settings:
+        payload["settings"] = settings
+    _call(port, "/sessions", payload)
 
 
 @session_app.command("show")
@@ -1595,12 +1622,18 @@ def session_set(
     profile: Optional[str] = typer.Option(
         None, "--profile", help="Move to another profile. Closes the session's tabs."
     ),
+    rules: Optional[str] = typer.Option(None, "--rules", help=_RULES_HELP),
+    strict: Optional[bool] = typer.Option(None, "--strict/--no-strict", help=_STRICT_HELP),
+    run_js: Optional[bool] = typer.Option(None, "--run-js/--no-run-js", help=_RUN_JS_HELP),
     port: int = _port_option(),
 ) -> None:
     """Change a session. Applies from its next command."""
     payload = {}
     if profile is not None:
         payload["profile"] = profile
+    settings = _policy_settings(rules, strict, run_js)
+    if settings:
+        payload["settings"] = settings
     _call(port, f"/sessions/{name}", payload, method="PATCH")
 
 

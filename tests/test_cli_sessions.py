@@ -66,3 +66,13 @@ def test_profile_management(calls):
     assert calls[-1]["method"] == "PATCH" and calls[-1]["json"] == {"headed": True}
     run("profile", "rm", "work", "--yes")
     assert calls[-1]["method"] == "DELETE"
+
+
+def test_rules_and_switches(calls):
+    run("session", "new", "a", "--rules", "app.x.com/admin, !app.x.com/api", "--no-run-js")
+    assert calls[-1]["json"]["settings"] == {
+        "rules": ["app.x.com/admin", "!app.x.com/api"],
+        "run_js": False,
+    }
+    run("session", "set", "a", "--rules", "", "--strict")
+    assert calls[-1]["json"] == {"settings": {"rules": [], "strict": True}}

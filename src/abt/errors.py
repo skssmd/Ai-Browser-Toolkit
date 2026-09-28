@@ -99,6 +99,11 @@ HINTS = {
         "Remove or move the sessions using this profile, and stop its "
         "browser, before removing it."
     ),
+    "url_blocked": (
+        "This session's rules do not allow that URL. They are set by whoever "
+        "runs the session, not by you: say what you needed and why, and let "
+        "them decide. Do not try to reach it another way."
+    ),
     "profile_not_found": (
         "`abt profile list` shows what exists; `abt profile new NAME` "
         "creates one."

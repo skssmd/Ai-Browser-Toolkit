@@ -63,6 +63,9 @@ DIFFABLE_OPS = frozenset(
 # documents is noise, so these report the page they arrived at instead.
 NAVIGATION_OPS = frozenset({"goto", "back", "forward", "reload"})
 
+# Ops that name a URL to load, checked against the session's rules.
+URL_OPS = frozenset({"goto", "tab_new"})
+
 # Ops that can change the DOM. Their post-command state becomes the baseline for
 # the next manual `diff`.
 DOM_TOUCHING_OPS = DIFFABLE_OPS | NAVIGATION_OPS | {"tab_new", "tab_close"}
@@ -108,6 +111,10 @@ def dispatch(session: BrowserSession, cmd) -> Any:
     handler = REGISTRY.get(cmd.op)
     if handler is None:
         raise OpError("invalid_op", f"no handler registered for op {cmd.op!r}")
+    if cmd.op in URL_OPS:
+        # Before anything else, the browser included: a URL the session may not
+        # reach is refused the same way whether or not a browser is up.
+        session.check_url(getattr(cmd, "url", None))
     if cmd.op not in NO_HEALTH_CHECK:
         session.health_check()
         # Every command starts on the top document. Frame context is sticky and

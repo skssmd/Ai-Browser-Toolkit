@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from .browser import Attach, BrowserSession
 from .errors import OpError
+from .policy import validate_settings
 from .profiles import DEFAULT, ProfileRegistry, check_name
 from .recorder import SessionRecorder
 from .tabs import TabGate
@@ -255,7 +256,9 @@ class SessionRegistry:
             list_targets=lambda: self.profiles.targets(profile),
             gate=TabGate(self.profiles.tabs(profile), name),
         )
-        return self._make_browser(self.profiles.path(profile), attach)
+        browser = self._make_browser(self.profiles.path(profile), attach)
+        browser.apply_settings(record.settings)
+        return browser
 
     # --- management ---------------------------------------------------------------
 
@@ -268,6 +271,7 @@ class SessionRegistry:
     ) -> dict:
         check_name(name, "session")
         self.profiles.require(profile)
+        validate_settings(settings)
         token = None
         with self._lock:
             if name in self._records:
@@ -298,6 +302,7 @@ class SessionRegistry:
         profile: str | None = None,
         settings: dict | None = None,
     ) -> dict:
+        validate_settings(settings)
         session = self.get(name, token)
         record = session.record
         if name == DEFAULT and profile not in (None, DEFAULT):
@@ -316,6 +321,7 @@ class SessionRegistry:
             if settings is not None:
                 merged = {**record.settings, **settings}
                 record.settings = {k: v for k, v in merged.items() if v is not None}
+                session.browser.apply_settings(record.settings)
             self.store.save(record)
         out = record.public()
         if warning:

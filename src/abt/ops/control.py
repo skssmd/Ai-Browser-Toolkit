@@ -29,7 +29,7 @@ def run_js(session: BrowserSession, cmd) -> dict:
     if not session.run_js_enabled:
         raise OpError(
             "invalid_op",
-            "run_js is disabled on this server",
+            "run_js is disabled in this session",
             hint=(
                 "Read the page with get_text and act on the address each line "
                 "carries: a line whose address holds # is a control, and "

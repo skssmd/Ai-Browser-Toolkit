@@ -44,6 +44,7 @@ def _check_scheme(url: str) -> None:
 
 def goto(session: BrowserSession, cmd) -> dict:
     _check_scheme(cmd.url)
+    session.check_url(cmd.url)
     settled = session.goto(cmd.url)
     result = session.location()
     if not settled:
