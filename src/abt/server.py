@@ -1403,6 +1403,34 @@ def create_app(
 
         return await _admin(work)
 
+    @app.get("/app/overview")
+    async def app_overview(request: Request):
+        """Every conversation, in every session: the app's chat list.
+
+        In the app each chat is its own session, so this is the one list a
+        person picks from. Operator only -- it names sealed sessions' chats.
+        """
+
+        def work():
+            _operator(request)
+            replying = {key for key, run in runs.items() if not run.finished}
+            rows = []
+            for session in registry.list():
+                for chat in chats.list(session["name"]):
+                    rows.append({
+                        "session": session["name"],
+                        "profile": session["profile"],
+                        "sealed": session["sealed"],
+                        "chat_id": chat["id"],
+                        "title": chat.get("title") or "New chat",
+                        "updated": chat.get("updated"),
+                        "messages": chat.get("messages", 0),
+                        "running": (session["name"], chat["id"]) in replying,
+                    })
+            return sorted(rows, key=lambda r: r["updated"] or "", reverse=True)
+
+        return await _admin(work)
+
     @app.get("/app/runs")
     async def app_runs(request: Request):
         """Which chats in this session are replying right now."""

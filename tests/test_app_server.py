@@ -40,7 +40,7 @@ def client(registry):
 
 def test_the_page_is_served_and_uses_the_routes_it_should(client):
     html = client.get("/app").text
-    for route in ("/app/chat", "/screencast", "/app/settings", "/app/models/free", "/app/chats"):
+    for route in ("/app/chat", "/screencast", "/app/settings", "/app/models/free", "/app/chats", "/app/overview"):
         assert route in html
 
 
@@ -252,3 +252,19 @@ def test_a_habitual_browser_start_is_answered_not_refused(client, monkeypatch):
             events.append(event)
     result = next(e for e in events if e["type"] == "tool_result")
     assert result["error"] is False and "manages the browser" in result["text"]
+
+
+def test_the_overview_lists_every_chat_for_the_operator_only(client, registry):
+    """Each chat is its own session; the app's chat list spans all of them."""
+    registry.create("chat-a", sealed=True)
+    token = registry.store.directory.joinpath("chat-a.token").read_text(encoding="utf-8")
+    mine = {"X-ABT-Session": "chat-a", "X-ABT-Token": token}
+    sealed = client.post("/app/chats", json={}, headers=mine).json()["result"]
+    plain = client.post("/app/chats", json={}).json()["result"]
+
+    assert client.get("/app/overview").json()["error"]["type"] == "session_sealed"
+    rows = client.get("/app/overview", headers=OP).json()["result"]
+    by_chat = {r["chat_id"]: r for r in rows}
+    assert by_chat[sealed["id"]]["session"] == "chat-a" and by_chat[sealed["id"]]["sealed"] is True
+    assert by_chat[plain["id"]]["session"] == "default"
+    assert all(r["running"] is False and r["messages"] == 0 for r in rows)

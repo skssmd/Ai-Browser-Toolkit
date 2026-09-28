@@ -94,9 +94,6 @@ APP_HTML = r"""<!doctype html>
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     background: var(--panel); border-bottom: 1px solid var(--line); position: relative;
   }
-  #session-btn { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 9px; max-width: 360px; }
-  #session-btn .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-  #session-btn .sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
   .dot.on { background: var(--live); }
   .dot.busy { background: var(--live); animation: pulse 1.2s ease-in-out infinite; }
@@ -154,6 +151,14 @@ APP_HTML = r"""<!doctype html>
     background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px;
   }
   #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-menu { left: auto; right: 0; top: calc(100% + 6px); width: 280px; }
+  #context-btn { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .creator { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+  .creator h3 { margin: 0; font-size: 15px; }
+  .creator .lead { margin: 0; color: var(--muted); }
+  .creator label.field { margin: 0; }
+  .creator textarea { width: 100%; min-height: 70px; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  .creator input[type=text] { width: 100%; }
   .files-menu { left: auto; right: 0; top: calc(100% + 6px); width: 320px; }
   .menu-empty { color: var(--muted); font-size: 12px; padding: 4px 8px 8px; }
 
@@ -288,14 +293,11 @@ APP_HTML = r"""<!doctype html>
 </head>
 <body>
 <header id="top">
-  <button id="session-btn" aria-haspopup="true" aria-expanded="false" title="Switch session. Each session is a browser with its own logins, rules and chats.">
+  <button class="ghost" id="context-btn" title="This chat's browser: whose logins it uses. Click to change its settings.">
     <span class="dot" id="session-dot"></span>
-    <span class="name" id="session-name">default</span>
-    <span class="sub" id="session-sub"></span>
-    <span class="muted">▾</span>
+    <span id="context-text">New chat</span>
   </button>
-  <div class="menu" id="session-menu" hidden></div>
-  <button class="pill" id="rules-pill" hidden title="This session can only reach some sites. Click to change."></button>
+  <button class="pill" id="rules-pill" hidden title="This chat can only reach some sites. Click to change."></button>
   <span class="spacer"></span>
   <button class="ghost" id="model-btn" title="Choose the AI model and where it runs"><span class="label">Model</span> <span class="value" id="model-name">not set</span></button>
   <button class="icon ghost" id="theme" title="Theme: follows your system. Click to switch."></button>
@@ -327,9 +329,17 @@ APP_HTML = r"""<!doctype html>
   <div id="splitter" title="Drag to resize"></div>
   <aside id="chat" aria-label="Chat">
     <div id="chathead">
-      <select id="chatpick" title="Conversations in this session"></select>
-      <button id="chat-new" title="Start a new conversation">＋ New</button>
-      <button class="icon ghost" id="chat-del" title="Delete this conversation">🗑</button>
+      <select id="convpick" title="Your chats. Each has its own browser, logins and rules."></select>
+      <button id="chat-new" title="Start a new chat (Ctrl+N)">＋ New chat</button>
+      <span style="position:relative">
+        <button class="icon ghost" id="chat-menu-btn" title="More for this chat">⋯</button>
+        <div class="menu chat-menu" id="chat-menu" hidden>
+          <button class="row" data-action="settings"><span class="grow">Chat settings</span><span class="meta">logins, sites, scripts</span></button>
+          <button class="row" data-action="log"><span class="grow">Activity log</span><span class="meta">every step, with screenshots</span></button>
+          <hr>
+          <button class="row" data-action="delete"><span class="grow">Delete chat</span></button>
+        </div>
+      </span>
     </div>
     <div id="messages"></div>
     <div id="composer">
@@ -368,7 +378,7 @@ APP_HTML = r"""<!doctype html>
 </dialog>
 
 <dialog id="dlg-session">
-  <h2 id="ses-title">New session</h2>
+  <h2 id="ses-title">Chat settings</h2>
   <p class="lead" id="ses-lead">A session is a browser the AI works in, with its own tabs and chats.</p>
   <label class="field" id="ses-name-row"><span>Name</span>
     <input type="text" id="ses-name" placeholder="e.g. research" spellcheck="false">
@@ -422,7 +432,8 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
-  starting: false, lastStart: {}, downloadsSeen: {}, follow: null, freshStart: true,
+  starting: false, lastStart: {}, downloadsSeen: {}, follow: null, draft: false, convs: [], pendingSend: null,
+  draftSettings: { profile: "default", newProfile: "", rules: "", runJs: true, strict: false },
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -516,16 +527,22 @@ const run = (cmd) => api("POST", "/command-list", cmd);
 async function loadAll() {
   S.profiles = await api("GET", "/profiles", undefined, { session: null });
   S.sessions = await api("GET", "/sessions", undefined, { session: null });
-  if (!S.sessions.find(s => s.name === S.session)) S.session = "default";
+  if (!S.draft && !S.sessions.find(s => s.name === S.session)) S.session = "default";
   const current = S.sessions.find(s => s.name === S.session);
   S.profile = current ? current.profile : "default";
   drawSessionButton();
 }
 
 function drawSessionButton() {
+  // The chat's context: whose logins its browser uses, and any site limits.
+  if (!S.session) {
+    $("#context-text").textContent = "New chat";
+    $("#session-dot").className = "dot";
+    $("#rules-pill").hidden = true;
+    return;
+  }
   const info = S.sessions.find(s => s.name === S.session) || { name: S.session, profile: S.profile };
-  $("#session-name").textContent = info.name + (info.sealed ? " 🔒" : "");
-  $("#session-sub").textContent = info.profile === info.name ? "" : `logins: ${info.profile}`;
+  $("#context-text").textContent = `Logins: ${info.profile}` + (info.sealed ? " 🔒" : "");
   $("#session-dot").className = "dot" + (S.runningChats.size ? " busy" : S.running ? " on" : "");
   const rules = (info.settings && info.settings.rules) || S.rules || [];
   const pill = $("#rules-pill");
@@ -533,48 +550,25 @@ function drawSessionButton() {
   if (rules.length) {
     const allowed = rules.filter(r => !r.startsWith("!"));
     pill.textContent = allowed.length ? `Limited to ${allowed.length === 1 ? allowed[0] : allowed.length + " sites"}` : `${rules.length} site${rules.length > 1 ? "s" : ""} blocked`;
-    pill.title = "Site rules for this session:\n" + rules.join("\n") + "\n\nClick to change.";
+    pill.title = "Sites this chat may visit:\n" + rules.join("\n") + "\n\nClick to change.";
   }
 }
-
-function drawSessionMenu() {
-  const byProfile = {};
-  for (const s of S.sessions) (byProfile[s.profile] = byProfile[s.profile] || []).push(s);
-  let html = "";
-  for (const profile of Object.keys(byProfile).sort()) {
-    html += `<h4>Logins: ${esc(profile)}</h4>`;
-    for (const s of byProfile[profile]) {
-      html += `<button class="row${s.name === S.session ? " on" : ""}" data-session="${esc(s.name)}">
-        <span class="dot${s.running ? " on" : ""}"></span><span class="grow">${esc(s.name)}</span>
-        <span class="meta">${s.sealed ? "🔒" : ""}</span></button>`;
-    }
-  }
-  html += `<hr><button class="row" data-action="new"><span class="grow">＋ New session</span></button>`;
-  html += `<button class="row" data-action="edit"><span class="grow">Settings for “${esc(S.session)}”</span></button>`;
-  html += `<button class="row" data-action="log"><span class="grow">Activity log for “${esc(S.session)}”</span><span class="meta">every step, with screenshots</span></button>`;
-  $("#session-menu").innerHTML = html;
-}
-
-function toggleMenu(open) {
-  const menu = $("#session-menu");
-  const show = open === undefined ? menu.hidden : open;
-  if (show) drawSessionMenu();
-  menu.hidden = !show; $("#session-btn").setAttribute("aria-expanded", String(show));
-}
-$("#session-btn").onclick = () => toggleMenu();
-$("#session-menu").onclick = (e) => {
-  const row = e.target.closest(".row"); if (!row) return;
-  toggleMenu(false);
-  if (row.dataset.session) selectSession(row.dataset.session);
-  else if (row.dataset.action === "new") openSessionDialog(false);
-  else if (row.dataset.action === "edit") openSessionDialog(true);
-  else if (row.dataset.action === "log") openLog();
-};
-document.addEventListener("click", (e) => { if (!e.target.closest("#session-menu, #session-btn")) toggleMenu(false); });
+$("#context-btn").onclick = () => { if (S.session) openSessionDialog(true); };
 $("#rules-pill").onclick = () => openSessionDialog(true);
 
-async function selectSession(name) {
+$("#chat-menu-btn").onclick = () => { if (S.session) $("#chat-menu").hidden = !$("#chat-menu").hidden; };
+document.addEventListener("click", (e) => { if (!e.target.closest("#chat-menu, #chat-menu-btn")) $("#chat-menu").hidden = true; });
+$("#chat-menu").onclick = (e) => {
+  const row = e.target.closest(".row"); if (!row) return;
+  $("#chat-menu").hidden = true;
+  if (row.dataset.action === "settings") openSessionDialog(true);
+  else if (row.dataset.action === "log") openLog();
+  else if (row.dataset.action === "delete") deleteChat();
+};
+
+async function selectSession(name, chatId) {
   if (!name) return;
+  S.draft = false;
   S.session = name; store.set("session", name);
   const info = S.sessions.find(s => s.name === name);
   S.profile = info ? info.profile : S.profile;
@@ -583,7 +577,7 @@ async function selectSession(name) {
   closeScreen(); hideActivity();
   loadRules();
   // Chats first, then the socket: what it replays lands on the drawn chat.
-  await refreshBrowser(); await loadChats(); openChatSocket();
+  await refreshBrowser(); await loadChats(chatId); openChatSocket();
 }
 
 async function loadRules() {
@@ -593,12 +587,12 @@ async function loadRules() {
 
 function openSessionDialog(edit) {
   const dlg = $("#dlg-session");
-  $("#ses-title").textContent = edit ? `Session “${S.session}”` : "New session";
-  $("#ses-lead").textContent = edit ? "Changes apply from the AI's next step." : "A session is a browser the AI works in, with its own tabs and chats.";
+  $("#ses-title").textContent = "Chat settings";
+  $("#ses-lead").textContent = "This chat's browser. Changes apply from the AI's next step.";
   $("#ses-name-row").hidden = edit;
   $("#ses-sealed-row").hidden = edit;
   $("#ses-save").textContent = edit ? "Save changes" : "Create session";
-  $("#ses-del").hidden = !edit || S.session === "default";
+  $("#ses-del").hidden = true;
   const drawProfiles = (pick) => {
     $("#ses-profile").innerHTML = S.profiles.map(p =>
       `<option value="${esc(p.name)}"${p.name === pick ? " selected" : ""}>${esc(p.name)}</option>`).join("")
@@ -869,6 +863,7 @@ document.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "b") { e.preventDefault(); toggleChat(); }
   if (k === "l") { e.preventDefault(); $("#url").focus(); $("#url").select(); }
+  if (k === "n") { e.preventDefault(); enterDraft(); }
 }, true);
 $("#splitter").addEventListener("mousedown", (e) => {
   e.preventDefault();
@@ -998,21 +993,9 @@ async function loadChats(pick) {
   let list = [];
   try { list = await api("GET", "/app/chats"); } catch (e) { fail(e); }
   if (!list.length) { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); list = [c]; }
-  // Opening the app starts on a fresh chat (an empty one is reused rather
-  // than another made); the old ones are in the list. Switching sessions
-  // later returns to the chat last open there, so a reply still running in
-  // it stays in view.
-  if (!pick && S.freshStart) {
-    S.freshStart = false;
-    const empty = list.find(c => !c.messages);
-    pick = empty ? empty.id : (await api("POST", "/app/chats", { model: $("#model").value || null })).id;
-    if (!empty) list = await api("GET", "/app/chats");
-  }
-  const id = pick
-    || (list.find(c => c.id === store.get("chat." + S.session))
-        || list.find(c => c.messages > 0) || list[0]).id;
-  $("#chatpick").innerHTML = list.map(c => `<option value="${esc(c.id)}"${c.id === id ? " selected" : ""}>${esc(c.title || "New chat")}</option>`).join("");
+  const id = pick || (list.find(c => c.messages > 0) || list[0]).id;
   await openChat(id);
+  loadConversations();
 }
 async function openChat(id) {
   try { S.chat = await api("GET", "/app/chats/" + encodeURIComponent(id)); } catch (e) { return fail(e); }
@@ -1021,21 +1004,106 @@ async function openChat(id) {
   for (const e of S.buffers[id] || []) renderEvent(e);
   setBusy(S.runningChats.has(id));
 }
-$("#chatpick").onchange = (e) => openChat(e.target.value);
-$("#chat-new").onclick = async () => {
+
+// The chat list: every conversation, whichever session it lives in. Picking
+// one switches the browser to its session.
+async function loadConversations() {
+  try { S.convs = await api("GET", "/app/overview", undefined, { operator: true, session: null }); }
+  catch (e) { return; }
+  const current = S.session && S.chat ? `${S.session}|${S.chat.id}` : "__draft__";
+  const opts = S.convs
+    .filter(c => c.messages > 0 || `${c.session}|${c.chat_id}` === current)
+    .map(c => `<option value="${esc(c.session)}|${esc(c.chat_id)}"${`${c.session}|${c.chat_id}` === current ? " selected" : ""}>` +
+      `${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`);
+  if (S.draft) opts.unshift(`<option value="__draft__" selected>New chat</option>`);
+  $("#convpick").innerHTML = opts.join("") || `<option value="__draft__">New chat</option>`;
+}
+$("#convpick").onchange = (e) => {
+  const value = e.target.value;
+  if (value === "__draft__") return;
+  const [session, chatId] = value.split("|");
+  if (session === S.session) openChat(chatId).then(loadConversations);
+  else selectSession(session, chatId);
+};
+
+// A new chat starts as a draft: the settings for its browser, then the first
+// message. Sending it creates the chat's own sealed session and starts it.
+function enterDraft() {
+  S.draft = true; S.session = null; S.chat = null; S.tabs = []; S.tab = null;
+  if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
+  S.chatSock = null; S.runningChats = new Set(); S.buffers = {};
+  setBusy(false); closeScreen(); hideActivity(); drawTabs(); drawSessionButton();
+  $("#url").value = "";
+  viewMessage("This chat's browser opens here when you send the first message.");
+  drawHistory(); loadConversations();
+  $("#prompt").focus();
+}
+$("#chat-new").onclick = () => enterDraft();
+
+function drawCreator() {
+  const d = S.draftSettings;
+  const profiles = S.profiles.map(p => `<option value="${esc(p.name)}"${p.name === d.profile ? " selected" : ""}>${esc(p.name)}</option>`).join("");
+  add(`<div class="creator">
+    <div><h3>New chat</h3><p class="lead">Each chat gets its own browser. Choose whose logins it uses and where it may go, then say what to do.</p></div>
+    <label class="field"><span>Logins from</span>
+      <select id="new-profile">${profiles}<option value="__new__"${d.profile === "__new__" ? " selected" : ""}>New profile — fresh logins</option></select>
+      <span class="hint">A profile keeps logins and cookies. Chats on the same profile share them.</span></label>
+    <label class="field" id="new-profile-name-row"${d.profile === "__new__" ? "" : " hidden"}><span>New profile name</span>
+      <input type="text" id="new-profile-name" placeholder="e.g. work" spellcheck="false" value="${esc(d.newProfile || "")}"></label>
+    <details class="more"${d.rules ? " open" : ""}><summary>Limit the sites it may visit</summary>
+      <textarea id="new-rules" spellcheck="false" placeholder="app.example.com/admin&#10;!app.example.com/api">${esc(d.rules || "")}</textarea>
+      <span class="hint">One per line. A line allows a site or page; a line starting with ! blocks it. Once anything is allowed, everything else is blocked.</span>
+      <label class="check"><input type="checkbox" id="new-runjs"${d.runJs ? " checked" : ""}><span>Let the AI run scripts on the page</span></label>
+      <label class="check"><input type="checkbox" id="new-strict"${d.strict ? " checked" : ""}><span>Also check images, styles and scripts against the site list</span></label>
+    </details>
+    <div class="suggestions">${EXAMPLES.map(t => `<button data-example="${esc(t)}">${esc(t)}</button>`).join("")}</div>
+  </div>`);
+  const keep = () => {
+    d.profile = $("#new-profile").value; d.newProfile = $("#new-profile-name").value;
+    d.rules = $("#new-rules").value; d.runJs = $("#new-runjs").checked; d.strict = $("#new-strict").checked;
+    $("#new-profile-name-row").hidden = d.profile !== "__new__";
+  };
+  ["#new-profile", "#new-profile-name", "#new-rules", "#new-runjs", "#new-strict"].forEach(sel => {
+    $(sel).addEventListener("input", keep); $(sel).addEventListener("change", keep);
+  });
+  enhanceSelect($("#new-profile"));
+  document.querySelectorAll("[data-example]").forEach(b => b.onclick = () => { $("#prompt").value = b.dataset.example; grow(); $("#prompt").focus(); });
+}
+
+async function createChatSession() {
+  const d = S.draftSettings;
+  const name = "chat-" + Math.random().toString(16).slice(2, 8);
+  let profile = d.profile || "default";
+  if (profile === "__new__") {
+    profile = (d.newProfile || "").trim().toLowerCase() || name;
+    if (!S.profiles.find(p => p.name === profile)) await api("POST", "/profiles", { name: profile }, { session: null });
+  }
+  const settings = {
+    rules: (d.rules || "").split("\n").map(r => r.trim()).filter(Boolean),
+    run_js: !!d.runJs, strict: !!d.strict,
+  };
+  const out = await api("POST", "/sessions", { name, profile, sealed: true, settings }, { session: null });
+  if (out.token) { S.tokens[name] = out.token; try { sessionStorage.setItem("abt.tok." + name, out.token); } catch (e) {} }
+  await loadAll();
+  return name;
+}
+
+async function deleteChat() {
+  if (!S.session || !S.chat) return;
+  // `default` holds chats from before each chat had its own session; for it,
+  // only the conversation goes. Any other chat takes its session with it.
+  const whole = S.session !== "default";
+  const question = whole
+    ? "Delete this chat? Its browser tabs close. Its activity log and files are kept aside."
+    : "Delete this conversation?";
+  if (!confirm(question)) return;
   try {
-    // An empty chat already here is reused, so clicking New does not pile
-    // up empty conversations.
-    const list = await api("GET", "/app/chats");
-    const empty = list.find(c => !c.messages);
-    const c = empty || await api("POST", "/app/chats", { model: $("#model").value || null });
-    await loadChats(c.id); $("#prompt").focus();
+    if (whole) await api("DELETE", "/sessions/" + encodeURIComponent(S.session));
+    else await api("DELETE", "/app/chats/" + encodeURIComponent(S.chat.id));
+    toast("Chat deleted");
+    await loadAll(); enterDraft();
   } catch (e) { fail(e); }
-};
-$("#chat-del").onclick = async () => {
-  if (!S.chat || !confirm("Delete this conversation?")) return;
-  try { await api("DELETE", "/app/chats/" + encodeURIComponent(S.chat.id)); store.set("chat." + S.session, null); await loadChats(); toast("Conversation deleted"); } catch (e) { fail(e); }
-};
+}
 
 function add(html) { const m = $("#messages"); m.insertAdjacentHTML("beforeend", html); m.scrollTop = m.scrollHeight; }
 function bubble(role, text) {
@@ -1095,6 +1163,7 @@ const EXAMPLES = [
 function drawHistory() {
   if (!ready()) return drawSetup();
   $("#messages").innerHTML = "";
+  if (S.draft) return drawCreator();
   const msgs = (S.chat && S.chat.messages) || [];
   const results = {};
   msgs.filter(m => m.role === "tool").forEach(m => results[m.tool_call_id] = m.content);
@@ -1126,6 +1195,14 @@ function openChatSocket() {
     const q = new URLSearchParams({ session: S.session }); if (token) q.set("token", token);
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/app/chat?${q}`);
     S.chatSock = ws;
+    ws.onopen = () => {
+      // The first message of a chat made from a draft waits for this.
+      if (S.pendingSend && S.chat) {
+        const text = S.pendingSend; S.pendingSend = null;
+        setBusy(true);
+        ws.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
+      }
+    };
     ws.onmessage = (ev) => onChatEvent(JSON.parse(ev.data));
     ws.onclose = () => { if (S.chatSock === ws) S.chatSock = null; };
   });
@@ -1174,13 +1251,13 @@ async function onChatEvent(e) {
   if (e.type === "done") {
     if (here) endLive();
     S.runningChats.delete(id); delete S.buffers[id];
-    const opt = [...$("#chatpick").options].find(o => o.value === id); if (opt) opt.textContent = e.title;
+    loadConversations();
     if (!S.runningChats.size) hideActivity();
     drawSessionButton();
     if (here) { await openChat(id); refreshBrowser(); }
     return;
   }
-  if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); drawSessionButton(); }
+  if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); drawSessionButton(); loadConversations(); }
   if (e.type === "error" && !S.runningChats.has(id)) { if (here) { bubble("error", e.text); setBusy(false); } return; }
   if (e.type === "tool_call") showActivity(describe(e.name, e.args || {}).replace(/^Opened/, "Opening").replace(/^Clicked/, "Clicking").replace(/^Typed/, "Typing").replace(/^Read/, "Reading").replace(/^Looked/, "Looking").replace(/^Pressed/, "Pressing") + "…");
   if (e.type === "delta") { if (here) liveText(e.text); return; }
@@ -1199,8 +1276,19 @@ $("#prompt").addEventListener("input", grow);
 
 async function send() {
   const text = $("#prompt").value.trim();
-  if (!text || S.busy || !S.chat) return;
+  if (!text || S.busy) return;
   if (!ready()) return drawSetup();
+  if (S.draft) {
+    // The first message makes the chat: its session, its browser, then this.
+    $("#prompt").value = ""; grow(); setBusy(true);
+    try {
+      const name = await createChatSession();
+      S.pendingSend = text;
+      await selectSession(name);
+    } catch (e) { setBusy(false); $("#prompt").value = text; fail(e); }
+    return;
+  }
+  if (!S.chat) return;
   if (!S.chatSock || S.chatSock.readyState !== 1) { openChatSocket(); return toast("Reconnecting — send again in a moment", true); }
   $("#prompt").value = ""; grow(); setBusy(true);
   if (!(S.chat.messages || []).length && document.querySelector(".empty")) $("#messages").innerHTML = "";
@@ -1402,7 +1490,7 @@ document.addEventListener("paste", (e) => {
 
 (async function boot() {
   applyTheme(); applyLayout();
-  enhanceSelect($("#chatpick"), { className: "quiet", empty: "New chat" });
+  enhanceSelect($("#convpick"), { className: "quiet", empty: "New chat" });
   enhanceSelect($("#model"), { className: "quiet up", empty: "No model set" });
   enhanceSelect($("#ses-profile"));
   await waitForBridge();
@@ -1410,10 +1498,13 @@ document.addEventListener("paste", (e) => {
     await operatorToken();
     await loadAll();
     await loadModels();
-    await selectSession(S.session);
+    // The app opens on a new chat; earlier ones are in the list.
+    enterDraft();
   } catch (e) { fail(e); }
   // Lock-free now, so the tab strip stays live while an agent works too.
   setInterval(() => { if (!document.hidden) refreshBrowser(); }, 3000);
+  // The chat list's "replying" dots, for chats in other sessions.
+  setInterval(() => { if (!document.hidden) loadConversations(); }, 5000);
 })();
 </script>
 </body>
