@@ -22,6 +22,11 @@ from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 
+# Helpers run by this module (powershell, schtasks) are console programs. From
+# a process with no console of its own -- the desktop app, started from a
+# shortcut -- each would flash a window. This keeps them invisible.
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if IS_WINDOWS else {}
+
 
 def powershell_single_quote(value: str) -> str:
     """Wrap a value as a PowerShell literal string. Doubling escapes a quote."""
@@ -45,21 +50,45 @@ def windows_command_line(argv: list[str], stdout: Path, stderr: Path) -> str:
     return f'cmd.exe /c "{inner} < NUL > "{stdout}" 2> "{stderr}""'
 
 
-def _spawn_wmi(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> bool:
-    command = windows_command_line(argv, stdout, stderr)
-    script = (
+def hidden_command_line(argv: list[str], stdout: Path, stderr: Path) -> str:
+    """windows_command_line, run where no window ever shows.
+
+    For Task Scheduler, which has no way to start a program hidden: its task
+    opens cmd.exe in a visible, blank terminal that stays for as long as the
+    server runs. `conhost --headless` (Windows 10 1809 and later) gives the
+    command its console without a window.
+    """
+    return "conhost.exe --headless " + windows_command_line(argv, stdout, stderr)
+
+
+def wmi_script(command: str, cwd: Path) -> str:
+    """The PowerShell that asks WMI to start `command`, with its window hidden.
+
+    WMI gives the process a console, and without ShowWindow=0 (SW_HIDE) that
+    console is a blank terminal window left open for as long as the server
+    runs. Hidden, it still exists -- which is why stdin must still come from
+    NUL (see windows_command_line) -- but nobody sees it.
+    """
+    return (
+        "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly "
+        "-Property @{ShowWindow=[uint16]0}; "
         "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
         "-Arguments @{CommandLine="
         + powershell_single_quote(command)
         + "; CurrentDirectory="
         + powershell_single_quote(str(cwd))
-        + "}; exit $r.ReturnValue"
+        + "; ProcessStartupInformation=$si}; exit $r.ReturnValue"
     )
+
+
+def _spawn_wmi(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> bool:
+    script = wmi_script(windows_command_line(argv, stdout, stderr), cwd)
     try:
         done = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             timeout=60,
+            **_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -73,7 +102,7 @@ def _spawn_schtasks(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> b
     blocked by security software.
     """
     name = f"abt-up-{os.getpid()}"
-    command = windows_command_line(argv, stdout, stderr)
+    command = hidden_command_line(argv, stdout, stderr)
     try:
         created = subprocess.run(
             [
@@ -82,11 +111,12 @@ def _spawn_schtasks(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> b
             ],
             capture_output=True,
             timeout=60,
+            **_NO_WINDOW,
         )
         if created.returncode != 0:
             return False
         run = subprocess.run(
-            ["schtasks", "/run", "/tn", name], capture_output=True, timeout=60
+            ["schtasks", "/run", "/tn", name], capture_output=True, timeout=60, **_NO_WINDOW
         )
         return run.returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -97,6 +127,7 @@ def _spawn_schtasks(argv: list[str], cwd: Path, stdout: Path, stderr: Path) -> b
                 ["schtasks", "/delete", "/tn", name, "/f"],
                 capture_output=True,
                 timeout=30,
+                **_NO_WINDOW,
             )
         except (OSError, subprocess.SubprocessError):
             pass

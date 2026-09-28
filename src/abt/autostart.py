@@ -53,7 +53,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .proc import windows_command_line
+from .proc import hidden_command_line
 
 # One name per platform, in that platform's convention. Stable, because
 # uninstall finds the entry by name and a rename would orphan the old one.
@@ -231,7 +231,7 @@ def plan(
             kind=kind,
             name=WINDOWS_TASK,
             argv=argv,
-            content=windows_command_line(argv, out, err),
+            content=hidden_command_line(argv, out, err),
             notes=[
                 "Runs at logon for this account only, at normal privilege.",
                 "Remove it by hand with: schtasks /delete /tn "

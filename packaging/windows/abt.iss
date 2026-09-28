@@ -5,6 +5,10 @@
 
 #define AppName "AI Browser Toolkit"
 #define AppExe "abt.cmd"
+; The desktop app's starter. pythonw is the console-less interpreter, so the
+; app opens as a window and nothing else; the server it starts runs hidden.
+#define AppGui "python\pythonw.exe"
+#define AppGuiArgs "-m abt app"
 
 [Setup]
 AppId={{7C4C9B2E-2F1A-4E63-9D5B-3A1C8F6E2D74}
@@ -26,15 +30,32 @@ WizardStyle=modern
 UninstallDisplayName={#AppName}
 DisableProgramGroupPage=yes
 
+[Types]
+Name: "full"; Description: "Desktop app and command line"
+Name: "app"; Description: "Desktop app only"
+Name: "cli"; Description: "Command line only (for AI agents, scripts and MCP)"
+Name: "custom"; Description: "Choose"; Flags: iscustom
+
+; Both run on the same bundled Python, so the files are shared and the choice
+; decides what is set up around them: the app's shortcuts, the command's PATH.
+[Components]
+Name: "app"; Description: "Desktop app: a browser and a chat with your AI, side by side"; Types: full app custom
+Name: "cli"; Description: "Command line: the abt command, for AI agents, scripts and MCP"; Types: full cli custom
+
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
+[Icons]
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; Comment: "Open the browser and the chat"; Components: app
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; Comment: "Open the browser and the chat"; Tasks: desktopicon
+
 [Tasks]
+Name: "desktopicon"; Description: "Put a shortcut on the desktop"; Components: app
 ; Unchecked, deliberately. The opt-in rule is recorded in autostart.py and is
 ; the whole reason the feature is safe: an always-on logon entry that opened
 ; Chrome would cost ~2 minutes of every boot.
 Name: "autostart"; Description: "Start {#AppName} at logon"; Flags: unchecked
-Name: "addtopath"; Description: "Add abt to my PATH"
+Name: "addtopath"; Description: "Add abt to my PATH"; Components: cli
 ; Worded as a conditional because it is one. The box cannot be hidden when a
 ; browser already exists: detection runs `abt doctor`, which does not exist on
 ; disk until [Files] has run, and tasks are chosen before that. Duplicating
@@ -57,8 +78,12 @@ Filename: "{app}\{#AppExe}"; Parameters: "doctor --install-browser"; \
 ; with the only evidence in a log file nobody reads.
 Filename: "{app}\{#AppExe}"; Parameters: "autostart install --browser {code:DetectedBrowser}"; \
     Tasks: autostart; Flags: runhidden; StatusMsg: "Registering the logon task..."
+Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}"; WorkingDir: "{app}";     Description: "Open {#AppName} now"; Components: app; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
+; Stop a running server first, or Windows keeps its files locked and the
+; uninstall leaves the interpreter behind. Nothing to stop is fine.
+Filename: "{app}\{#AppExe}"; Parameters: "shutdown"; Flags: runhidden; RunOnceId: "StopServer"
 ; Before the files go, or Task Scheduler is left holding an entry that points
 ; at a deleted executable and fails at every logon forever.
 Filename: "{app}\{#AppExe}"; Parameters: "autostart uninstall"; \

@@ -75,3 +75,15 @@ def test_the_in_job_fallback_is_last_and_named_apart():
     assert names[-1] == "detached-in-job"
     assert names.index("detached") < names.index("detached-in-job")
     assert names[0] == "wmi"
+
+
+def test_the_wmi_start_hides_its_window(tmp_path):
+    """WMI's console used to show as a blank terminal for the server's life."""
+    script = proc.wmi_script("cmd.exe /c x", tmp_path)
+    assert "ShowWindow=[uint16]0" in script
+    assert "ProcessStartupInformation=$si" in script
+
+
+def test_scheduled_starts_run_headless(tmp_path):
+    line = proc.hidden_command_line(["abt", "serve"], tmp_path / "o", tmp_path / "e")
+    assert line.startswith("conhost.exe --headless cmd.exe /c ")

@@ -108,3 +108,9 @@ def test_abt_reports_a_version():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
+
+
+def test_the_windows_starter_opens_the_app_without_a_console():
+    starter = bundle.WINDOWS_STARTER
+    assert "pythonw.exe" in starter and "-m abt app" in starter
+    assert "python.exe" not in starter.replace("pythonw.exe", "")

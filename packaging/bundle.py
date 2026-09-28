@@ -56,6 +56,21 @@ exec "$here/../python/bin/python3" -m abt "$@"
 
 WINDOWS_SHIM = '@"%~dp0python\\python.exe" -m abt %*\r\n'
 
+# The desktop app's starter. pythonw, not python: a GUI program that never
+# opens a console, so double-clicking it shows the app window and nothing
+# else. The server it starts runs hidden too (see abt.proc).
+WINDOWS_STARTER = (
+    "' Opens the AI Browser Toolkit desktop app, with no console window.\r\n"
+    "Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n"
+    "here = fso.GetParentFolderName(WScript.ScriptFullName)\r\n"
+    "CreateObject(\"WScript.Shell\").Run \"\"\"\" & here & \"\\python\\pythonw.exe\"\" -m abt app\", 1, False\r\n"
+)
+
+# The app's own window needs pywebview. Shipped where it needs nothing from
+# the system: Windows has WebView2, macOS has WebKit. Linux would need GTK or
+# Qt bindings, so there `abt app` opens in the default browser instead.
+APP_EXTRA = ("pywebview>=5.0",)
+
 
 def bundle_stem(version: str, target: str) -> str:
     return f"aibrowsertoolkit-{version}-{target}"
@@ -173,6 +188,13 @@ def build(version: str, target: str, wheel: Path, dest: Path) -> Path:
         ["uv", "pip", "install", "--python", str(interpreter), str(wheel)],
         check=True,
     )
+    if target.startswith(("windows", "macos")):
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(interpreter), *APP_EXTRA],
+            check=True,
+        )
+    if target.startswith("windows"):
+        (staging / "AI Browser Toolkit.vbs").write_text(WINDOWS_STARTER, encoding="utf-8", newline="")
 
     rel, body = shim_for(target)
     shim = staging / rel
