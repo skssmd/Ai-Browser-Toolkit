@@ -17,8 +17,9 @@ and the calling convention is free to change afterwards, against a suite that
 is already green on the new engine.
 
 So the ambient `switch_to` state is deliberately reproduced here, including its
-stickiness. Removing it is phase 4, and is what unlocks same-profile
-parallelism in the profile-sessions design.
+stickiness. It does not block same-profile parallelism: each session attaches
+a connection of its own, so each has its own ambient state (see the
+multi-profile sessions design).
 
 ## Thread affinity
 
@@ -598,6 +599,8 @@ class PlaywrightDriver:
         config,
         console_source: str | None = None,
         action_timeout: float = 5.0,
+        cdp_url: str | None = None,
+        gate=None,
     ) -> None:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="abt-pw")
         self._owner: int | None = None
@@ -631,6 +634,12 @@ class PlaywrightDriver:
         # keying on identity silently never matched and every ORB-blocked or
         # CORS-blocked request was logged twice -- once with its real status,
         # once with None, the useless row last. Same trap as element handles.
+        # Attach to a browser a ProfileRegistry launched, as one session among
+        # several. With a gate, this connection sees only the pages its
+        # session owns; see `window_handles`.
+        self._cdp_url = cdp_url
+        self._gate = gate
+        self._tids: dict[int, str] = {}
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
@@ -652,7 +661,10 @@ class PlaywrightDriver:
     def _boot(self, config) -> None:
         self._pw = sync_playwright().start()
         launcher = self._pw.chromium
-        cdp_url = os.environ.get("ABT_CDP_URL")
+        cdp_url = self._cdp_url or os.environ.get("ABT_CDP_URL")
+        # Only the environment variable means "someone else's browser". One a
+        # ProfileRegistry launched can be relaunched from here.
+        external = self._cdp_url is None
         if cdp_url:
             # Attach mode: drive a browser this process did not launch,
             # addressed by its CDP endpoint. The point of the mode is sharing --
@@ -668,6 +680,15 @@ class PlaywrightDriver:
                     contexts[0] if contexts else self._browser.new_context()
                 )
             except Exception as exc:
+                if not external:
+                    raise OpError(
+                        "browser_dead",
+                        f"could not connect to this profile's browser at {cdp_url}: {exc}",
+                        hint=(
+                            "The profile's browser went away. `browser_restart` in "
+                            "this session relaunches it."
+                        ),
+                    ) from exc
                 # Terminal, and it has to say so. This browser belongs to
                 # whoever launched it; there is no relaunching it from in
                 # here, and the generic "browser is gone" advice -- restart
@@ -716,15 +737,63 @@ class PlaywrightDriver:
         # the session's action timeout keeps the failure latency the ops were
         # written against.
         self._context.set_default_timeout(self._action_timeout * 1000)
-        self._pages = list(self._context.pages) or [self._context.new_page()]
+        if self._gate is not None:
+            # A session starts on a page of its own. Adopting every open page,
+            # as the harness attach does, would hand it other sessions' tabs.
+            page = self._context.new_page()
+            self._gate.opened(self._tid(page))
+            self._pages = [page]
+            for other in self._context.pages:
+                if other is not page:
+                    other.on("dialog", _ignore)
+        else:
+            self._pages = list(self._context.pages) or [self._context.new_page()]
         self._active = 0
         # Every page, including ones the site opens itself -- a target=_blank
         # popup makes requests too, and it is usually the interesting one.
-        self._context.on("page", self._watch)
+        self._context.on("page", self._on_page)
         for page in self._pages:
             self._watch(page)
 
     # -- pages -------------------------------------------------------------
+    def _on_page(self, page) -> None:
+        if self._gate is None:
+            self._watch(page)
+            return
+        # Possibly someone else's page. Listen without acting: with no
+        # listener, Playwright auto-dismisses its dialogs from *this*
+        # connection too, and a dismiss racing the owner's is the Node-side
+        # rejection `_watch` exists to prevent. The owner's connection answers.
+        page.on("dialog", _ignore)
+
+    def _tid(self, page) -> str:
+        """Chrome's target id for a page: the same on every connection."""
+        key = id(page)
+        found = self._tids.get(key)
+        if found is None:
+            session = self._cdp.get(key)
+            if session is None:
+                session = self._context.new_cdp_session(page)
+                self._cdp[key] = session
+            found = session.send("Target.getTargetInfo")["targetInfo"]["targetId"]
+            self._tids[key] = found
+        return found
+
+    def _handle(self, page) -> str:
+        return self._tid(page) if self._gate is not None else _handle_of(page)
+
+    def opener_of(self, target: str) -> str | None:
+        """The target id of the page that opened `target`, if there was one."""
+
+        def work():
+            for page in self._context.pages:
+                if not page.is_closed() and self._tid(page) == target:
+                    opener = page.opener()
+                    return self._tid(opener) if opener is not None else None
+            return None
+
+        return self._call(work)
+
     @property
     def _page(self):
         if self._closed:
@@ -880,6 +949,8 @@ class PlaywrightDriver:
     def _open_page(self):
         def work():
             page = self._context.new_page()
+            if self._gate is not None:
+                self._gate.opened(self._tid(page))
             self._watch(page)
             self._pages.append(page)
             self._active = len(self._pages) - 1
@@ -890,27 +961,48 @@ class PlaywrightDriver:
 
     def _activate(self, handle: str) -> None:
         for index, page in enumerate(self._pages):
-            if _handle_of(page) == handle:
+            if self._handle(page) == handle:
                 self._active = index
                 self._frame = None
-                self._call(lambda: page.bring_to_front())
+                # Shared browsers never steal focus: another session's tab may
+                # be the one in front, and Playwright acts on a page without it.
+                if self._gate is None:
+                    self._call(lambda: page.bring_to_front())
                 return
         raise NoSuchWindow(f"no such window handle {handle!r}")
 
     @property
     def window_handles(self) -> list[str]:
         def work():
-            self._pages = [p for p in self._pages if not p.is_closed()]
-            for page in self._context.pages:
-                if page not in self._pages:
-                    self._pages.append(page)
-            return [_handle_of(p) for p in self._pages]
+            active = (
+                self._pages[self._active] if 0 <= self._active < len(self._pages) else None
+            )
+            live = [p for p in self._pages if not p.is_closed()]
+            if self._gate is not None:
+                for page in self._context.pages:
+                    if page in live or page.is_closed():
+                        continue
+                    opener = page.opener()
+                    opener_id = self._tid(opener) if opener is not None else None
+                    if self._gate.sees(self._tid(page), opener_id):
+                        self._watch(page)
+                        live.append(page)
+                # A tab released, or reassigned by the operator, leaves this
+                # session's view at once rather than on its next navigation.
+                live = [p for p in live if self._gate.owns(self._tid(p))]
+            else:
+                for page in self._context.pages:
+                    if page not in live:
+                        live.append(page)
+            self._pages = live
+            self._active = live.index(active) if active in live else 0
+            return [self._handle(p) for p in live]
 
         return self._call(work)
 
     @property
     def current_window_handle(self) -> str:
-        return self._call(lambda: _handle_of(self._page))
+        return self._call(lambda: self._handle(self._page))
 
     # -- navigation --------------------------------------------------------
     def get(self, url: str) -> None:
@@ -947,7 +1039,10 @@ class PlaywrightDriver:
     def close(self) -> None:
         def work():
             page = self._page
+            target = self._tid(page) if self._gate is not None else None
             page.close()
+            if target is not None:
+                self._gate.registry.forget(target)
             self._pages = [p for p in self._pages if not p.is_closed()]
             self._active = max(0, min(self._active, len(self._pages) - 1))
             self._frame = None
@@ -958,10 +1053,20 @@ class PlaywrightDriver:
         def work():
             self._closed = True
             try:
+                if self._gate is not None:
+                    # A session's tabs go with it. The browser, and every
+                    # other session's tabs, stay.
+                    for page in list(self._pages):
+                        try:
+                            target = self._tid(page)
+                            page.close()
+                            self._gate.registry.forget(target)
+                        except Exception:
+                            pass
                 # Attached sessions only drop the connection: the browser was
                 # launched by someone else, and its pages are theirs. Closing
                 # the adopted context would close every harness page with it.
-                if not getattr(self, "_cdp_attached", False):
+                elif not getattr(self, "_cdp_attached", False):
                     self._context.close()
             finally:
                 self._pw.stop()
@@ -1165,6 +1270,10 @@ def _unwrap(value):
     if isinstance(value, (list, tuple)):
         return [_unwrap(v) for v in value]
     return value
+
+
+def _ignore(_dialog) -> None:
+    """A dialog on a page this connection does not own. See `_on_page`."""
 
 
 def _handle_of(page) -> str:
