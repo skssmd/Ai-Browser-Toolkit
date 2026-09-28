@@ -23,27 +23,46 @@ APP_HTML = r"""<!doctype html>
 <title>AI Browser Toolkit</title>
 <style>
   :root {
+    color-scheme: light;
     --bg: #FAFAF9; --panel: #FFFFFF; --raised: #F3F3F1; --ink: #1C1C1C; --muted: #6F6F6F;
     --line: #E4E4E2; --live: #16A34A; --live-soft: rgba(22,163,74,.12); --bad: #C2410C;
     --bad-soft: rgba(194,65,12,.10); --btn: #1C1C1C; --btn-ink: #FFFFFF; --code: #F3F3F1;
     --user: #1C1C1C; --user-ink: #FFFFFF; --shadow: 0 8px 28px rgba(0,0,0,.14);
+    --scroll: #CFCFCB; --scroll-hover: #A3A3A0;
   }
   :root[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #161616; --panel: #1E1E1E; --raised: #262626; --ink: #EDEDED; --muted: #9A9A9A;
     --line: #333333; --live: #22C55E; --live-soft: rgba(34,197,94,.14); --bad: #F97316;
     --bad-soft: rgba(249,115,22,.12); --btn: #EDEDED; --btn-ink: #161616; --code: #262626;
     --user: #EDEDED; --user-ink: #161616; --shadow: 0 8px 28px rgba(0,0,0,.5);
+    --scroll: #3F3F3F; --scroll-hover: #5C5C5C;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
+      color-scheme: dark;
       --bg: #161616; --panel: #1E1E1E; --raised: #262626; --ink: #EDEDED; --muted: #9A9A9A;
       --line: #333333; --live: #22C55E; --live-soft: rgba(34,197,94,.14); --bad: #F97316;
       --bad-soft: rgba(249,115,22,.12); --btn: #EDEDED; --btn-ink: #161616; --code: #262626;
       --user: #EDEDED; --user-ink: #161616; --shadow: 0 8px 28px rgba(0,0,0,.5);
+      --scroll: #3F3F3F; --scroll-hover: #5C5C5C;
     }
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+
+  /* Scrollbars: thin, rounded, in the theme's greys, no arrow buttons. The
+     standard properties cover current Chromium (WebView2); the -webkit- rules
+     cover older engines and draw the rounded thumb. */
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  *:hover { scrollbar-color: var(--scroll-hover) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-button { display: none; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scroll); border-radius: 999px; border: 3px solid transparent; background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-hover); }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
@@ -141,8 +160,34 @@ APP_HTML = r"""<!doctype html>
   #chat { width: 420px; min-width: 300px; max-width: 70vw; display: flex; flex-direction: column; background: var(--panel); }
   #main.chat-hidden #chat, #main.chat-hidden #splitter { display: none; }
   #chathead { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); align-items: center; }
-  #chatpick { flex: 1; min-width: 0; border-color: transparent; font-weight: 600; background: transparent; }
-  #chatpick:hover { border-color: var(--line); }
+  /* dropdowns: a button and a menu drawn like the rest, over a hidden select */
+  .dd { position: relative; min-width: 0; display: flex; }
+  .dd-btn {
+    display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; text-align: left;
+  }
+  .dd-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dd-chev { color: var(--muted); font-size: 11px; flex: none; }
+  .dd-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; min-width: 100%; max-width: min(420px, 90vw);
+    max-height: 320px; overflow: auto; z-index: 30; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: var(--shadow); padding: 5px;
+  }
+  .dd.up .dd-menu { top: auto; bottom: calc(100% + 4px); }
+  .dd.right .dd-menu { left: auto; right: 0; }
+  .dd-opt {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none;
+    background: transparent; padding: 7px 9px; border-radius: 7px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .dd-opt:hover, .dd-opt:focus-visible { background: var(--raised); outline: none; }
+  .dd-opt.on { font-weight: 600; }
+  .dd-tick { width: 14px; flex: none; color: var(--live); }
+  .dd.quiet .dd-btn { border-color: transparent; background: transparent; }
+  .dd.quiet .dd-btn:hover, .dd.quiet .dd-btn[aria-expanded="true"] { background: var(--raised); }
+  #chathead .dd { flex: 1; }
+  #chathead .dd-btn { font-weight: 600; }
+  #composer .dd { flex: 1; }
+  #composer .dd-btn { font-size: 12px; color: var(--muted); }
 
   #messages { flex: 1; overflow-y: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 10px; }
   .msg { padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; max-width: 92%; }
@@ -182,8 +227,6 @@ APP_HTML = r"""<!doctype html>
   #composer { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 7px; }
   #prompt { resize: none; min-height: 44px; max-height: 40vh; padding: 9px 11px; border-radius: 10px; line-height: 1.45; }
   #composer .row { display: flex; gap: 6px; align-items: center; }
-  #model { min-width: 0; flex: 1; font-size: 12px; color: var(--muted); border-color: transparent; background: transparent; }
-  #model:hover { border-color: var(--line); }
 
   #drawer {
     position: fixed; top: 50%; right: 0; transform: translateY(-50%); border-radius: 8px 0 0 8px;
@@ -501,7 +544,7 @@ function toggleMenu(open) {
   if (show) drawSessionMenu();
   menu.hidden = !show; $("#session-btn").setAttribute("aria-expanded", String(show));
 }
-$("#session-btn").onclick = (e) => { e.stopPropagation(); toggleMenu(); };
+$("#session-btn").onclick = () => toggleMenu();
 $("#session-menu").onclick = (e) => {
   const row = e.target.closest(".row"); if (!row) return;
   toggleMenu(false);
@@ -509,7 +552,7 @@ $("#session-menu").onclick = (e) => {
   else if (row.dataset.action === "new") openSessionDialog(false);
   else if (row.dataset.action === "edit") openSessionDialog(true);
 };
-document.addEventListener("click", (e) => { if (!e.target.closest("#session-menu")) toggleMenu(false); });
+document.addEventListener("click", (e) => { if (!e.target.closest("#session-menu, #session-btn")) toggleMenu(false); });
 $("#rules-pill").onclick = () => openSessionDialog(true);
 
 async function selectSession(name) {
@@ -1144,10 +1187,79 @@ function markdown(src) {
   return out.join("");
 }
 
+// --- dropdowns ---------------------------------------------------------------------
+//
+// Native <select> lists are drawn by the operating system: white in a dark
+// theme, another font, another arrow. Each select is kept -- hidden -- as the
+// one source of truth, so every line that reads .value or sets .innerHTML still
+// works, and this draws a button and a menu that look like the rest.
+
+function enhanceSelect(sel, opts = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "dd" + (opts.className ? " " + opts.className : "");
+  const button = document.createElement("button");
+  button.type = "button"; button.className = "dd-btn";
+  button.setAttribute("aria-haspopup", "listbox"); button.setAttribute("aria-expanded", "false");
+  if (sel.title) button.title = sel.title;
+  const label = document.createElement("span"); label.className = "dd-label";
+  const chevron = document.createElement("span"); chevron.className = "dd-chev"; chevron.textContent = "▾";
+  button.append(label, chevron);
+  const menu = document.createElement("div");
+  menu.className = "dd-menu"; menu.setAttribute("role", "listbox"); menu.hidden = true;
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.append(sel, button, menu);
+  sel.hidden = true; sel.tabIndex = -1;
+
+  const sync = () => {
+    const current = sel.options[sel.selectedIndex];
+    label.textContent = current ? current.textContent : (opts.empty || "");
+    button.disabled = !sel.options.length;
+  };
+  const close = () => { menu.hidden = true; button.setAttribute("aria-expanded", "false"); };
+  const choose = (value) => {
+    close();
+    if (sel.value !== value) { sel.value = value; sel.dispatchEvent(new Event("change")); }
+    sync(); button.focus();
+  };
+  const open = () => {
+    menu.innerHTML = [...sel.options].map((o, i) =>
+      `<button type="button" role="option" class="dd-opt${i === sel.selectedIndex ? " on" : ""}" data-value="${esc(o.value)}"${o.selected ? ' aria-selected="true"' : ""}>` +
+      `<span class="dd-tick">${i === sel.selectedIndex ? "✓" : ""}</span><span>${esc(o.textContent)}</span></button>`).join("");
+    menu.hidden = false; button.setAttribute("aria-expanded", "true");
+    const on = menu.querySelector(".on") || menu.querySelector(".dd-opt");
+    if (on) { on.scrollIntoView({ block: "nearest" }); on.focus(); }
+  };
+  button.onclick = () => { menu.hidden ? open() : close(); };
+  menu.onclick = (e) => { const o = e.target.closest(".dd-opt"); if (o) choose(o.dataset.value); };
+  menu.onkeydown = (e) => {
+    const items = [...menu.querySelectorAll(".dd-opt")];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); (items[at + 1] || items[0]).focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); (items[at - 1] || items[items.length - 1]).focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); button.focus(); }
+    else if (e.key === "Tab") close();
+  };
+  button.onkeydown = (e) => { if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(); } };
+  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
+  // Code changes the options and the value directly; keep the button in step.
+  new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, characterData: true });
+  sel.addEventListener("change", sync);
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  Object.defineProperty(sel, "value", {
+    get() { return setter.get.call(this); },
+    set(v) { setter.set.call(this, v); sync(); },
+  });
+  sync();
+  return { sync };
+}
+
 // --- start -------------------------------------------------------------------------------
 
 (async function boot() {
   applyTheme(); applyLayout();
+  enhanceSelect($("#chatpick"), { className: "quiet", empty: "New chat" });
+  enhanceSelect($("#model"), { className: "quiet up", empty: "No model set" });
+  enhanceSelect($("#ses-profile"));
   await waitForBridge();
   try {
     await operatorToken();
