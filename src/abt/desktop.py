@@ -12,6 +12,7 @@ asks for the operator token once.
 
 from __future__ import annotations
 
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -41,6 +42,36 @@ class Bridge:
         except Exception:
             return None
         return self._read(f"{name}.token")
+
+
+# The window's own icon. Shipped inside the package (see pyproject's
+# force-include), found beside the source tree in a checkout.
+APP_ID = "AIBrowserToolkit.App"
+
+
+def icon_path() -> Path | None:
+    name = "logo.ico" if sys.platform == "win32" else "logo-black-256.png"
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "assets" / name, here.parents[1] / "assets" / name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _own_taskbar_entry() -> None:
+    """Show as this app in the taskbar, not as Python.
+
+    Windows groups windows by the process's app id, and a Python process has
+    Python's -- so the taskbar showed the Python logo and pinned "Python".
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        pass
 
 
 def sessions_dir(base: str) -> Path | None:
@@ -76,7 +107,11 @@ def open_window(base: str, width: int = 1440, height: int = 900) -> str:
     # storage when the window closes -- so every launch forgot the chat you
     # were in, the theme and the chat panel's side and width.
     storage = str(where / "app-window") if where is not None else None
-    webview.start(private_mode=False, storage_path=storage)
+    _own_taskbar_entry()
+    icon = icon_path()
+    webview.start(
+        private_mode=False, storage_path=storage, icon=str(icon) if icon else None
+    )
     # The window is closed. Its browsers run hidden, so nothing else would
     # ever close them: ask the server to. The server itself stays up.
     close_browsers(base, api)

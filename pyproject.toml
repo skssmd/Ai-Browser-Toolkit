@@ -85,6 +85,9 @@ exclude = ["**/onehr/**", "**/*onehr*"]
 # Shipped inside the package so every channel carries them, and so the server
 # can serve one to an agent that is already talking to it.
 "guidelines" = "abt/guidelines"
+# The app window's icon.
+"assets/logo.ico" = "abt/assets/logo.ico"
+"assets/logo-black-256.png" = "abt/assets/logo-black-256.png"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
