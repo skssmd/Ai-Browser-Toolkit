@@ -32,7 +32,15 @@ You are running inside the AI Browser Toolkit desktop app. The person you are
 helping watches the browser live beside this chat and can click in it too.
 Your browser session was chosen for you and you cannot change it. Keep replies
 short; say what you did and what you found.
+
+THE BROWSER IS ALREADY OPEN. Ignore anything above about starting it with
+browser_session: here the app starts the browser, and restarts it if it ever
+dies, on its own. There is no browser_session tool. Start with command_list.
 """
+
+# Managed by the app, not the model: offering it only invites a model to
+# "start" a browser that is already running, again and again.
+APP_EXCLUDED_TOOLS = frozenset({"browser_session"})
 
 
 class ModelError(Exception):
@@ -44,8 +52,11 @@ class ModelError(Exception):
         self.retry_elsewhere = retry_elsewhere
 
 
-def tools() -> list[dict]:
-    """The MCP tools, in the shape OpenAI-compatible endpoints take."""
+def tools(exclude: frozenset[str] = APP_EXCLUDED_TOOLS) -> list[dict]:
+    """The MCP tools, in the shape OpenAI-compatible endpoints take.
+
+    Minus the ones the app manages itself -- by default, browser_session.
+    """
     return [
         {
             "type": "function",
@@ -56,6 +67,7 @@ def tools() -> list[dict]:
             },
         }
         for tool in mcp.TOOLS
+        if tool["name"] not in exclude
     ]
 
 
@@ -230,7 +242,10 @@ def run_turn(
         if should_stop():
             emit({"type": "notice", "text": "Stopped."})
             return active
-        request = ([{"role": "system", "content": system}] if system else []) + trimmed(messages)
+        # Errors and notices are saved in the chat for the person; they are
+        # not part of the conversation the model sees.
+        conversation = [m for m in messages if m.get("role") in ("user", "assistant", "tool")]
+        request = ([{"role": "system", "content": system}] if system else []) + trimmed(conversation)
         message = None
         while message is None:
             try:

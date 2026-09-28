@@ -1156,6 +1156,15 @@ def create_app(
         from . import guidelines as g
 
         try:
+            if name == "browser_session":
+                # Not offered to the chat's model, but one may call it from
+                # habit. Answer as a success so it moves on instead of looping
+                # on "already running" -- the app keeps the browser up.
+                state = "running" if sess.browser.is_running else "starting when needed"
+                return json.dumps({"ok": True, "result": {
+                    "browser": state,
+                    "note": "The app manages the browser. Carry on with command_list.",
+                }}), False
             if name == "browser_guidelines":
                 try:
                     if args.get("name"):
@@ -1265,6 +1274,10 @@ def create_app(
         publish(run, {"type": "user", "text": text})
 
         def emit(event: dict) -> None:
+            # Errors and notices are kept in the chat, so they are still
+            # there after a reload -- they used to exist only on screen.
+            if event.get("type") in ("error", "notice"):
+                chat["messages"].append({"role": event["type"], "content": event.get("text", "")})
             loop.call_soon_threadsafe(publish, run, event)
 
         def work() -> None:

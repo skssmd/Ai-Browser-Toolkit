@@ -432,7 +432,7 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
-  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null, follow: null,
+  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null, follow: null, freshStart: true,
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -1008,7 +1008,19 @@ async function loadChats(pick) {
   let list = [];
   try { list = await api("GET", "/app/chats"); } catch (e) { fail(e); }
   if (!list.length) { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); list = [c]; }
-  const id = pick || (list.find(c => c.id === store.get("chat." + S.session)) || list[0]).id;
+  // Opening the app starts on a fresh chat (an empty one is reused rather
+  // than another made); the old ones are in the list. Switching sessions
+  // later returns to the chat last open there, so a reply still running in
+  // it stays in view.
+  if (!pick && S.freshStart) {
+    S.freshStart = false;
+    const empty = list.find(c => !c.messages);
+    pick = empty ? empty.id : (await api("POST", "/app/chats", { model: $("#model").value || null })).id;
+    if (!empty) list = await api("GET", "/app/chats");
+  }
+  const id = pick
+    || (list.find(c => c.id === store.get("chat." + S.session))
+        || list.find(c => c.messages > 0) || list[0]).id;
   $("#chatpick").innerHTML = list.map(c => `<option value="${esc(c.id)}"${c.id === id ? " selected" : ""}>${esc(c.title || "New chat")}</option>`).join("");
   await openChat(id);
 }
@@ -1020,7 +1032,16 @@ async function openChat(id) {
   setBusy(S.runningChats.has(id));
 }
 $("#chatpick").onchange = (e) => openChat(e.target.value);
-$("#chat-new").onclick = async () => { try { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); await loadChats(c.id); $("#prompt").focus(); } catch (e) { fail(e); } };
+$("#chat-new").onclick = async () => {
+  try {
+    // An empty chat already here is reused, so clicking New does not pile
+    // up empty conversations.
+    const list = await api("GET", "/app/chats");
+    const empty = list.find(c => !c.messages);
+    const c = empty || await api("POST", "/app/chats", { model: $("#model").value || null });
+    await loadChats(c.id); $("#prompt").focus();
+  } catch (e) { fail(e); }
+};
 $("#chat-del").onclick = async () => {
   if (!S.chat || !confirm("Delete this conversation?")) return;
   try { await api("DELETE", "/app/chats/" + encodeURIComponent(S.chat.id)); store.set("chat." + S.session, null); await loadChats(); toast("Conversation deleted"); } catch (e) { fail(e); }
@@ -1088,7 +1109,8 @@ function drawHistory() {
   const results = {};
   msgs.filter(m => m.role === "tool").forEach(m => results[m.tool_call_id] = m.content);
   for (const m of msgs) {
-    if (m.role === "user") bubble("user", m.content);
+    if (m.role === "error" || m.role === "notice") bubble(m.role, m.content);
+    else if (m.role === "user") bubble("user", m.content);
     else if (m.role === "assistant") {
       for (const call of m.tool_calls || []) {
         let args = {}; try { args = JSON.parse(call.function.arguments || "{}"); } catch (e) {}

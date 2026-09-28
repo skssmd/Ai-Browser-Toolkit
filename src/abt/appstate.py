@@ -125,7 +125,10 @@ class ChatStore:
                 chat = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            rows.append({k: chat.get(k) for k in ("id", "title", "created", "updated", "model")})
+            row = {k: chat.get(k) for k in ("id", "title", "created", "updated", "model")}
+            # Lets the app skip empty chats when choosing which one to open.
+            row["messages"] = len(chat.get("messages") or [])
+            rows.append(row)
         return sorted(rows, key=lambda r: r.get("updated") or "", reverse=True)
 
     def create(self, session: str, model: str | None = None) -> dict:

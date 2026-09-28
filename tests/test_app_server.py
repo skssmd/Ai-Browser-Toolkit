@@ -202,3 +202,53 @@ def test_the_reply_streams_to_the_page(client, monkeypatch):
     kinds = [e["type"] for e in events]
     assert kinds == ["user", "delta", "delta", "delta", "assistant"]
     assert "".join(e["text"] for e in events if e["type"] == "delta") == "Working on it."
+
+
+def test_the_chat_list_says_which_chats_are_empty(client, monkeypatch):
+    """The app opens the latest chat with something in it, not an empty one."""
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+    monkeypatch.setattr(agent, "complete", lambda *a, **kw: {"content": "hi"})
+    used = client.post("/app/chats", json={}).json()["result"]
+    with client.websocket_connect("/app/chat") as ws:
+        ws.send_json({"type": "send", "chat_id": used["id"], "text": "hello"})
+        while ws.receive_json()["type"] != "done":
+            pass
+    client.post("/app/chats", json={})  # an empty one, newer
+    rows = {r["id"]: r["messages"] for r in client.get("/app/chats").json()["result"]}
+    assert rows[used["id"]] == 2
+    assert sorted(rows.values()) == [0, 2]
+
+
+def test_a_chat_error_is_saved_with_the_chat(client, monkeypatch):
+    """It used to exist only on screen, and was gone after a reload."""
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+
+    def complete(*a, **kw):
+        raise agent.ModelError("fake/model: HTTP 429: rate limited", retry_elsewhere=False)
+
+    monkeypatch.setattr(agent, "complete", complete)
+    chat = client.post("/app/chats", json={}).json()["result"]
+    with client.websocket_connect("/app/chat") as ws:
+        ws.send_json({"type": "send", "chat_id": chat["id"], "text": "go"})
+        while ws.receive_json()["type"] != "done":
+            pass
+    saved = client.get(f"/app/chats/{chat['id']}").json()["result"]
+    assert saved["messages"][-1] == {"role": "error", "content": "fake/model: HTTP 429: rate limited"}
+
+
+def test_a_habitual_browser_start_is_answered_not_refused(client, monkeypatch):
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+    replies = iter([
+        {"content": "", "tool_calls": [{"id": "t1", "type": "function",
+            "function": {"name": "browser_session", "arguments": json.dumps({"action": "start"})}}]},
+        {"content": "ok"},
+    ])
+    monkeypatch.setattr(agent, "complete", lambda *a, **kw: next(replies))
+    chat = client.post("/app/chats", json={}).json()["result"]
+    with client.websocket_connect("/app/chat") as ws:
+        ws.send_json({"type": "send", "chat_id": chat["id"], "text": "go"})
+        events = []
+        while (event := ws.receive_json())["type"] != "done":
+            events.append(event)
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["error"] is False and "manages the browser" in result["text"]

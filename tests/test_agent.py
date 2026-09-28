@@ -25,10 +25,17 @@ def script(*replies):
     return complete, seen
 
 
-def test_the_tools_are_the_mcp_tools():
+def test_the_tools_are_the_mcp_tools_minus_what_the_app_manages():
+    """Seen live: offered browser_session, a model kept "starting" a browser
+    the app already had open."""
     names = [t["function"]["name"] for t in agent.tools()]
-    assert names == [t["name"] for t in mcp.TOOLS]
+    assert names == [t["name"] for t in mcp.TOOLS if t["name"] != "browser_session"]
     assert all(t["type"] == "function" for t in agent.tools())
+    assert "browser_session" in [t["function"]["name"] for t in agent.tools(exclude=frozenset())]
+
+
+def test_the_prompt_says_the_browser_is_already_open():
+    assert "ALREADY OPEN" in agent.system_prompt([], True)
 
 
 def test_a_tool_call_runs_and_the_answer_comes_back():
@@ -216,3 +223,16 @@ def test_a_bad_key_is_not_retried_elsewhere(monkeypatch):
     with pytest.raises(agent.ModelError) as exc:
         agent.complete("https://x.test/v1", "k", "m", [], [])
     assert exc.value.retry_elsewhere is False
+
+
+def test_saved_errors_and_notices_are_not_sent_to_the_model():
+    complete, seen = script({"content": "ok"})
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "error", "content": "model x failed"},
+        {"role": "notice", "content": "trying y"},
+        {"role": "user", "content": "again"},
+    ]
+    agent.run_turn(messages, models=["m"], complete_fn=complete, call_tool=None, emit=lambda e: None)
+    sent_roles = [m["role"] for m in seen[0][1]]
+    assert sent_roles == ["user", "user"]

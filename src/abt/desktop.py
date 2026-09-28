@@ -72,5 +72,9 @@ def open_window(base: str, width: int = 1440, height: int = 900) -> str:
     webview.create_window(
         "AI Browser Toolkit", url, js_api=api, width=width, height=height, min_size=(900, 600)
     )
-    webview.start()
+    # pywebview starts in private mode by default, which wipes the page's
+    # storage when the window closes -- so every launch forgot the chat you
+    # were in, the theme and the chat panel's side and width.
+    storage = str(where / "app-window") if where is not None else None
+    webview.start(private_mode=False, storage_path=storage)
     return "window"
