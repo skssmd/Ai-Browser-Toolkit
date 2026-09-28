@@ -45,7 +45,7 @@ TARGETS = {
     "windows-x86_64": "x86_64-pc-windows-msvc",
 }
 
-PAYLOAD = ("LICENSE", "README.md", "guidelines")
+PAYLOAD = ("LICENSE", "README.md", "guidelines", "assets")
 
 UNIX_SHIM = """#!/bin/sh
 # Resolve through symlinks: Homebrew puts the tree in libexec and symlinks to

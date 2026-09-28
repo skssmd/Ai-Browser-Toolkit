@@ -21,6 +21,7 @@ APP_HTML = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Browser Toolkit</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTUiIGZpbGw9IiMxNkEzNEEiLz48cGF0aCBkPSJNMTMuNSAzOFYxOS41YTYgNiAwIDAgMSA2LTZINDMiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNMjguNSAyNi41VjQ4LjVsNS44LTUuOCA0LjIgOSA0LjMtMi00LjItOC44aDh6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0yMy4yIDE1LjNRMjUuMSAxOS43IDI5LjUgMjEuNlEyNS4xIDIzLjUgMjMuMiAyNy45UTIxLjMgMjMuNSAxNi45IDIxLjZRMjEuMyAxOS43IDIzLjIgMTUuM1oiIGZpbGw9IiNmZmYiLz48L3N2Zz4=">
 <style>
   :root {
     color-scheme: light;
