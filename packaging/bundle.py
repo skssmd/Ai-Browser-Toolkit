@@ -174,6 +174,30 @@ def _interpreter(python_root: Path, target: str) -> Path:
     return python_root / "bin" / "python3"
 
 
+def drop_pip(python_root: Path) -> list[Path]:
+    """Remove pip from the bundled interpreter. Returns what was removed.
+
+    Packages go in with uv at build time, and nothing in the toolkit installs
+    anything at run time, so pip is ~6 MB nobody runs. Its launchers go too
+    (Scripts\pip*.exe on Windows, bin/pip* elsewhere), or they would point at a
+    package that is no longer there.
+    """
+    gone = []
+    patterns = (
+        "Lib/site-packages/pip", "Lib/site-packages/pip-*",
+        "lib/python*/site-packages/pip", "lib/python*/site-packages/pip-*",
+        "Scripts/pip*", "bin/pip*",
+    )
+    for pattern in patterns:
+        for path in sorted(python_root.glob(pattern)):
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            gone.append(path)
+    return gone
+
+
 def build(version: str, target: str, wheel: Path, dest: Path) -> Path:
     stem = bundle_stem(version, target)
     staging = dest / stem
@@ -193,6 +217,7 @@ def build(version: str, target: str, wheel: Path, dest: Path) -> Path:
             ["uv", "pip", "install", "--python", str(interpreter), *APP_EXTRA],
             check=True,
         )
+    drop_pip(python_root)
     if target.startswith("windows"):
         (staging / "AI Browser Toolkit.vbs").write_text(WINDOWS_STARTER, encoding="utf-8", newline="")
 

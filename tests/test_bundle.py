@@ -114,3 +114,24 @@ def test_the_windows_starter_opens_the_app_without_a_console():
     starter = bundle.WINDOWS_STARTER
     assert "pythonw.exe" in starter and "-m abt app" in starter
     assert "python.exe" not in starter.replace("pythonw.exe", "")
+
+
+@pytest.mark.parametrize("layout", ["windows", "unix"])
+def test_pip_is_left_out_of_the_bundle(tmp_path, layout):
+    root = tmp_path / "python"
+    if layout == "windows":
+        site, launchers = root / "Lib" / "site-packages", root / "Scripts"
+        names = ["pip.exe", "pip3.exe"]
+    else:
+        site, launchers = root / "lib" / "python3.13" / "site-packages", root / "bin"
+        names = ["pip", "pip3", "pip3.13"]
+    for folder in ("pip", "pip-25.0.dist-info", "playwright", "pipdeptree_lookalike"):
+        (site / folder).mkdir(parents=True)
+    launchers.mkdir(parents=True)
+    for name in names + ["python3"]:
+        (launchers / name).write_text("", encoding="utf-8")
+
+    bundle.drop_pip(root)
+
+    assert sorted(p.name for p in site.iterdir()) == ["pipdeptree_lookalike", "playwright"]
+    assert [p.name for p in launchers.iterdir()] == ["python3"]
