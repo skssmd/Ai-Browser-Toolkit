@@ -148,6 +148,38 @@ def pytest_addoption(parser):
         "timeout, then a settle grace. One multiplier says the true thing "
         "(this machine is slower) instead of hardcoding three numbers.",
     )
+    parser.addoption(
+        "--shard",
+        action="store",
+        default=os.environ.get("ABT_TEST_SHARD", ""),
+        help="run one slice of the suite, as INDEX/TOTAL (e.g. 2/4). CI runs "
+        "every slice as its own job, side by side.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Keep only this shard's tests when --shard is given.
+
+    Dealt out one test at a time rather than one file at a time: the files
+    differ by an order of magnitude in how long they take, so slicing by file
+    leaves one shard with all the slow ones. Dealing by test id spreads every
+    slow file across all the shards. Sorted first, so every shard sees the
+    same order and the slices never overlap or miss a test.
+    """
+    spec = config.getoption("--shard")
+    if not spec:
+        return
+    try:
+        index, total = (int(part) for part in spec.split("/"))
+    except ValueError:
+        raise pytest.UsageError(f"--shard wants INDEX/TOTAL, got {spec!r}")
+    if not 1 <= index <= total:
+        raise pytest.UsageError(f"--shard index must be 1..{total}, got {index}")
+    ordered = sorted(items, key=lambda item: item.nodeid)
+    keep = {item.nodeid for n, item in enumerate(ordered) if n % total == index - 1}
+    deselected = [item for item in items if item.nodeid not in keep]
+    items[:] = [item for item in items if item.nodeid in keep]
+    config.hook.pytest_deselected(items=deselected)
 
 
 @pytest.fixture(scope="session")

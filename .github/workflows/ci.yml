@@ -8,12 +8,20 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }}, shard ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest, macos-14]
         python: ["3.11", "3.13"]
+        # Each OS/Python pair runs as four jobs side by side, each taking a
+        # quarter of the suite (see --shard in tests/conftest.py). Four
+        # quarters of 800-odd browser tests finish long before one whole.
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
+    # A hung test otherwise holds the job for GitHub's six-hour limit. A
+    # quarter of the suite, even at the 5x slowdown, is well inside this.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -51,5 +59,6 @@ jobs:
           ABT_TEST_SLOWDOWN: "5"
         run: >
           python -m pytest -q
+          --shard ${{ matrix.shard }}/4
           --deselect tests/test_lifecycle_live.py
           --deselect tests/test_shots_live.py
