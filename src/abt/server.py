@@ -961,9 +961,7 @@ def create_app(
             profiles = registry.profiles
             if profiles is None:
                 return {"closed": []}
-            names = [row["name"] for row in profiles.list() if profiles.running(row["name"])]
-            profiles.stop_all()
-            return {"closed": names}
+            return {"closed": profiles.sweep()}
 
         return await _admin(work)
 

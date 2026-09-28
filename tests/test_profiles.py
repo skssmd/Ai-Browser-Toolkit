@@ -268,3 +268,14 @@ def test_targets_are_pages_only(make):
     reg = make(http_get=lambda url: rows)
     reg.attach(DEFAULT, "a")
     assert [r["id"] for r in reg.targets(DEFAULT)] == ["A"]
+
+
+def test_sweep_also_ends_browsers_this_registry_never_started(make):
+    """Left by a server that died: invisible to stop_all, still holding a profile."""
+    asked, killed = [], []
+    reg = make(
+        find_holders=lambda d, ours_only: asked.append(ours_only) or ([99] if d.name == DEFAULT else []),
+        kill_holders=lambda pids: killed.extend(pids) or len(pids),
+    )
+    assert reg.sweep() == [DEFAULT]
+    assert killed == [99] and set(asked) == {True}

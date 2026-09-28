@@ -442,6 +442,22 @@ class ProfileRegistry:
             "with the operator token. Then start again.",
         )
 
+    def sweep(self) -> list[str]:
+        """Stop every browser, and end abt's own left behind by an earlier run.
+
+        `stop_all` reaches only the browsers this registry started. One left by
+        a server that died is invisible to it, yet still holds its profile, so
+        each profile folder is checked for abt-launched holders as well. A
+        person's own Chrome window is never touched here.
+        """
+        closed = [row["name"] for row in self.list() if self.running(row["name"])]
+        self.stop_all()
+        for row in self.list():
+            pids = self._find_holders(self.path(row["name"]), ours_only=True)
+            if pids and self._kill_holders(pids) and row["name"] not in closed:
+                closed.append(row["name"])
+        return closed
+
     def force_close(self, name: str) -> dict:
         """End every browser holding `name`'s folder, ours or not.
 

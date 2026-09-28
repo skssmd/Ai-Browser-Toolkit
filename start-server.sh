@@ -116,7 +116,7 @@ fi
 NEED_INSTALL=
 [ -x "$ABT" ] || NEED_INSTALL=1
 if [ -z "$NEED_INSTALL" ]; then
-    "$VPY" -c "import abt, selenium, fastapi, uvicorn, pydantic, httpx, typer" > /dev/null 2>&1 \
+    "$VPY" -c "import abt, playwright, websockets, fastapi, uvicorn, pydantic, httpx, typer" > /dev/null 2>&1 \
         || NEED_INSTALL=1
 fi
 
@@ -127,7 +127,7 @@ if [ -n "$NEED_INSTALL" ]; then
         echo "[abt] ERROR: pip install failed." >&2
         exit 2
     fi
-    if ! "$VPY" -c "import abt, selenium, fastapi, uvicorn, pydantic, httpx, typer" > /dev/null 2>&1; then
+    if ! "$VPY" -c "import abt, playwright, websockets, fastapi, uvicorn, pydantic, httpx, typer" > /dev/null 2>&1; then
         echo "[abt] ERROR: dependencies still missing after install." >&2
         exit 2
     fi

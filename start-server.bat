@@ -97,7 +97,7 @@ rem Cheap import check -- if the package and its deps resolve, skip pip entirely
 set "NEED_INSTALL="
 if not exist "%ABT%" set "NEED_INSTALL=1"
 if not defined NEED_INSTALL (
-    "%VPY%" -c "import abt, selenium, fastapi, uvicorn, pydantic, httpx, typer" >nul 2>&1
+    "%VPY%" -c "import abt, playwright, websockets, fastapi, uvicorn, pydantic, httpx, typer" >nul 2>&1
     if errorlevel 1 set "NEED_INSTALL=1"
 )
 
@@ -109,7 +109,7 @@ if defined NEED_INSTALL (
         echo [abt] ERROR: pip install failed.
         exit /b 2
     )
-    "%VPY%" -c "import abt, selenium, fastapi, uvicorn, pydantic, httpx, typer" >nul 2>&1
+    "%VPY%" -c "import abt, playwright, websockets, fastapi, uvicorn, pydantic, httpx, typer" >nul 2>&1
     if errorlevel 1 (
         echo [abt] ERROR: dependencies still missing after install.
         exit /b 2

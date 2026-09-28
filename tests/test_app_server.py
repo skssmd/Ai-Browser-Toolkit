@@ -272,7 +272,7 @@ def test_the_overview_lists_every_chat_for_the_operator_only(client, registry):
 
 def test_closing_the_app_closes_its_browsers_but_not_the_server(client, registry, monkeypatch):
     stopped = []
-    monkeypatch.setattr(registry.profiles, "stop_all", lambda: stopped.append(True))
+    monkeypatch.setattr(registry.profiles, "sweep", lambda: stopped.append(True) or [])
     assert client.post("/app/quit").json()["error"]["type"] == "session_sealed"
     assert client.post("/app/quit", headers=OP).json()["ok"] is True
     assert stopped == [True]
