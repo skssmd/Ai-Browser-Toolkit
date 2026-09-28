@@ -144,6 +144,9 @@ def test_launch_argv_hides_and_unthrottles(tmp_path):
     assert "--remote-debugging-port=0" in argv
     assert "--headless=new" in argv
     for flag in (
+        # Playwright passes it too; a script's window.open is otherwise blocked
+        # on macOS (seen in CI) and not on Windows.
+        "--disable-popup-blocking",
         "--disable-background-timer-throttling",
         "--disable-renderer-backgrounding",
         "--disable-backgrounding-occluded-windows",

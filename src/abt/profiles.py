@@ -70,6 +70,11 @@ def launch_argv(binary: Path, profile_dir: Path, headed: bool) -> list[str]:
         "--no-default-browser-check",
         # The same anti-detection flag `BrowserSession._make_options` sets.
         "--disable-blink-features=AutomationControlled",
+        # Playwright's own launcher always passes this, so the browser abt
+        # drove before sessions never blocked a popup. Without it, a
+        # window.open from a script -- no user gesture -- is blocked on some
+        # platforms and not others (macOS blocked it, Windows did not).
+        "--disable-popup-blocking",
         *_UNTHROTTLED,
     ]
     if not headed:

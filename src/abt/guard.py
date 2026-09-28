@@ -34,7 +34,11 @@ POLL_INTERVAL = 0.25
 def _open(url: str):
     from websockets.sync.client import connect
 
-    return connect(url, max_size=None, open_timeout=5)
+    # Entered explicitly rather than used bare: websockets 17 deprecates a
+    # bare connect(), and on older versions __enter__ returns the connection
+    # itself, so this is the same on every release the dependency allows.
+    # The guard holds these open across calls, so a `with` block cannot fit.
+    return connect(url, max_size=None, open_timeout=5).__enter__()
 
 
 class PageGuard:
