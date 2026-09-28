@@ -1,7 +1,12 @@
 # Multi-Profile Sessions — Design
 
 Date: 2026-09-28
-Status: Draft — awaiting review
+Status: Approved
+Supersedes: `2026-08-19-profile-sessions-design.md` (approved, never built).
+That design serialized sessions on a shared profile and treated agent ids as
+unverified strings; this one gives each session its own connection, so a shared
+profile runs in parallel, and adds sealed sessions for real enforcement. Its
+profile-name rule and per-profile metadata file are kept.
 
 ## Purpose
 
@@ -78,9 +83,10 @@ It is the first of three specs:
 
 - **`profiles.py` — `ProfileRegistry`.** Launches Chrome for a profile as a
   plain subprocess, discovers its CDP endpoint, reuses a running one, stops idle
-  ones, enforces the cap, and keeps one **operator connection** per running
-  profile (used for target events and the screencast). Knows nothing about
-  sessions.
+  ones, enforces the cap, and lists a running profile's tabs through Chrome's
+  own `GET /json/list`. Knows nothing about sessions. There is no long-lived
+  "operator" Playwright connection: listing uses plain HTTP and the screencast
+  opens Chrome's per-tab DevTools WebSocket directly.
 - **`sessions.py` — `SessionRegistry`, `Session`.** CRUD, persistence, token
   checks, resolving which session a request belongs to. A `Session` holds its
   profile, lock, driver, and recorder.
@@ -91,25 +97,36 @@ It is the first of three specs:
 
 ### Changed units
 
-- **`server.py`.** `create_app` takes the registries instead of one
-  `BrowserSession`. `run_one` resolves the session, then runs under
-  `session.lock` with `session.driver`. The global lock is removed. New routes
-  for profiles, sessions and the screencast.
-- **`pwdriver.py`.** Attach mode takes its CDP URL from the driver config rather
-  than the process-wide `ABT_CDP_URL` (which stays as an override for the
-  BrowserGym harness). Its page list is filtered through `TabRegistry`; tab ids
-  become CDP target ids. The console init script is installed once per profile
-  by the operator connection, not once per session connection (otherwise it
-  runs N times per page).
-- **`ops/tabs.py`** and every op that selects a tab consult `TabRegistry`.
-  New ops `claim_tab`, `release_tab`.
+- **`server.py`.** `create_app` gains a `registry=` keyword. With it, each
+  request resolves a session and runs under that session's lock with that
+  session's `BrowserSession`; the global lock is gone. Without it —
+  `create_app(browser_session)`, which the whole existing test suite and
+  `--engine selenium` use — the one `BrowserSession` is wrapped as the
+  `default` session and behaves exactly as today. New routes for profiles,
+  sessions, tab ownership and the screencast.
+- **`browser.py`.** `BrowserSession` gains an optional attach spec: where to get
+  the CDP URL (the ProfileRegistry), and the session's `TabGate`. In attach mode
+  `start` connects instead of launching, `stop` closes the session's own tabs
+  and disconnects instead of quitting Chrome, and tab ids are allocated by the
+  profile's `TabRegistry` so every session agrees on them.
+- **`pwdriver.py`.** Attach mode takes its CDP URL as a constructor argument
+  (`ABT_CDP_URL` stays as the BrowserGym override, with its "externally owned"
+  hint). With a gate it starts on a fresh page of its own rather than adopting
+  every open page, only ever sees pages its session owns, adopts popups whose
+  opener it owns (via Playwright's `page.opener()`), and does not
+  `bring_to_front`. Handles become CDP target ids. The console and network
+  probes are already idempotent (`if (window.__abtConsole) return;`), so N
+  sessions registering them on one profile is harmless.
 - **`mcp.py`.** `abt mcp --session NAME` (or `ABT_SESSION`) binds the
   connection's session; `Bridge` sends it with every call. No tool exposes
   session management or a `session` parameter.
 - **`cli.py`.** Global `--session` option and `ABT_SESSION`; new `abt profile`
   and `abt session` command groups.
-- **`recorder.py`, `viewer.py`.** Per-session log directories; viewer groups by
-  session, then run, tab, site.
+- **`recorder.py`, `viewer.py`.** The recorder is unchanged; it is simply given
+  a per-session root. The viewer gains a session picker.
+- **`schema.py`, `ops/tabs.py`.** New ops `tab_claim` and `tab_release`;
+  `tab_list` includes same-profile tabs the session cannot act on; `tab_switch`
+  and `tab_close` on one of those raise `tab_locked`.
 
 ### Unchanged
 
@@ -118,12 +135,19 @@ every op inside a tab the session owns.
 
 ## Profiles
 
-- Stored as directories under the profile root. `default` always exists.
-- `abt profile list | new NAME | rm NAME`; HTTP `GET /profiles`,
-  `POST /profiles {"name"}`, `DELETE /profiles/NAME`.
-- Names: `[a-z0-9][a-z0-9_-]{0,39}`.
+- Stored as directories under the profile root, each with a sibling
+  `<name>.json` metadata file (`{"name", "created", "headed"}`). `default`
+  always exists; an explicit `abt serve --profile PATH` is used as the default
+  profile's directory, as today.
+- `abt profile list | new NAME | rm NAME | set NAME --headed/--headless`; HTTP
+  `GET /profiles`, `POST /profiles {"name"}`, `PATCH /profiles/NAME`,
+  `DELETE /profiles/NAME`.
+- Names must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, and the resolved path
+  is asserted to sit inside the profile root before anything is created or
+  removed. A name becomes a path, so this is a security check, not tidiness.
 - `rm` is refused with `profile_in_use` while any session references the
-  profile, and refused for `default`. The CLI asks for confirmation.
+  profile or its Chrome is running, and refused for `default`. The CLI asks
+  for confirmation.
 
 ## Sessions
 
@@ -143,7 +167,8 @@ every op inside a tab the session owns.
 the model. Unknown keys are preserved so specs 2 and 3 extend without a
 migration.
 
-Persisted as `sessions/<name>.json` under abt's config directory. Sessions
+Persisted as `sessions/<name>.json` beside the profile root (`<repo>/sessions`
+in a checkout, `<data dir>/sessions` when installed). Sessions
 survive a server restart; their tabs do not (Chrome is restarted too), so tab
 ownership is not persisted.
 
@@ -162,6 +187,13 @@ ownership is not persisted.
 - `rm` closes the session's tabs and disconnects its driver. Logs are kept.
 - `default` always exists, uses the `default` profile, has empty settings, and
   cannot be removed or sealed.
+- Every session starts with no browser connection, exactly as the server does
+  today: `browser_start` in a session ensures its profile's Chrome is running
+  and connects. `browser_stop` closes the session's own tabs and disconnects;
+  Chrome itself is stopped only when no other session is connected to it.
+- `browser_start` / `browser_restart` naming a `profile` other than the
+  session's are refused with `invalid_op`: a session's profile changes only
+  through `session set`, never from inside the session.
 
 ### Selecting a session
 
@@ -175,9 +207,11 @@ ownership is not persisted.
 A name that does not exist is always `unknown_session` — never a silent
 fallback to `default`, which would drop a session's restrictions on a typo.
 
-Within one `/command-list` batch, all commands run in one session: the first
-item's (or the header's) session applies, and an item naming a different one
-is rejected with `bad_request`.
+`session` and `token` are transport fields, stripped before a command is
+validated. Within one `/command-list` batch, all commands run in one session:
+the header, else the envelope's field, else the first item's applies, and an
+item naming a different one fails the batch with `invalid_op` before anything
+runs.
 
 ### Open and sealed sessions
 
@@ -197,9 +231,9 @@ session.
   `abt session list` shows it with `sealed: true`.
 - The model inside the desktop app emits tool calls only; the app's agent loop
   attaches session and token. There is nothing for the model to spoof.
-- The token is stored in `sessions/<name>.token`, created with owner-only
-  permissions (`0600`; on Windows an ACL granting only the current user), so
-  the app can reconnect after a server restart.
+- The token is stored in `sessions/<name>.token` so the app can reconnect
+  after a server restart. On POSIX it is created `0600`; on Windows it relies on
+  the per-user ACL that `%LOCALAPPDATA%` and the user's home already carry.
 
 The server stores only a hash of the token alongside the session and compares
 in constant time.
@@ -215,38 +249,41 @@ just as the GUI does. The spec for the desktop app repeats this in the UI.
 
 ### Identity
 
-Tab ids are Chrome's **CDP target ids**. They are identical on every connection
-to the same Chrome, so the TabRegistry, every session's driver and the
-screencast agree on which tab is which. (Today's ids are indices local to one
-Playwright connection.) Responses keep a short `tab` field for readability
-alongside the id.
+Underneath, a tab is Chrome's **CDP target id**, identical on every connection
+to the same Chrome. Callers still see today's `tab_N` ids, but in registry mode
+they are allocated by the profile's `TabRegistry` rather than per session, so
+every session, the GUI and the screencast agree on which tab is `tab_3`. No
+caller-visible id format changes.
 
 ### Ownership
 
-- A tab opened by a session (`new_tab`, or a `goto` with no tab yet) is owned by
-  that session from creation.
+- A tab opened by a session (`tab_new`, or the fresh page `browser_start`
+  opens for it) is owned by that session from creation.
 - A tab opened by the page — popup, `target=_blank`, `window.open` — is owned by
-  its opener's owner. The operator connection sees `Target.targetCreated` with
-  `openerId`; ownership is assigned before any session can act on the tab.
+  its opener's owner. Every connection sees every page, so whichever session
+  first encounters an unassigned page reads `page.opener()` and hands the
+  opener's target id to the registry, which assigns the page to the opener's
+  owner. A `tab_claim` of such a page by anyone else is refused with
+  `tab_locked`, so there is no window in which another session can take it.
 - A tab with no owning opener (pre-existing, or opened by the operator in the
-  live view) is **unowned**. A session must `claim_tab` it before acting on it.
-- `release_tab` gives a tab up (it becomes unowned).
+  live view) is **unowned**. A session must `tab_claim` it before acting on it.
+- `tab_release` gives a tab up (it becomes unowned).
 
 ### Visibility and access
 
 For a session S and tab T:
 
-| T is | `list_tabs` | Any action on T |
+| T is | `tab_list` | Any action on T |
 |---|---|---|
 | owned by S | listed | allowed |
-| unowned, same profile | listed as `unowned` | only `claim_tab` |
+| unowned, same profile | listed as `unowned` | only `tab_claim` |
 | owned by another session, same profile | listed with `locked: "<owner>"` | `tab_locked` |
 | in a different profile | not listed | `tab_not_found` (same as a tab that does not exist) |
 
 A sealed session's tabs follow the same table for everyone else; the owner's
 name is shown, nothing else.
 
-`new_tab`, `switch_tab` and `close_tab` act only on owned tabs. Each session
+`tab_new`, `tab_switch` and `tab_close` act only on owned tabs. Each session
 has its own current tab; switching never affects another session. Playwright
 acts on a page object directly, so nothing brings a tab to the front for
 another session's command to work.
@@ -273,13 +310,15 @@ chrome --user-data-dir=<profile dir>
        --disable-backgrounding-occluded-windows
 ```
 
-It reads the chosen port from `<profile>/DevToolsActivePort`, then opens the
-operator connection. Remote debugging is permitted because these are custom
-user-data directories; Chrome refuses it only on its own default profile.
+It also passes the anti-detection flags `_make_options` already uses
+(`--disable-blink-features=AutomationControlled`). It reads the chosen port
+from `<profile>/DevToolsActivePort`. Remote debugging is permitted because these
+are custom user-data directories; Chrome refuses it only on its own default
+profile. The browser binary is found with `doctor.find_browsers()`.
 
-`default` goes through the same path; the `launch_persistent_context` branch in
-`PlaywrightDriver._boot` is no longer used by the server (it remains for
-direct library use).
+In registry mode `default` goes through the same path. The
+`launch_persistent_context` branch in `PlaywrightDriver._boot` stays for the
+legacy `create_app(browser_session)` path and direct library use.
 
 A profile can be marked `headed` (`abt profile set NAME --headed`) for sites
 that misbehave headless. The GUI remains the intended way to see it.
@@ -287,8 +326,11 @@ that misbehave headless. The GUI remains the intended way to see it.
 ### Connections and locks
 
 - Each session gets its own `PlaywrightDriver` in attach mode connected to its
-  profile's Chrome, created on the session's first command. Each driver owns
-  its thread (`ThreadPoolExecutor(max_workers=1)`, as today).
+  profile's Chrome, created by the session's `browser_start`. Each driver owns
+  its thread (`ThreadPoolExecutor(max_workers=1)`, as today). Because each
+  driver's ambient `switch_to` state belongs to its own connection, two
+  sessions on one profile cannot retarget each other — the hazard that made the
+  superseded design serialize them.
 - Each session has its own lock. Commands and batches within a session run in
   order; sessions never wait on each other.
 - `TabRegistry` has one internal lock per profile, held only to read or change
@@ -314,31 +356,37 @@ that misbehave headless. The GUI remains the intended way to see it.
 
 ## Logs
 
-- Layout: `logs/sessions/<session>/<run>.jsonl` and
-  `logs/sessions/<session>/shots/`.
-- Each event gains `tab_id` (target id) and, for refusals such as `tab_locked`,
-  the error code — refused actions are part of the record.
-- `/viewer` lists sessions first, then runs, then tabs and sites.
-- Reading a sealed session's logs over HTTP requires its token. Files on disk
-  are created owner-only.
-- Existing `logs/<run>.jsonl` files remain readable as a legacy "default"
-  group.
+- Layout: `logs/sessions/<session>/<run>/events.jsonl` and `.../shots/` — the
+  recorder's existing per-run layout, rooted per session. The recorder's own
+  field is still called `session_id` and holds the run id; renaming it would
+  churn the viewer and the log format for no behavioural gain.
+- Events already carry `tab_id` and, for failures, `error_type` — so refusals
+  such as `tab_locked` are part of the record with no format change.
+- `/logs` routes take the session like every other route; `/viewer` gains a
+  session picker.
+- Reading a sealed session's logs over HTTP requires its token.
+- Legacy mode keeps writing `logs/<run>/` exactly as today.
 
 ## Screencast
 
-- `GET /screencast?tab=<target id>` upgraded to a WebSocket.
-- Uses the profile's operator connection: `Page.startScreencast` (JPEG,
-  default quality 60, max width 1600) with `Page.screencastFrameAck`; input via
-  `Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, `Input.insertText`.
-  Watching never contends with a session's own connection.
+- `GET /screencast?tab=<tab id>&session=<name>` upgraded to a WebSocket.
+- The server opens Chrome's own DevTools WebSocket for that tab
+  (`ws://127.0.0.1:<port>/devtools/page/<target id>`) and relays:
+  `Page.startScreencast` (JPEG, default quality 60, max width 1600) with
+  `Page.screencastFrameAck`; input via `Input.dispatchMouseEvent`,
+  `Input.dispatchKeyEvent`, `Input.insertText`. It is a separate DevTools
+  client, so watching never contends with a session's own connection. This
+  adds `websockets` as a dependency (it is also what gives uvicorn WebSocket
+  support).
 - Frames stream only while a socket is open. An open socket counts as activity
   for idle shutdown.
 - Access: a session's own tabs with that session's token (open sessions need
   none); **any** tab with the **operator token**, including taking over a
   locked one. The operator token is generated at server start and written
   owner-only to `<config>/operator.token`.
-- The operator can also release or claim a tab on behalf of a session through
-  `POST /tabs/<id>/owner` with the operator token.
+- The operator can also release or assign a tab on behalf of a session through
+  `POST /tabs/owner {"profile", "tab_id", "session" | null}` with the operator
+  token.
 
 ## Errors
 
@@ -352,7 +400,12 @@ All follow the existing `OpError` shape (`code`, `message`, `hint`).
 | `tab_locked` | Acting on a same-profile tab another session owns |
 | `tab_not_found` | Tab id not visible to this session (other profile, or gone) |
 | `profile_limit` | `--max-profiles` would be exceeded |
-| `profile_in_use` | Removing a profile a session references |
+| `profile_in_use` | Removing a profile a session references or that is running |
+| `profile_not_found` | Named profile does not exist |
+
+Malformed names, a batch naming two sessions, and a session-scoped
+`browser_start` naming another profile are `invalid_op`, like every other
+malformed request.
 
 Hints are written for the agent: `tab_locked` says to open its own tab rather
 than retry; `session_sealed` says the session is not addressable from here.
@@ -360,13 +413,12 @@ than retry; `session_sealed` says the session is not addressable from here.
 ## Compatibility
 
 - A client that never mentions sessions uses `default` on the `default` profile
-  and must behave as it does today. The existing test suite runs unchanged
-  against it.
-- Tab ids change from indices to target ids. Ops that accept a tab id keep
-  accepting a numeric index into the session's own `list_tabs` for one minor
-  version, with a deprecation note in the response.
-- `--engine selenium`: sessions other than `default` are refused with a clear
-  error.
+  and behaves as it does today: explicit `browser_start`, same ops, same
+  `tab_N` ids, same responses.
+- `create_app(browser_session)` is unchanged, so the existing suite runs as-is
+  and does not exercise the registry; new tests cover registry mode.
+- `--engine selenium`: `abt serve` uses the legacy path; naming any session
+  other than `default` is `unknown_session`.
 
 ## Testing
 
@@ -390,7 +442,10 @@ Integration tests, real Chrome, marked slow:
 - Killing a profile's Chrome → `browser_dead`, then relaunch.
 - Idle shutdown stops Chrome and a later command restarts it.
 - Screencast delivers frames and a click lands.
-- The existing suite passes against `default`.
+- The existing suite passes unchanged (legacy path).
+
+Per the repo's standing rule, tests are written locally and run by CI on push,
+never locally.
 
 The first implementation task is hardening attach mode — dialogs, console and
 network capture, downloads — against a registry-launched Chrome, with its own
@@ -405,5 +460,7 @@ the BrowserGym harness.
   Per-profile `headed` is the escape hatch.
 - **Memory.** Each running profile is a full Chrome (roughly 300–500 MB).
   Bounded by `--max-profiles` and idle shutdown.
-- **Tab-id change.** Clients storing numeric tab ids break after the
-  deprecation window. Called out in the changelog.
+- **Chrome single-instance handoff.** Launching Chrome on a profile another
+  Chrome already holds signals the incumbent and exits. `ensure` detects this
+  (no `DevToolsActivePort` appears, process exits) and reports `browser_dead`
+  naming the lock, reusing `browser._profile_locked`.
