@@ -39,7 +39,7 @@ def ask(client, monkeypatch, commands):
         }]},
         {"content": "done"},
     ])
-    monkeypatch.setattr(agent, "complete", lambda *a: next(replies))
+    monkeypatch.setattr(agent, "complete", lambda *a, **kw: next(replies))
     chat = client.post("/app/chats", json={}).json()["result"]
     with client.websocket_connect("/app/chat") as ws:
         ws.send_json({"type": "send", "chat_id": chat["id"], "text": "go"})

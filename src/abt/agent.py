@@ -73,31 +73,56 @@ def system_prompt(rules: list[str] | None, run_js: bool) -> str:
 
 
 def complete(
-    endpoint: str, api_key: str, model: str, messages: list[dict], tool_list: list[dict]
+    endpoint: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tool_list: list[dict],
+    on_text: Callable[[str], None] | None = None,
 ) -> dict:
-    """One call to `/chat/completions`. Returns the assistant message."""
-    headers = {"Content-Type": "application/json"}
+    """One call to `/chat/completions`. Returns the assistant message.
+
+    Asks for a streamed reply, so the person sees the words as they are
+    written, and hands each piece of text to `on_text`. A provider that
+    ignores `stream` and answers with one JSON body works the same way.
+    """
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     # OpenRouter uses these to attribute traffic; other endpoints ignore them.
     headers["X-Title"] = "AI Browser Toolkit"
     # Sent as ASCII-escaped JSON, not raw UTF-8. A router like openrouter/free
     # hands the request to whichever backend is up, and some of them fail on a
-    # raw em dash from a page ("'ascii' codec can't encode character '—'").
+    # raw em dash from a page ("'ascii' codec can't encode character '\u2014'").
     # \u escapes are the same JSON to anything that parses it.
     body = json.dumps(
-        {"model": model, "messages": messages, "tools": tool_list, "tool_choice": "auto"},
+        {
+            "model": model,
+            "messages": messages,
+            "tools": tool_list,
+            "tool_choice": "auto",
+            "stream": True,
+        },
         ensure_ascii=True,
     )
     try:
-        response = httpx.post(
+        with httpx.stream(
+            "POST",
             f"{endpoint.rstrip('/')}/chat/completions",
             headers=headers,
             content=body.encode("ascii"),
             timeout=180,
-        )
+        ) as response:
+            kind = response.headers.get("content-type", "")
+            if response.status_code >= 400 or "text/event-stream" not in kind:
+                response.read()
+                return _whole_reply(response, model)
+            return _streamed_reply(response, model, on_text)
     except httpx.HTTPError as exc:
         raise ModelError(f"could not reach {endpoint}: {exc}") from exc
+
+
+def _whole_reply(response, model: str) -> dict:
     try:
         body = response.json()
     except ValueError:
@@ -113,6 +138,55 @@ def complete(
         return body["choices"][0]["message"]
     except (KeyError, IndexError, TypeError):
         raise ModelError(f"{model}: no message in the reply")
+
+
+def _streamed_reply(response, model: str, on_text: Callable[[str], None] | None) -> dict:
+    """Assemble a message from server-sent events.
+
+    Text arrives in pieces; so do tool calls, whose name and arguments are
+    split across chunks and joined back together by their index.
+    """
+    text: list[str] = []
+    calls: dict[int, dict] = {}
+    for line in response.iter_lines():
+        if not line.startswith("data:"):
+            continue  # blank keep-alives and ": comment" lines
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except ValueError:
+            continue
+        if chunk.get("error"):
+            error = chunk["error"]
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise ModelError(f"{model}: {message}")
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                text.append(piece)
+                if on_text is not None:
+                    on_text(piece)
+            for part in delta.get("tool_calls") or []:
+                slot = calls.setdefault(
+                    part.get("index", len(calls)),
+                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if part.get("id"):
+                    slot["id"] = part["id"]
+                function = part.get("function") or {}
+                if function.get("name"):
+                    slot["function"]["name"] += function["name"]
+                if function.get("arguments"):
+                    slot["function"]["arguments"] += function["arguments"]
+    message: dict = {"role": "assistant", "content": "".join(text)}
+    if calls:
+        message["tool_calls"] = [calls[i] for i in sorted(calls)]
+    if not message["content"] and not calls:
+        raise ModelError(f"{model}: the reply was empty")
+    return message
 
 
 def trimmed(messages: list[dict]) -> list[dict]:

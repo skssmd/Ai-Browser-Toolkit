@@ -1209,7 +1209,9 @@ def create_app(
     def publish(run: ChatRun, event: dict) -> None:
         """Called on the event loop. Buffer the event and hand it to watchers."""
         event = {**event, "chat_id": run.chat_id}
-        if event["type"] != "done":
+        # Streamed pieces go out live but are not kept: the finished message
+        # follows as one "assistant" event, and that is what a page replays.
+        if event["type"] not in ("done", "delta"):
             run.events.append(event)
         for queue in list(watchers.get(run.session, ())):
             queue.put_nowait(event)
@@ -1249,7 +1251,8 @@ def create_app(
                     chat["messages"],
                     models=models,
                     complete_fn=lambda model, msgs: agent_util.complete(
-                        settings["endpoint"], settings["api_key"], model, msgs, tool_list
+                        settings["endpoint"], settings["api_key"], model, msgs, tool_list,
+                        on_text=lambda piece: emit({"type": "delta", "text": piece}),
                     ),
                     call_tool=lambda name, args: call_tool(sess, name, args),
                     emit=emit,

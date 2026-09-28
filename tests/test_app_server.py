@@ -97,7 +97,7 @@ def test_the_chat_drives_a_real_tool_call(client, registry, monkeypatch):
         }]},
         {"content": "No browser is running yet."},
     ])
-    monkeypatch.setattr(agent, "complete", lambda endpoint, key, model, messages, tools: next(replies))
+    monkeypatch.setattr(agent, "complete", lambda endpoint, key, model, messages, tools, **kw: next(replies))
     chat = client.post("/app/chats", json={}).json()["result"]
     with client.websocket_connect("/app/chat?session=default") as ws:
         ws.send_json({"type": "send", "chat_id": chat["id"], "text": "is the browser up?"})
@@ -127,7 +127,7 @@ def test_the_chat_cannot_shut_the_server_down(client, monkeypatch):
         }]},
         {"content": "ok"},
     ])
-    monkeypatch.setattr(agent, "complete", lambda *a: next(replies))
+    monkeypatch.setattr(agent, "complete", lambda *a, **kw: next(replies))
     chat = client.post("/app/chats", json={}).json()["result"]
     with client.websocket_connect("/app/chat") as ws:
         ws.send_json({"type": "send", "chat_id": chat["id"], "text": "stop everything"})
@@ -151,7 +151,7 @@ def test_replies_keep_running_when_the_page_leaves_and_run_side_by_side(client, 
     gate = threading.Event()
     started = []
 
-    def complete(endpoint, key, model, messages, tools):
+    def complete(endpoint, key, model, messages, tools, **kw):
         started.append(model)
         gate.wait(10)  # both replies are in flight at once until released
         return {"content": "finished"}
@@ -182,3 +182,23 @@ def test_replies_keep_running_when_the_page_leaves_and_run_side_by_side(client, 
         assert kinds == ["assistant"]
     saved = client.get(f"/app/chats/{first['id']}").json()["result"]
     assert saved["messages"][-1]["content"] == "finished"
+
+
+def test_the_reply_streams_to_the_page(client, monkeypatch):
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+
+    def complete(endpoint, key, model, messages, tools, on_text=None):
+        for piece in ("Wor", "king", " on it."):
+            on_text(piece)
+        return {"content": "Working on it."}
+
+    monkeypatch.setattr(agent, "complete", complete)
+    chat = client.post("/app/chats", json={}).json()["result"]
+    with client.websocket_connect("/app/chat") as ws:
+        ws.send_json({"type": "send", "chat_id": chat["id"], "text": "hi"})
+        events = []
+        while (event := ws.receive_json())["type"] != "done":
+            events.append(event)
+    kinds = [e["type"] for e in events]
+    assert kinds == ["user", "delta", "delta", "delta", "assistant"]
+    assert "".join(e["text"] for e in events if e["type"] == "delta") == "Working on it."

@@ -119,22 +119,100 @@ def test_the_system_prompt_names_the_rules():
     assert "a.com, !a.com/api" in text and "run_js is switched off" in text
 
 
+class FakeStream:
+    """What httpx.stream hands back: headers, a status, lines or a body."""
+
+    def __init__(self, lines=None, body=None, status=200):
+        self.status_code = status
+        self.headers = {"content-type": "text/event-stream" if lines is not None else "application/json"}
+        self._lines = lines or []
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+    def read(self):
+        return b""
+
+    def json(self):
+        return self._body
+
+    @property
+    def text(self):
+        return json.dumps(self._body)
+
+
+def serve(monkeypatch, reply, sent=None):
+    def stream(method, url, headers=None, content=None, timeout=None, **kw):
+        if sent is not None:
+            sent["body"] = content
+        return reply
+
+    monkeypatch.setattr(agent.httpx, "stream", stream)
+
+
+def sse(*chunks):
+    return [": OPENROUTER PROCESSING", ""] + [f"data: {json.dumps(c)}" for c in chunks] + ["data: [DONE]"]
+
+
 def test_the_request_body_is_ascii_so_no_backend_chokes_on_it(monkeypatch):
     """Seen live: a free model behind openrouter/free failed with "'ascii'
-    codec can't encode character '\u2014'" on page text holding an em dash."""
+    codec can't encode character '—'" on page text holding an em dash."""
     sent = {}
-
-    class Reply:
-        status_code = 200
-
-        def json(self):
-            return {"choices": [{"message": {"content": "ok"}}]}
-
-    def post(url, headers=None, content=None, timeout=None, **kw):
-        sent["body"] = content
-        return Reply()
-
-    monkeypatch.setattr(agent.httpx, "post", post)
-    agent.complete("https://x.test/v1", "k", "m", [{"role": "user", "content": "a \u2014 b"}], [])
+    serve(monkeypatch, FakeStream(body={"choices": [{"message": {"content": "ok"}}]}), sent)
+    agent.complete("https://x.test/v1", "k", "m", [{"role": "user", "content": "a — b"}], [])
     sent["body"].decode("ascii")  # raises if anything non-ASCII went out
-    assert json.loads(sent["body"])["messages"][0]["content"] == "a \u2014 b"
+    body = json.loads(sent["body"])
+    assert body["messages"][0]["content"] == "a — b"
+    assert body["stream"] is True
+
+
+def test_text_streams_piece_by_piece(monkeypatch):
+    serve(monkeypatch, FakeStream(sse(
+        {"choices": [{"delta": {"content": "Hel"}}]},
+        {"choices": [{"delta": {"content": "lo."}}]},
+    )))
+    pieces = []
+    message = agent.complete("https://x.test/v1", "k", "m", [], [], on_text=pieces.append)
+    assert pieces == ["Hel", "lo."]
+    assert message["content"] == "Hello." and "tool_calls" not in message
+
+
+def test_a_tool_call_split_across_chunks_is_joined(monkeypatch):
+    serve(monkeypatch, FakeStream(sse(
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "command_", "arguments": '{"comm'}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"name": "list", "arguments": 'ands":[]}'}}]}}]},
+    )))
+    message = agent.complete("https://x.test/v1", "k", "m", [], [])
+    [call] = message["tool_calls"]
+    assert call["id"] == "c1"
+    assert call["function"] == {"name": "command_list", "arguments": '{"commands":[]}'}
+
+
+def test_a_provider_that_does_not_stream_still_works(monkeypatch):
+    serve(monkeypatch, FakeStream(body={"choices": [{"message": {"content": "whole"}}]}))
+    assert agent.complete("https://x.test/v1", "k", "m", [], [])["content"] == "whole"
+
+
+def test_an_error_mid_stream_is_a_model_error(monkeypatch):
+    import pytest
+
+    serve(monkeypatch, FakeStream(sse({"error": {"message": "upstream overloaded"}})))
+    with pytest.raises(agent.ModelError) as exc:
+        agent.complete("https://x.test/v1", "k", "m", [], [])
+    assert "overloaded" in str(exc.value)
+
+
+def test_a_bad_key_is_not_retried_elsewhere(monkeypatch):
+    serve(monkeypatch, FakeStream(body={"error": {"message": "no auth"}}, status=401))
+    import pytest
+
+    with pytest.raises(agent.ModelError) as exc:
+        agent.complete("https://x.test/v1", "k", "m", [], [])
+    assert exc.value.retry_elsewhere is False

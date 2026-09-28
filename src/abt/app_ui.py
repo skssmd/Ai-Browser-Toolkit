@@ -1062,7 +1062,18 @@ function openChatSocket() {
 }
 
 let pendingTool = null;
+// The reply as it is being written: one bubble, re-rendered as pieces arrive,
+// replaced by the finished message when it lands.
+function liveText(piece) {
+  let el = $("#live");
+  if (!el) { add(`<div class="msg assistant md" id="live"></div>`); el = $("#live"); el._text = ""; }
+  el._text += piece; el.innerHTML = markdown(el._text);
+  const m = $("#messages"); m.scrollTop = m.scrollHeight;
+}
+function endLive() { const el = $("#live"); if (el) el.remove(); }
 function renderEvent(e) {
+  if (e.type === "delta") return liveText(e.text);
+  if (e.type !== "delta") endLive();
   if (e.type === "user") bubble("user", e.text);
   else if (e.type === "assistant") bubble("assistant", e.text);
   else if (e.type === "tool_call") { pendingTool = e; }
@@ -1082,6 +1093,7 @@ async function onChatEvent(e) {
     return;
   }
   if (e.type === "done") {
+    if (here) endLive();
     S.runningChats.delete(id); delete S.buffers[id];
     const opt = [...$("#chatpick").options].find(o => o.value === id); if (opt) opt.textContent = e.title;
     if (!S.runningChats.size) hideActivity();
@@ -1092,6 +1104,7 @@ async function onChatEvent(e) {
   if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); drawSessionButton(); }
   if (e.type === "error" && !S.runningChats.has(id)) { if (here) { bubble("error", e.text); setBusy(false); } return; }
   if (e.type === "tool_call") showActivity(describe(e.name, e.args || {}).replace(/^Opened/, "Opening").replace(/^Clicked/, "Clicking").replace(/^Typed/, "Typing").replace(/^Read/, "Reading").replace(/^Looked/, "Looking").replace(/^Pressed/, "Pressing") + "…");
+  if (e.type === "delta") { if (here) liveText(e.text); return; }
   if (!S.buffers[id]) S.buffers[id] = [];
   S.buffers[id].push(e);
   if (here) renderEvent(e);
