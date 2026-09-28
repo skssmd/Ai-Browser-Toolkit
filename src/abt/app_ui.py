@@ -260,6 +260,16 @@ APP_HTML = r"""<!doctype html>
   }
   .dd-opt:hover, .dd-opt:focus-visible { background: var(--raised); outline: none; }
   .dd-opt.on { font-weight: 600; }
+  .dd-group {
+    padding: 8px 10px 3px; margin-top: 4px; font-size: 11.5px; color: var(--muted);
+    border-top: 1px solid var(--line);
+  }
+  .dd-group:first-child { border-top: none; margin-top: 0; padding-top: 4px; }
+  #archive-btn { font-size: 12px; color: var(--muted); padding: 4px 8px; white-space: nowrap; }
+  #archive-btn:hover { color: var(--ink); }
+  #archive-btn[hidden] { display: none; }
+  .archive-menu { left: auto; right: 0; top: calc(100% + 6px); width: 320px; max-height: 60vh; }
+  .archive-menu .row .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dd-tick { width: 14px; flex: none; color: var(--live); }
   .dd.quiet .dd-btn { border-color: transparent; background: transparent; }
   .dd.quiet .dd-btn:hover, .dd.quiet .dd-btn[aria-expanded="true"] { background: var(--raised); }
@@ -394,6 +404,10 @@ APP_HTML = r"""<!doctype html>
     <div id="chathead">
       <select id="convpick" title="Your chats. Each has its own browser, logins and rules."></select>
       <button id="chat-new" title="Start a new chat (Ctrl+N)">＋ New chat</button>
+      <span style="position:relative">
+        <button class="ghost" id="archive-btn" hidden title="Archived chats">Archived</button>
+        <div class="menu archive-menu" id="archive-menu" hidden></div>
+      </span>
       <span style="position:relative">
         <button class="icon ghost" id="chat-menu-btn" title="More for this chat">⋯</button>
         <div class="menu chat-menu" id="chat-menu" hidden>
@@ -1120,17 +1134,75 @@ async function openChat(id) {
 
 // The chat list: every conversation, whichever session it lives in. Picking
 // one switches the browser to its session.
+// The chat list, newest activity first, in three bands: what happened in the
+// last half hour, the rest of the last day, and an archive for anything older.
+// Any new message or step moves a chat back to the top, archived or not.
+const RECENT_MS = 30 * 60 * 1000, ARCHIVE_MS = 24 * 60 * 60 * 1000;
+
+function convAge(c) {
+  const t = Date.parse(c.updated || "");
+  return c.running ? 0 : (isNaN(t) ? Infinity : Date.now() - t);
+}
+
+function ago(c) {
+  const ms = convAge(c);
+  if (ms < 60e3) return "just now";
+  const m = Math.round(ms / 60e3); if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24); if (d < 31) return d === 1 ? "yesterday" : `${d} days ago`;
+  return new Date(Date.parse(c.updated)).toLocaleDateString();
+}
+
 async function loadConversations() {
   try { S.convs = await api("GET", "/app/overview", undefined, { operator: true, session: null }); }
   catch (e) { return; }
   const current = S.session && S.chat ? `${S.session}|${S.chat.id}` : "__draft__";
-  const opts = S.convs
-    .filter(c => c.messages > 0 || `${c.session}|${c.chat_id}` === current)
-    .map(c => `<option value="${esc(c.session)}|${esc(c.chat_id)}"${`${c.session}|${c.chat_id}` === current ? " selected" : ""}>` +
-      `${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`);
-  if (S.draft) opts.unshift(`<option value="__draft__" selected>New chat</option>`);
-  $("#convpick").innerHTML = opts.join("") || `<option value="__draft__">New chat</option>`;
+  const key = c => `${c.session}|${c.chat_id}`;
+  const shown = S.convs
+    .filter(c => c.messages > 0 || key(c) === current)
+    .sort((a, b) => convAge(a) - convAge(b));
+  const option = c => `<option value="${esc(key(c))}"${key(c) === current ? " selected" : ""}>` +
+    `${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`;
+  const recent = shown.filter(c => convAge(c) <= RECENT_MS);
+  const earlier = shown.filter(c => convAge(c) > RECENT_MS && convAge(c) <= ARCHIVE_MS);
+  // The chat that is open stays in the list even once it is old.
+  const reopened = shown.filter(c => convAge(c) > ARCHIVE_MS && key(c) === current);
+  S.archived = shown.filter(c => convAge(c) > ARCHIVE_MS && key(c) !== current);
+
+  const groups = [];
+  if (S.draft) groups.push(`<option value="__draft__" selected>New chat</option>`);
+  const band = (label, list) => { if (list.length) groups.push(`<optgroup label="${esc(label)}">${list.map(option).join("")}</optgroup>`); };
+  band("Last 30 minutes", recent);
+  band("Earlier today", earlier);
+  band("From the archive", reopened);
+  $("#convpick").innerHTML = groups.join("") || `<option value="__draft__">New chat</option>`;
+
+  const btn = $("#archive-btn");
+  btn.hidden = !S.archived.length;
+  btn.textContent = `Archived · ${S.archived.length}`;
+  btn.title = `Archived chats (${S.archived.length}): no activity for a day. Open one to carry on.`;
+  if (!$("#archive-menu").hidden) drawArchive();
 }
+
+function drawArchive() {
+  $("#archive-menu").innerHTML = `<h4>Archived · no activity for a day</h4>` + (S.archived || []).map(c =>
+    `<button class="row" data-conv="${esc(c.session)}|${esc(c.chat_id)}" title="${esc(c.title || "New chat")}">` +
+    `<span class="grow">${esc(c.title || "New chat")}</span><span class="meta">${esc(ago(c))}${c.profile !== "default" ? " · " + esc(c.profile) : ""}</span></button>`
+  ).join("");
+}
+$("#archive-btn").onclick = () => {
+  const menu = $("#archive-menu");
+  if (menu.hidden) drawArchive();
+  menu.hidden = !menu.hidden;
+};
+$("#archive-menu").onclick = (e) => {
+  const row = e.target.closest("[data-conv]"); if (!row) return;
+  $("#archive-menu").hidden = true;
+  const [session, chatId] = row.dataset.conv.split("|");
+  if (session === S.session) openChat(chatId).then(loadConversations);
+  else selectSession(session, chatId);
+};
+document.addEventListener("click", (e) => { if (!e.target.closest("#archive-menu, #archive-btn")) $("#archive-menu").hidden = true; });
 $("#convpick").onchange = (e) => {
   const value = e.target.value;
   if (value === "__draft__") return;
@@ -1549,9 +1621,15 @@ function enhanceSelect(sel, opts = {}) {
     sync(); button.focus();
   };
   const open = () => {
-    menu.innerHTML = [...sel.options].map((o, i) =>
-      `<button type="button" role="option" class="dd-opt${i === sel.selectedIndex ? " on" : ""}" data-value="${esc(o.value)}"${o.selected ? ' aria-selected="true"' : ""}>` +
-      `<span class="dd-tick">${i === sel.selectedIndex ? "✓" : ""}</span><span>${esc(o.textContent)}</span></button>`).join("");
+    const option = (o) => {
+      const i = o.index;
+      return `<button type="button" role="option" class="dd-opt${i === sel.selectedIndex ? " on" : ""}" data-value="${esc(o.value)}"${o.selected ? ' aria-selected="true"' : ""}>` +
+        `<span class="dd-tick">${i === sel.selectedIndex ? "✓" : ""}</span><span>${esc(o.textContent)}</span></button>`;
+    };
+    // An <optgroup> shows as a divider with its label above its options.
+    menu.innerHTML = [...sel.children].map(node => node.tagName === "OPTGROUP"
+      ? `<div class="dd-group" role="presentation">${esc(node.label)}</div>` + [...node.children].map(option).join("")
+      : option(node)).join("");
     menu.hidden = false; button.setAttribute("aria-expanded", "true");
     const on = menu.querySelector(".on") || menu.querySelector(".dd-opt");
     if (on) { on.scrollIntoView({ block: "nearest" }); on.focus(); }
