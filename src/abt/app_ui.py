@@ -153,12 +153,63 @@ APP_HTML = r"""<!doctype html>
   #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-menu { left: auto; right: 0; top: calc(100% + 6px); width: 280px; }
   #context-btn { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  .creator { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
-  .creator h3 { margin: 0; font-size: 15px; }
-  .creator .lead { margin: 0; color: var(--muted); }
-  .creator label.field { margin: 0; }
-  .creator textarea { width: 100%; min-height: 70px; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
-  .creator input[type=text] { width: 100%; }
+  /* New chat: one bordered card above the message box. Rows read label → value. */
+  .creator { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .card-head .glyph {
+    width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none;
+    background: var(--raised); font-size: 14px;
+  }
+  .card-head b { display: block; font-size: 13.5px; }
+  .card-head small { display: block; color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .card-row {
+    display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--line); min-height: 42px;
+  }
+  .card-row:last-child { border-bottom: none; }
+  .card-row > .k { color: var(--muted); font-size: 12.5px; }
+  .card-row > .v { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+  .card-row .v > * { min-width: 0; }
+  .card-row .v .dd, .card-row .v select { flex: 1 1 140px; }
+  .card-row input[type=text] { flex: 1 1 120px; padding: 5px 8px; }
+  .card-row.stack { align-items: start; }
+  .card-row.stack > .k { padding-top: 6px; }
+  .summary-btn {
+    flex: 1; display: flex; align-items: center; gap: 8px; text-align: left;
+    padding: 5px 9px; background: transparent;
+  }
+  .summary-btn .what { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .summary-btn .edit { color: var(--muted); font-size: 12px; }
+  .rules-edit { display: flex; flex-direction: column; gap: 5px; width: 100%; }
+  .rules-edit textarea {
+    width: 100%; min-height: 64px; resize: vertical; padding: 6px 8px;
+    font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  .rules-edit small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+  .toggles { display: flex; gap: 16px; flex-wrap: wrap; }
+  .tgl { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; user-select: none; }
+  .tgl input {
+    appearance: none; -webkit-appearance: none; margin: 0; width: 28px; height: 16px; border-radius: 999px;
+    background: var(--line); position: relative; cursor: pointer; transition: background .15s; flex: none;
+  }
+  .tgl input::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s;
+  }
+  .tgl input:checked { background: var(--live); }
+  .tgl input:checked::after { transform: translateX(12px); }
+  .tgl input:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--muted);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chips button:hover { color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { .tgl input, .tgl input::after { transition: none; } }
   .files-menu { left: auto; right: 0; top: calc(100% + 6px); width: 320px; }
   .menu-empty { color: var(--muted); font-size: 12px; padding: 4px 8px 8px; }
 
@@ -433,7 +484,7 @@ const S = {
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
   starting: false, lastStart: {}, downloadsSeen: {}, follow: null, draft: false, convs: [], pendingSend: null,
-  draftSettings: { profile: "default", newProfile: "", rules: "", runJs: true, strict: false },
+  draftSettings: { profile: "default", newProfile: "", rules: "", runJs: true, strict: false, rulesOpen: false },
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -1040,32 +1091,67 @@ function enterDraft() {
 }
 $("#chat-new").onclick = () => enterDraft();
 
+function rulesSummary(text) {
+  const rules = (text || "").split("\n").map(r => r.trim()).filter(Boolean);
+  if (!rules.length) return "Any site";
+  const allow = rules.filter(r => !r.startsWith("!")), block = rules.length - allow.length;
+  const parts = [];
+  if (allow.length) parts.push(allow.length === 1 ? `Only ${allow[0]}` : `Only ${allow.length} sites`);
+  if (block) parts.push(`${block} blocked`);
+  return parts.join(", ");
+}
+
 function drawCreator() {
   const d = S.draftSettings;
   const profiles = S.profiles.map(p => `<option value="${esc(p.name)}"${p.name === d.profile ? " selected" : ""}>${esc(p.name)}</option>`).join("");
   add(`<div class="creator">
-    <div><h3>New chat</h3><p class="lead">Each chat gets its own browser. Choose whose logins it uses and where it may go, then say what to do.</p></div>
-    <label class="field"><span>Logins from</span>
-      <select id="new-profile">${profiles}<option value="__new__"${d.profile === "__new__" ? " selected" : ""}>New profile — fresh logins</option></select>
-      <span class="hint">A profile keeps logins and cookies. Chats on the same profile share them.</span></label>
-    <label class="field" id="new-profile-name-row"${d.profile === "__new__" ? "" : " hidden"}><span>New profile name</span>
-      <input type="text" id="new-profile-name" placeholder="e.g. work" spellcheck="false" value="${esc(d.newProfile || "")}"></label>
-    <details class="more"${d.rules ? " open" : ""}><summary>Limit the sites it may visit</summary>
-      <textarea id="new-rules" spellcheck="false" placeholder="app.example.com/admin&#10;!app.example.com/api">${esc(d.rules || "")}</textarea>
-      <span class="hint">One per line. A line allows a site or page; a line starting with ! blocks it. Once anything is allowed, everything else is blocked.</span>
-      <label class="check"><input type="checkbox" id="new-runjs"${d.runJs ? " checked" : ""}><span>Let the AI run scripts on the page</span></label>
-      <label class="check"><input type="checkbox" id="new-strict"${d.strict ? " checked" : ""}><span>Also check images, styles and scripts against the site list</span></label>
-    </details>
-    <div class="suggestions">${EXAMPLES.map(t => `<button data-example="${esc(t)}">${esc(t)}</button>`).join("")}</div>
+    <div class="card" role="group" aria-label="New chat settings">
+      <div class="card-head">
+        <span class="glyph" aria-hidden="true">✦</span>
+        <span><b>New chat</b><small>It gets its own browser. Set it up, then type what to do below. Change it later from ⋯.</small></span>
+      </div>
+      <div class="card-row">
+        <span class="k" title="A profile keeps logins and cookies. Chats on the same profile share them.">Logins</span>
+        <span class="v">
+          <select id="new-profile" aria-label="Logins from">${profiles}<option value="__new__"${d.profile === "__new__" ? " selected" : ""}>＋ New profile (signed out)</option></select>
+          <input type="text" id="new-profile-name" placeholder="Name it, e.g. work" spellcheck="false" aria-label="New profile name" value="${esc(d.newProfile || "")}"${d.profile === "__new__" ? "" : " hidden"}>
+        </span>
+      </div>
+      <div class="card-row stack">
+        <span class="k">Sites</span>
+        <span class="v">
+          <button class="summary-btn" id="rules-toggle" aria-expanded="${d.rulesOpen ? "true" : "false"}"${d.rulesOpen ? " hidden" : ""}>
+            <span class="what" id="rules-what">${esc(rulesSummary(d.rules))}</span><span class="edit">Limit…</span>
+          </button>
+          <span class="rules-edit" id="rules-edit"${d.rulesOpen ? "" : " hidden"}>
+            <textarea id="new-rules" spellcheck="false" aria-label="Sites it may visit" placeholder="app.example.com/admin&#10;!app.example.com/api">${esc(d.rules || "")}</textarea>
+            <small>One per line. A line allows a site or page, <code>!</code> blocks one. Once anything is allowed, the rest is blocked. Empty means any site.</small>
+          </span>
+        </span>
+      </div>
+      <div class="card-row">
+        <span class="k">Allow</span>
+        <span class="v toggles">
+          <label class="tgl" title="Let the AI run its own JavaScript on pages. Off keeps it to clicks, typing and reading."><input type="checkbox" id="new-runjs"${d.runJs ? " checked" : ""}>Scripts</label>
+          <label class="tgl" title="Also check images, styles and scripts the page loads against the site list, not just pages."><input type="checkbox" id="new-strict"${d.strict ? " checked" : ""}>Strict sites</label>
+        </span>
+      </div>
+    </div>
+    <div class="chips" aria-label="Examples">${EXAMPLES.map(t => `<button data-example="${esc(t)}" title="${esc(t)}">${esc(t)}</button>`).join("")}</div>
   </div>`);
   const keep = () => {
     d.profile = $("#new-profile").value; d.newProfile = $("#new-profile-name").value;
     d.rules = $("#new-rules").value; d.runJs = $("#new-runjs").checked; d.strict = $("#new-strict").checked;
-    $("#new-profile-name-row").hidden = d.profile !== "__new__";
+    $("#new-profile-name").hidden = d.profile !== "__new__";
+    $("#rules-what").textContent = rulesSummary(d.rules);
   };
   ["#new-profile", "#new-profile-name", "#new-rules", "#new-runjs", "#new-strict"].forEach(sel => {
     $(sel).addEventListener("input", keep); $(sel).addEventListener("change", keep);
   });
+  $("#new-profile").addEventListener("change", () => { if (d.profile === "__new__") $("#new-profile-name").focus(); });
+  $("#rules-toggle").onclick = () => {
+    d.rulesOpen = true; $("#rules-toggle").hidden = true; $("#rules-edit").hidden = false; $("#new-rules").focus();
+  };
   enhanceSelect($("#new-profile"));
   document.querySelectorAll("[data-example]").forEach(b => b.onclick = () => { $("#prompt").value = b.dataset.example; grow(); $("#prompt").focus(); });
 }
