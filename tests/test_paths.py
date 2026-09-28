@@ -130,3 +130,20 @@ def test_a_checkout_has_no_first_run_hint(home, checkout):
     """A developer in the repo already knows; the hint is for someone who
     installed this from a package manager."""
     assert paths.first_run_marker(kind="linux", home=home, env={}, cwd=checkout) is None
+
+
+def test_sessions_dir_sits_beside_the_profiles_when_installed(home, elsewhere):
+    env = {"LOCALAPPDATA": str(home / "local")}
+    got = paths.sessions_dir(kind="windows", home=home, env=env, cwd=elsewhere)
+    assert got == home / "local" / "AIBrowserToolkit" / "sessions"
+    assert paths.profile_root(kind="windows", home=home, env=env, cwd=elsewhere) == (
+        home / "local" / "AIBrowserToolkit" / "profiles"
+    )
+
+
+def test_sessions_dir_is_in_the_checkout_inside_one(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "ai-browser-toolkit"\n', encoding="utf-8"
+    )
+    assert paths.sessions_dir(cwd=tmp_path) == tmp_path / "sessions"
+    assert paths.profile_root(cwd=tmp_path) == tmp_path / "profiles"

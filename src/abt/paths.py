@@ -155,3 +155,27 @@ def config_file(
 ) -> Path:
     kind, home, env = _resolved(kind, home, env)
     return _data_root(kind, home, env) / "config.json"
+
+
+def profile_root(
+    kind: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """The directory named profiles live in: the default profile's parent."""
+    return default_profile(kind, home, env, cwd).parent
+
+
+def sessions_dir(
+    kind: str | None = None,
+    home: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Where session records, sealed-session tokens and the operator token live.
+
+    Beside the profile root rather than inside it: a profile directory is a
+    Chrome user-data-dir, and a name there is a profile name.
+    """
+    return profile_root(kind, home, env, cwd).parent / "sessions"

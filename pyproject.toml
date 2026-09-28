@@ -56,6 +56,9 @@ dependencies = [
     "uvicorn>=0.29",
     "pydantic>=2.6",
     "httpx>=0.27",
+    # Chrome's DevTools WebSocket for the screencast, and what gives uvicorn
+    # WebSocket support at all.
+    "websockets>=13",
     "typer>=0.12",
 ]
 

@@ -76,6 +76,33 @@ HINTS = {
         "The named browser is supported but not installed where abt looked. "
         "`abt doctor --install-browser` installs one."
     ),
+    "unknown_session": (
+        "`abt session list` shows what exists. Sessions are created by whoever "
+        "launches the agent (`abt session new NAME --profile P`); a command "
+        "never creates one, so a typo cannot land you somewhere unrestricted."
+    ),
+    "session_exists": "Pick another name, or use the session that is already there.",
+    "session_sealed": (
+        "This session is sealed: only the program that created it holds its "
+        "token. It is not addressable from here -- use your own session."
+    ),
+    "tab_locked": (
+        "Another session owns this tab. Open your own with `tab_new` rather "
+        "than retrying: the lock lasts as long as its owner holds the tab."
+    ),
+    "profile_limit": (
+        "Too many browsers are running. `browser_stop` in a session on a "
+        "profile you are done with, or restart the server with a higher "
+        "--max-profiles. Nothing is ever closed to make room."
+    ),
+    "profile_in_use": (
+        "Remove or move the sessions using this profile, and stop its "
+        "browser, before removing it."
+    ),
+    "profile_not_found": (
+        "`abt profile list` shows what exists; `abt profile new NAME` "
+        "creates one."
+    ),
 }
 
 ERROR_TYPES = frozenset(HINTS)
