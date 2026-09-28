@@ -540,14 +540,14 @@ def serve(
     engine: str = typer.Option(
         "playwright",
         "--engine",
-        help="Which driver backs the browser: selenium (default) or playwright. "
-        "Both answer every op identically -- the whole suite passes on each -- "
-        "so this changes what is underneath, never what a caller sees. "
-        "Playwright needs its optional extra installed; see the README.",
+        hidden=True,
+        help="Kept so existing command lines still parse. Only playwright.",
     ),
 ) -> None:
     """Open Chrome or Edge and listen for commands until told to shut down."""
     import uvicorn
+
+    _require_playwright(engine)
 
     from .browser import BrowserSession
     from .recorder import SessionRecorder
@@ -652,6 +652,13 @@ def serve(
     finally:
         closer()
     typer.echo("stopped")
+
+
+def _require_playwright(engine: str) -> None:
+    """Playwright is the only engine. Anything else is refused up front."""
+    if engine != "playwright":
+        typer.echo(f"error: unknown engine {engine!r}; the only engine is playwright")
+        raise typer.Exit(2)
 
 
 def _use_sessions(engine: str) -> bool:
@@ -1183,7 +1190,10 @@ def autostart_install(
         "per-user directory, or ./logs inside a checkout.",
     ),
     engine: str = typer.Option(
-        "playwright", "--engine", help="Driver backing the browser."
+        "playwright",
+        "--engine",
+        hidden=True,
+        help="Kept so existing command lines still parse. Only playwright.",
     ),
     headless: bool = typer.Option(False, "--headless", help="Run without a window."),
     dry_run: bool = typer.Option(
@@ -1202,6 +1212,7 @@ def autostart_install(
     """
     from . import autostart as auto
 
+    _require_playwright(engine)
     profile = profile or paths.default_profile()
     log_dir = log_dir or paths.default_log_dir()
 

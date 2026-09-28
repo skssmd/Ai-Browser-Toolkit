@@ -124,17 +124,16 @@ def other_origin():
 
 
 def pytest_addoption(parser):
-    """`--engine playwright` runs the whole suite against the other driver.
+    """`--engine`: which driver the browser-backed fixtures use.
 
-    The point of the migration is that these tests cannot tell which engine is
-    underneath. Making that a flag rather than a fork means the claim is checked
-    by running the same 485 assertions, not by reading a diff.
+    Playwright is the only one now; the flag stays so another engine could run
+    the same suite.
     """
     parser.addoption(
         "--engine",
         action="store",
         default="playwright",
-        choices=("selenium", "playwright"),
+        choices=("playwright",),
         help="which driver the browser-backed fixtures use",
     )
     parser.addoption(

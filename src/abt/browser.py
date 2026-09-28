@@ -5,15 +5,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
-
-from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.edge.options import Options as EdgeOptions
+from typing import Any, Callable
 
 from . import diff as diff_util
 from . import frames as frame_util
+from .engine import EngineError
 from .errors import OpError
 from .launch import LaunchConfig
 from .policy import Policy, from_settings
@@ -194,17 +190,15 @@ class BrowserSession:
         # that object is serialised into /browser and /status, and the engine is
         # an implementation detail no caller should be branching on. See
         # docs/playwright-spike-2026-08-19.md.
-        if engine not in ("selenium", "playwright"):
-            raise ValueError(f"unknown engine {engine!r}")
+        if engine != "playwright":
+            raise ValueError(f"unknown engine {engine!r}: only playwright is supported")
         self._engine = engine
-        if attach is not None and engine != "playwright":
-            raise ValueError("a shared session needs the playwright engine")
         # Set when this session is one of several on a profile's browser.
         # Everything that differs between owning a browser and sharing one
         # branches on this.
         self._attach = attach
         self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
-        self._driver: webdriver.Chrome | webdriver.Edge | None = None
+        self._driver: Any = None
         self._handles: dict[str, str] = {}  # tab_id -> window handle
         self._order: list[str] = []
         self._counter = 0
@@ -331,28 +325,23 @@ class BrowserSession:
         }
 
     def _launch_driver(self, config: LaunchConfig):
-        if self._engine == "playwright":
-            from .pwdriver import PlaywrightDriver
+        from .pwdriver import PlaywrightDriver
 
-            if self._attach is not None:
-                url = self._attach.connect()
-                self._cdp_port = int(url.rsplit(":", 1)[1].split("/")[0])
-                try:
-                    return PlaywrightDriver(
-                        config,
-                        action_timeout=self.action_timeout,
-                        cdp_url=url,
-                        gate=self._attach.gate,
-                        downloads=self.downloads_dir,
-                    )
-                except Exception:
-                    self._attach.disconnect()
-                    raise
-            return PlaywrightDriver(config, action_timeout=self.action_timeout)
-        options = self._make_options(config)
-        if config.browser == "edge":
-            return webdriver.Edge(options=options)
-        return webdriver.Chrome(options=options)
+        if self._attach is not None:
+            url = self._attach.connect()
+            self._cdp_port = int(url.rsplit(":", 1)[1].split("/")[0])
+            try:
+                return PlaywrightDriver(
+                    config,
+                    action_timeout=self.action_timeout,
+                    cdp_url=url,
+                    gate=self._attach.gate,
+                    downloads=self.downloads_dir,
+                )
+            except Exception:
+                self._attach.disconnect()
+                raise
+        return PlaywrightDriver(config, action_timeout=self.action_timeout)
 
     def stop(self) -> dict:
         """Quit the browser and forget everything tied to it.
@@ -369,7 +358,7 @@ class BrowserSession:
         if self._driver is not None:
             try:
                 self._driver.quit()
-            except WebDriverException:
+            except EngineError:
                 pass
             except Exception:
                 # A shared browser that died under us raises Playwright's own
@@ -459,7 +448,7 @@ class BrowserSession:
         try:
             self._driver.window_handles
             self._driver.current_url
-        except WebDriverException as exc:
+        except EngineError as exc:
             self._driver = None
             self._reset_state()
             raise OpError(
@@ -550,7 +539,7 @@ class BrowserSession:
         """
         try:
             handle = self._driver.current_window_handle
-        except WebDriverException:
+        except EngineError:
             return
         if handle in self._captured:
             return
@@ -566,27 +555,12 @@ class BrowserSession:
         except Exception:
             pass
 
-    def _make_options(self, config: LaunchConfig):
-        if config.browser == "edge":
-            options = EdgeOptions()
-        else:
-            options = ChromeOptions()
-        options.add_argument(f"--user-data-dir={config.profile}")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        if config.headless:
-            options.add_argument("--headless=new")
-            options.add_argument("--window-size=1440,900")
-        return options
-
     def quit(self) -> None:
         """Alias for `stop`, kept because conftest and server teardown call it."""
         self.stop()
 
     @property
-    def driver(self) -> webdriver.Chrome | webdriver.Edge:
+    def driver(self) -> Any:
         if self._driver is None:
             raise OpError("browser_dead", NO_BROWSER_MESSAGE)
         return self._driver
@@ -597,7 +571,7 @@ class BrowserSession:
             raise OpError("browser_dead", NO_BROWSER_MESSAGE)
         try:
             self._driver.window_handles
-        except WebDriverException as exc:
+        except EngineError as exc:
             raise OpError(
                 "browser_dead",
                 f"browser is no longer reachable: {exc.msg or exc}; "
@@ -944,7 +918,7 @@ class BrowserSession:
     def error_page_code(self) -> str | None:
         try:
             return self.driver.execute_script(self._ERROR_PAGE)
-        except WebDriverException:
+        except EngineError:
             return None
 
     def goto(self, url: str) -> bool:
@@ -961,13 +935,13 @@ class BrowserSession:
         before = None
         try:
             before = self.driver.current_url
-        except WebDriverException:
+        except EngineError:
             pass
 
         overran = False
         try:
             self.driver.get(url)
-        except WebDriverException as exc:
+        except EngineError as exc:
             if not self._moved_from(before):
                 raise OpError(
                     "navigation_failed", f"could not load {url!r}: {exc.msg or exc}"
@@ -989,7 +963,7 @@ class BrowserSession:
         """
         try:
             after = self.driver.current_url
-        except WebDriverException:
+        except EngineError:
             return False
         if not after or after.startswith("about:"):
             return False
@@ -1031,7 +1005,7 @@ class BrowserSession:
         while True:
             try:
                 fingerprint = self.driver.execute_script(_SETTLE_JS)
-            except WebDriverException:
+            except EngineError:
                 return False
             now = time.monotonic()
             parts = str(fingerprint).split("|")

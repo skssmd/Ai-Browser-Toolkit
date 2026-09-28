@@ -534,9 +534,8 @@ run has not been done.
 ```
 
 669 tests drive a real headless Chrome against static fixture pages — no
-network, deterministic, about seven minutes. The same suite also runs against
-Playwright (`--engine selenium` switches it the other way); both pass. Detail
-in [docs/reference.md](docs/reference.md#tests).
+network, deterministic, about seven minutes. Detail in
+[docs/reference.md](docs/reference.md#tests).
 
 ## Privacy
 

@@ -57,6 +57,14 @@ parallel — and there is a desktop app to drive them with a model of your choic
 - Profile browsers launch without popup blocking, as Playwright did.
 - CI runs in four shards per platform, with a job timeout.
 
+### Selenium retired
+
+- **Playwright is the only engine.** Selenium is no longer a dependency, is not
+  bundled and is never imported, which takes about 23 MB off every install.
+  `--engine selenium` is refused. The exception names, key names and waits the
+  page layer uses are now the toolkit's own, with the same names and values, so
+  nothing a caller sees changes.
+
 ### Privacy
 
 `PRIVACY.md` is updated: the desktop app sends your conversation, including page

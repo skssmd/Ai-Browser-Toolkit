@@ -1,9 +1,10 @@
 """The seam holds only while nothing routes around it.
 
-`engine.py` exists so the driver can be swapped by changing one file plus
-`browser.py`. That property is not visible in any single diff -- one `from
-selenium...` added to an op looks harmless in review and silently puts the
-coupling back. These tests are what make it visible.
+`engine.py` is the one vocabulary the page layer uses for driver failures, keys
+and waits. Selenium is retired: it is not a dependency and nothing may import
+it, or point at the reference copy kept in `reference/selenium/`. That is not
+visible in any single diff -- one `from selenium...` added to an op looks
+harmless in review and breaks every install. These tests make it visible.
 
 No browser required: all of this is import-graph and table shape.
 """
@@ -19,9 +20,9 @@ from abt import engine
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "abt"
 
-# The two files allowed to name the driver library. `engine` is the seam itself;
-# `browser` owns the driver object, launches it and holds its lifecycle.
-DRIVER_OWNERS = {"engine.py", "browser.py"}
+# The files that name the driver library (Playwright) directly: the driver
+# itself, and the few that open a raw connection for what it cannot do.
+DRIVER_OWNERS = {"engine.py", "browser.py", "pwdriver.py"}
 
 
 def _modules() -> list[Path]:
@@ -45,19 +46,32 @@ def _imports(path: Path) -> set[str]:
     return found
 
 
-def test_only_the_driver_owners_import_selenium():
+def test_nothing_imports_selenium():
+    """Selenium is retired and not installed; one import breaks every install."""
     offenders = {
         path.relative_to(SRC).as_posix(): sorted(
             name for name in _imports(path) if name.split(".")[0] == "selenium"
         )
         for path in _modules()
-        if path.name not in DRIVER_OWNERS
     }
     offenders = {k: v for k, v in offenders.items() if v}
-    assert offenders == {}, (
-        "these modules import the driver library directly instead of going "
-        f"through abt.engine: {offenders}"
-    )
+    assert offenders == {}, f"these modules import selenium: {offenders}"
+
+
+def test_nothing_points_at_the_selenium_reference():
+    """`reference/selenium/` is for reading, not for importing or loading."""
+    offenders = [
+        path.relative_to(SRC).as_posix()
+        for path in _modules()
+        if "reference/selenium" in path.read_text("utf-8").replace("\\", "/")
+        and path.name != "engine.py"  # its docstring says where the copy is
+    ]
+    assert offenders == []
+
+
+def test_selenium_is_not_a_dependency():
+    pyproject = (SRC.parents[1] / "pyproject.toml").read_text("utf-8")
+    assert '"selenium' not in pyproject
 
 
 def test_the_seam_actually_covers_something():
@@ -82,24 +96,26 @@ def test_the_seam_actually_covers_something():
     assert len(set(users) | set(relative)) >= 8
 
 
-def test_keys_table_is_derived_not_typed():
-    """The accepted key spellings must stay exactly what the driver offers.
+def test_keys_table_is_the_frozen_webdriver_table():
+    """The accepted key spellings must stay exactly what they always were.
 
-    Written by hand this table lost 44 of its 73 entries and changed
+    The table was frozen from Selenium's `Keys` when it was retired. Written by
+    hand, an earlier version lost 44 of its 73 entries and changed
     `arrow_down` to `arrowdown`, which would have broken every caller sending a
     named arrow key while looking like a tidy-up.
     """
-    from selenium.webdriver.common.keys import Keys
-
-    expected = {
-        name.lower(): getattr(Keys, name)
-        for name in dir(Keys)
-        if name.isupper() and not name.startswith("_")
+    assert len(engine.KEYS) == 73
+    pinned = {
+        "arrow_down": "\ue015",
+        "page_down": "\ue00f",
+        "f12": "\ue03c",
+        "numpad0": "\ue01a",
+        "semicolon": "\ue018",
+        "control": "\ue009",
+        "meta": "\ue03d",
+        "enter": "\ue007",
     }
-    assert engine.KEYS == expected
-    # Spellings that only a derived table has.
-    for spelling in ("arrow_down", "page_down", "f12", "numpad0", "semicolon"):
-        assert spelling in engine.KEYS, spelling
+    assert {k: engine.KEYS[k] for k in pinned} == pinned
 
 
 def test_every_modifier_is_also_a_key():
@@ -111,12 +127,29 @@ def test_every_modifier_is_also_a_key():
 
 
 def test_locator_strategies_match_the_wire_strings():
-    """`By` is a rename, and stops being one the moment a value drifts."""
-    from selenium.webdriver.common.by import By as SeleniumBy
+    """`pwdriver` translates these exact strings; a drifted value matches nothing."""
+    assert engine.By.CSS == "css selector"
+    assert engine.By.XPATH == "xpath"
+    assert engine.By.TAG == "tag name"
 
-    assert engine.By.CSS == SeleniumBy.CSS_SELECTOR
-    assert engine.By.XPATH == SeleniumBy.XPATH
-    assert engine.By.TAG == SeleniumBy.TAG_NAME
+
+def test_the_wait_polls_ignores_misses_and_times_out():
+    calls = []
+
+    def condition(_driver):
+        calls.append(1)
+        if len(calls) < 3:
+            raise engine.NoSuchElement("not yet")
+        return "found"
+
+    assert engine.WebDriverWait(None, 5, poll_frequency=0.01).until(condition) == "found"
+    with pytest.raises(engine.Timeout):
+        engine.WebDriverWait(None, 0.05, poll_frequency=0.01).until(lambda d: False)
+
+
+def test_engine_errors_keep_their_message():
+    exc = engine.NoSuchElement("nothing matched '#x'")
+    assert exc.msg == "nothing matched '#x'" and str(exc) == "nothing matched '#x'"
 
 
 def test_engine_errors_are_all_catchable_as_one():
@@ -137,7 +170,8 @@ def test_nothing_public_is_missing_from_all():
     public = {
         n
         for n in vars(engine)
-        if not n.startswith("_") and n not in {"annotations"}
+        if not n.startswith("_")
+        and n not in {"annotations", "time", "Any", "Callable", "POLL_SECONDS"}
     }
     # Names re-exported under their driver spelling are deliberately not public
     # API of the seam; the neutral alias beside each is what callers use.

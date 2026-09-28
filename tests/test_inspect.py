@@ -207,7 +207,7 @@ def test_status_and_shutdown_skip_the_health_check():
 def test_status_answers_even_when_the_browser_is_gone(clean_session):
     """A dead browser must still be able to say it is dead."""
     from fastapi.testclient import TestClient
-    from selenium.common.exceptions import InvalidSessionIdException
+    from abt.engine import DeadSession as InvalidSessionIdException
 
     from abt.server import create_app
 

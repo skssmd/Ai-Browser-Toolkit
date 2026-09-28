@@ -200,7 +200,7 @@ def create_app(
             response = ok(dispatch(browser, cmd))
         except OpError as exc:
             response = fail(exc, op_index)
-        except Exception as exc:  # an unmapped Selenium surprise
+        except Exception as exc:  # an unmapped driver surprise
             response = fail(_unmapped(exc), op_index)
         if sess.recorder is not None:
             event = _record(sess, data, response, now_ms() - started)

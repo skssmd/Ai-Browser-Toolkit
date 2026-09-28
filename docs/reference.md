@@ -1116,17 +1116,11 @@ tasks.
 The suite drives a real headless Chrome against static fixture pages served from a
 local port — no network, deterministic. Around seven minutes for the full run.
 
-```bash
-.venv/Scripts/python -m pytest --engine playwright   # the same 485 against Playwright
-```
-
-**Two engines, one suite.** Playwright is the default; `--engine selenium` runs
-every assertion against the Selenium backend instead. Both pass. The flag exists
-because "a caller cannot tell which engine is underneath" is a claim worth
-checking by running the tests rather than by reading the diff.
+**One engine.** Playwright drives the browser. Selenium was retired in 0.7.0: it
+is not a dependency and nothing imports it.
 
 `tests/test_engine.py` needs no browser and runs in under a second. It guards the
-driver seam: that nothing outside `engine.py` and `browser.py` imports Selenium
-directly, and that the key table stays derived from the driver rather than typed
-out by hand. Both are properties no single diff makes visible.
+driver seam: that nothing imports Selenium, that it is not a dependency, and
+that the key table keeps the exact spellings it always accepted. These are
+properties no single diff makes visible.
 

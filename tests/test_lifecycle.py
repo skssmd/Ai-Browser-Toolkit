@@ -188,7 +188,7 @@ def test_stop_reports_an_unreleased_profile(session, tmp_path):
 
 
 def test_verify_session_raises_and_cleans_up_on_a_dead_handoff(session):
-    from selenium.common.exceptions import WebDriverException
+    from abt.engine import EngineError as WebDriverException
 
     class Handoff:
         @property
@@ -235,7 +235,7 @@ def test_health_check_on_a_stopped_session_names_the_remedy(session):
 
 
 def test_an_unreachable_browser_points_at_restart_not_start(session):
-    from selenium.common.exceptions import WebDriverException
+    from abt.engine import EngineError as WebDriverException
 
     class Corpse:
         @property

@@ -34,7 +34,7 @@ def test_naming_its_own_profile_is_not_a_change(tmp_path):
     session.refuse_other_profile(str(tmp_path))
 
 
-def test_attach_needs_playwright(tmp_path):
+def test_only_the_playwright_engine_exists(tmp_path):
     with pytest.raises(ValueError):
         BrowserSession(
             profile=tmp_path,

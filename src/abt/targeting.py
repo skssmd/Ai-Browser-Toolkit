@@ -471,7 +471,7 @@ def _miss(session, by, selector, cmd, state, waited) -> OpError:
 
 
 # What each engine says when the selector itself will not parse. Chrome phrases
-# it "'>' is not a valid selector"; Selenium wraps that as "invalid selector".
+# it "'>' is not a valid selector"; WebDriver phrased it "invalid selector".
 # Matched on text because both engines raise the same exception class for this
 # as for an element that merely is not there.
 _BAD_SELECTOR_MARKERS = (
