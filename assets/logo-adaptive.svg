@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="#111111" stroke-linecap="round" stroke-linejoin="round">
-  <title>AI Browser Toolkit</title>
+  <style>*{stroke:#111}@media (prefers-color-scheme:dark){*{stroke:#fff}}</style>
   <!-- A browser window, a pointer acting in it, and a spark: the AI doing the acting. -->
   <rect x="5" y="8" width="54" height="48" rx="11" stroke-width="4"/>
   <path d="M5 20H59" stroke-width="4"/>
