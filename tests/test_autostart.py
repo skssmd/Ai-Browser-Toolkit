@@ -61,7 +61,7 @@ def test_no_browser_is_launched_at_login(kind, tmp_path):
 
 @pytest.mark.parametrize("kind", KINDS)
 def test_every_path_is_absolute(kind, tmp_path):
-    """A logon entry has no working directory worth resolving against.
+    r"""A logon entry has no working directory worth resolving against.
 
     A relative ./profiles/default would resolve against the launcher's cwd --
     on Windows that is C:\Windows\System32 -- so the server would build a

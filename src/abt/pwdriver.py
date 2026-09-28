@@ -1390,7 +1390,12 @@ def _build_key_names() -> dict:
     from .engine import KEYS
 
     names: dict[str, str] = {}
-    for name, codepoint in KEYS.items():
+    # First-wins picks the alias, so the order is fixed here rather than taken
+    # from the table: by the upper-case name, which is the order the table was
+    # first built in (Selenium's `dir(Keys)`). There `BACKSPACE` precedes
+    # `BACK_SPACE`; in lower case `back_space` sorts first, and a reordered
+    # table once sent Playwright "BackSpace", which it rejects.
+    for name, codepoint in sorted(KEYS.items(), key=lambda item: item[0].upper()):
         names.setdefault(
             codepoint, "".join(part.capitalize() for part in name.split("_"))
         )

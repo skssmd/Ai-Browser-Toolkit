@@ -175,7 +175,7 @@ def _interpreter(python_root: Path, target: str) -> Path:
 
 
 def drop_pip(python_root: Path) -> list[Path]:
-    """Remove pip from the bundled interpreter. Returns what was removed.
+    r"""Remove pip from the bundled interpreter. Returns what was removed.
 
     Packages go in with uv at build time, and nothing in the toolkit installs
     anything at run time, so pip is ~6 MB nobody runs. Its launchers go too
