@@ -9,6 +9,10 @@ Tokens never travel in this page's source. Inside the desktop shell they come
 from pywebview's bridge (`window.pywebview.api`), which reads the owner-only
 token files; opened in an ordinary browser, the page asks for the operator
 token once and keeps it for the tab's life.
+
+The design is neutral graphite in both themes, with one colour: green, and it
+only ever means "live" -- a browser running, an agent working. What the agent
+is doing is said in plain words, on the page it is doing it to.
 """
 
 APP_HTML = r"""<!doctype html>
@@ -19,80 +23,201 @@ APP_HTML = r"""<!doctype html>
 <title>AI Browser Toolkit</title>
 <style>
   :root {
-    --bg: #f6f6f4; --panel: #ffffff; --line: #e2e2de; --ink: #1b1b1a; --muted: #6b6b66;
-    --accent: #2f6f4e; --accent-ink: #ffffff; --bad: #a8322d; --soft: #efefeb; --code: #f3f3f0;
-    --user: #e8f1ec; --tool: #f4f2ea;
+    --bg: #FAFAF9; --panel: #FFFFFF; --raised: #F3F3F1; --ink: #1C1C1C; --muted: #6F6F6F;
+    --line: #E4E4E2; --live: #16A34A; --live-soft: rgba(22,163,74,.12); --bad: #C2410C;
+    --bad-soft: rgba(194,65,12,.10); --btn: #1C1C1C; --btn-ink: #FFFFFF; --code: #F3F3F1;
+    --user: #1C1C1C; --user-ink: #FFFFFF; --shadow: 0 8px 28px rgba(0,0,0,.14);
+  }
+  :root[data-theme="dark"] {
+    --bg: #161616; --panel: #1E1E1E; --raised: #262626; --ink: #EDEDED; --muted: #9A9A9A;
+    --line: #333333; --live: #22C55E; --live-soft: rgba(34,197,94,.14); --bad: #F97316;
+    --bad-soft: rgba(249,115,22,.12); --btn: #EDEDED; --btn-ink: #161616; --code: #262626;
+    --user: #EDEDED; --user-ink: #161616; --shadow: 0 8px 28px rgba(0,0,0,.5);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #141517; --panel: #1b1c20; --line: #2c2e34; --ink: #e8e8e6; --muted: #9a9a94;
-      --accent: #6ec296; --accent-ink: #0d1f16; --bad: #e8837e; --soft: #23252a; --code: #121316;
-      --user: #1f2b25; --tool: #25241f;
+    :root:not([data-theme="light"]) {
+      --bg: #161616; --panel: #1E1E1E; --raised: #262626; --ink: #EDEDED; --muted: #9A9A9A;
+      --line: #333333; --live: #22C55E; --live-soft: rgba(34,197,94,.14); --bad: #F97316;
+      --bad-soft: rgba(249,115,22,.12); --btn: #EDEDED; --btn-ink: #161616; --code: #262626;
+      --user: #EDEDED; --user-ink: #161616; --shadow: 0 8px 28px rgba(0,0,0,.5);
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
-    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 13.5px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  button, select, input, textarea {
-    font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 6px;
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    padding: 5px 11px; cursor: pointer; white-space: nowrap; line-height: 1.35;
   }
-  button { padding: 4px 10px; cursor: pointer; white-space: nowrap; }
-  button:hover { border-color: var(--muted); }
-  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  button.icon { padding: 4px 8px; }
-  button:disabled { opacity: .5; cursor: default; }
-  select, input { padding: 4px 6px; }
-  label.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
-  label.check { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  button:hover { background: var(--raised); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--btn); color: var(--btn-ink); border-color: var(--btn); font-weight: 600; }
+  button.primary:hover { opacity: .88; background: var(--btn); }
+  button.ghost { border-color: transparent; background: transparent; }
+  button.ghost:hover { background: var(--raised); }
+  button.icon { padding: 5px 8px; min-width: 32px; }
+  select, input, textarea {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
+  }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
   .muted { color: var(--muted); }
-  .small { font-size: 12px; }
+  .spacer { flex: 1; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
+  /* --- top bar --- */
   #top {
-    display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap;
-    background: var(--panel); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--line); position: relative;
   }
-  #top .brand { font-weight: 600; margin-right: 6px; }
-  #top .group { display: flex; align-items: center; gap: 4px; }
-  #top .spacer { flex: 1; }
-  #status { font-size: 12px; }
+  #session-btn { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 9px; max-width: 360px; }
+  #session-btn .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  #session-btn .sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
+  .dot.on { background: var(--live); }
+  .dot.busy { background: var(--live); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .pill {
+    font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); cursor: pointer; background: transparent;
+  }
+  #model-btn .label { color: var(--muted); }
+  #model-btn .value { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: bottom; }
 
+  .menu {
+    position: absolute; top: calc(100% + 4px); left: 12px; z-index: 20; width: 330px; max-height: 70vh;
+    overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 6px;
+  }
+  .menu h4 { margin: 8px 8px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .menu .row {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none;
+    background: transparent; padding: 7px 8px; border-radius: 7px;
+  }
+  .menu .row:hover, .menu .row.on { background: var(--raised); }
+  .menu .row .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .menu .row .meta { color: var(--muted); font-size: 12px; }
+  .menu hr { border: none; border-top: 1px solid var(--line); margin: 6px 2px; }
+
+  /* --- panes --- */
   #main { flex: 1; display: flex; min-height: 0; }
   #main.dock-left { flex-direction: row-reverse; }
   #browser { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #tabs { display: flex; gap: 2px; padding: 6px 8px 0; overflow-x: auto; background: var(--soft); }
+  #tabs { display: flex; gap: 4px; padding: 7px 10px 0; overflow-x: auto; background: var(--bg); }
   .tab {
-    padding: 5px 10px; border: 1px solid var(--line); border-bottom: none; border-radius: 6px 6px 0 0;
+    padding: 6px 12px; border: 1px solid var(--line); border-bottom: none; border-radius: 8px 8px 0 0;
     background: var(--bg); max-width: 220px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; cursor: pointer; font-size: 12px;
+    white-space: nowrap; cursor: pointer; font-size: 12.5px; color: var(--muted);
   }
-  .tab.on { background: var(--panel); font-weight: 600; }
-  .tab.locked { opacity: .55; cursor: default; }
-  #nav { display: flex; gap: 4px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  #url { flex: 1; min-width: 0; }
-  #view { flex: 1; overflow: auto; background: var(--code); position: relative; }
+  .tab.on { background: var(--panel); color: var(--ink); font-weight: 600; }
+  .tab.locked { opacity: .55; cursor: not-allowed; }
+  #nav { display: flex; gap: 4px; padding: 7px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #url {
+    flex: 1; min-width: 0; font: 12.5px ui-monospace, "Cascadia Mono", Consolas, monospace;
+    background: var(--raised); border-color: transparent;
+  }
+  #url:focus { background: var(--panel); border-color: var(--line); }
+  #view { flex: 1; overflow: auto; background: var(--raised); position: relative; }
+  #view.working { box-shadow: inset 0 0 0 2px var(--live); }
   #screen { width: 100%; display: block; outline: none; cursor: default; }
-  #screen:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   #viewmsg {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    text-align: center; padding: 24px; color: var(--muted);
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; align-items: center;
+    justify-content: center; text-align: center; padding: 24px; color: var(--muted);
+  }
+  #activity {
+    position: sticky; bottom: 12px; margin: -44px auto 12px; width: fit-content; max-width: 90%;
+    display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px;
+  }
+  #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #splitter { width: 5px; cursor: col-resize; background: var(--line); flex: none; }
+  #splitter:hover { background: var(--muted); }
+  #chat { width: 420px; min-width: 300px; max-width: 70vw; display: flex; flex-direction: column; background: var(--panel); }
+  #main.chat-hidden #chat, #main.chat-hidden #splitter { display: none; }
+  #chathead { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); align-items: center; }
+  #chatpick { flex: 1; min-width: 0; border-color: transparent; font-weight: 600; background: transparent; }
+  #chatpick:hover { border-color: var(--line); }
+
+  #messages { flex: 1; overflow-y: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; max-width: 92%; }
+  .msg.user { background: var(--user); color: var(--user-ink); align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.assistant { background: var(--raised); border-bottom-left-radius: 4px; }
+  .msg.notice { color: var(--muted); font-size: 12px; background: none; padding: 0 2px; }
+  .msg.error { color: var(--bad); background: var(--bad-soft); font-size: 12.5px; }
+  .step { font-size: 12.5px; color: var(--muted); max-width: 100%; }
+  .step summary { cursor: pointer; list-style: none; display: flex; gap: 7px; align-items: baseline; padding: 1px 2px; }
+  .step summary::-webkit-details-marker { display: none; }
+  .step summary:hover { color: var(--ink); }
+  .step .mark { width: 14px; flex: none; text-align: center; }
+  .step.ok .mark { color: var(--live); }
+  .step.fail .mark, .step.fail summary { color: var(--bad); }
+  .step pre {
+    white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; background: var(--code);
+    padding: 7px 9px; border-radius: 7px; margin: 5px 0 2px 21px;
+    font: 11.5px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--ink);
   }
 
-  #splitter { width: 5px; cursor: col-resize; background: var(--line); }
-  #chat {
-    width: 420px; min-width: 280px; max-width: 70vw; display: flex; flex-direction: column;
-    background: var(--panel);
+  .empty { margin: auto 0; padding: 8px 2px; }
+  .empty h3 { margin: 0 0 4px; font-size: 15px; }
+  .empty p { margin: 0 0 12px; color: var(--muted); }
+  .suggestions { display: flex; flex-direction: column; gap: 6px; }
+  .suggestions button { text-align: left; white-space: normal; padding: 8px 11px; border-radius: 9px; }
+
+  .setup { padding: 4px 2px; }
+  .setup h3 { margin: 0 0 4px; font-size: 15px; }
+  .setup ol { padding-left: 18px; margin: 12px 0 0; display: flex; flex-direction: column; gap: 14px; }
+  .setup label { display: block; font-weight: 600; margin-bottom: 5px; }
+  .setup input { width: 100%; }
+  .setup .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .setup .models { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow: auto; margin-top: 6px; }
+  .setup .models label { font-weight: 400; display: flex; gap: 8px; align-items: center; margin: 0; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .setup .models label:hover { background: var(--raised); }
+
+  #composer { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+  #prompt { resize: none; min-height: 44px; max-height: 40vh; padding: 9px 11px; border-radius: 10px; line-height: 1.45; }
+  #composer .row { display: flex; gap: 6px; align-items: center; }
+  #model { min-width: 0; flex: 1; font-size: 12px; color: var(--muted); border-color: transparent; background: transparent; }
+  #model:hover { border-color: var(--line); }
+
+  #drawer {
+    position: fixed; top: 50%; right: 0; transform: translateY(-50%); border-radius: 8px 0 0 8px;
+    display: none; writing-mode: vertical-rl; padding: 12px 6px; box-shadow: var(--shadow);
   }
-  #main.chat-hidden #chat, #main.chat-hidden #splitter { display: none; }
-  #chathead { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); align-items: center; }
-  #chatpick { flex: 1; min-width: 0; }
-  #messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; }
-  .msg.user { background: var(--user); align-self: flex-end; max-width: 90%; }
-  .msg.assistant { background: var(--soft); max-width: 95%; }
+  #main.dock-left ~ #drawer { right: auto; left: 0; border-radius: 0 8px 8px 0; }
+  #main.chat-hidden ~ #drawer { display: block; }
+
+  #toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 50; align-items: center; }
+  .toast {
+    background: var(--btn); color: var(--btn-ink); padding: 8px 14px; border-radius: 9px; box-shadow: var(--shadow);
+    font-size: 12.5px; max-width: 520px; animation: rise .18s ease-out;
+  }
+  .toast.bad { background: var(--bad); color: #fff; }
+  @keyframes rise { from { transform: translateY(6px); opacity: 0; } }
+
+  dialog {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink);
+    width: min(520px, 92vw); padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog h2 { margin: 0 0 4px; font-size: 16px; }
+  dialog .lead { margin: 0 0 12px; color: var(--muted); }
+  dialog .actions { display: flex; gap: 8px; margin-top: 18px; align-items: center; }
+  dialog textarea { width: 100%; min-height: 84px; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  dialog input[type=text], dialog input[type=password], dialog select { width: 100%; }
+  .field { display: block; margin: 12px 0; }
+  .field > span { display: block; font-weight: 600; margin-bottom: 5px; }
+  .field .hint { font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 4px; display: block; }
+  .check { display: flex; gap: 9px; align-items: flex-start; margin: 9px 0; }
+  .check small { display: block; color: var(--muted); }
+  details.more > summary { cursor: pointer; color: var(--muted); margin: 10px 0 4px; }
+
+  /* markdown in replies */
   .msg.md { white-space: normal; }
   .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 6px 0; }
@@ -100,148 +225,130 @@ APP_HTML = r"""<!doctype html>
   .md h1 { font-size: 16px; } .md h2 { font-size: 15px; } .md h3, .md h4 { font-size: 13.5px; }
   .md ul, .md ol { padding-left: 20px; }
   .md li { margin: 2px 0; }
-  .md code {
-    background: var(--code); border-radius: 4px; padding: 1px 4px;
-    font: 12px ui-monospace, "Cascadia Code", Consolas, monospace;
-  }
-  .md pre { background: var(--code); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+  .md code { background: var(--panel); border-radius: 4px; padding: 1px 4px; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  .md pre { background: var(--panel); border-radius: 7px; padding: 8px 10px; overflow-x: auto; }
   .md pre code { background: none; padding: 0; white-space: pre; }
   .md blockquote { border-left: 3px solid var(--line); padding-left: 8px; color: var(--muted); }
-  .md a { color: var(--accent); }
+  .md a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   .md table { border-collapse: collapse; font-size: 12px; display: block; overflow-x: auto; }
   .md th, .md td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; }
-  .md th { background: var(--code); }
+  .md th { background: var(--panel); }
   .md hr { border: none; border-top: 1px solid var(--line); }
-  .msg.notice { color: var(--muted); font-size: 12px; background: none; padding: 0 4px; }
-  .msg.error { color: var(--bad); font-size: 12px; background: none; padding: 0 4px; }
-  details.tool { background: var(--tool); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
-  details.tool summary { cursor: pointer; }
-  details.tool pre {
-    white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto;
-    background: var(--code); padding: 6px; border-radius: 4px; margin: 6px 0 0;
-    font: 11.5px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
-  }
-  details.tool.fail summary { color: var(--bad); }
-  #composer { border-top: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-  #prompt { resize: vertical; min-height: 64px; max-height: 40vh; padding: 8px; }
-  #composer .row { display: flex; gap: 6px; align-items: center; }
-  #model { flex: 1; min-width: 0; }
-
-  #drawer { position: fixed; top: 50%; right: 0; transform: translateY(-50%); border-radius: 6px 0 0 6px; display: none; }
-  #main.dock-left ~ #drawer { right: auto; left: 0; border-radius: 0 6px 6px 0; }
-  #main.chat-hidden ~ #drawer { display: block; }
-
-  dialog {
-    border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
-    width: min(520px, 92vw); padding: 18px 20px;
-  }
-  dialog::backdrop { background: rgba(0,0,0,.35); }
-  dialog h2 { margin: 0 0 6px; font-size: 16px; }
-  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-  dialog textarea { width: 100%; min-height: 90px; padding: 6px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
-  dialog input[type=text], dialog input[type=password], dialog select { width: 100%; }
-  .hint { font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
-<div id="top">
-  <span class="brand">AI Browser Toolkit</span>
-  <div class="group">
-    <span class="muted small">Session</span>
-    <select id="session" title="Session: a browser profile with its logins, plus its own rules, tabs and chats"></select>
-    <button class="icon" id="session-new" title="New session">+</button>
-    <button class="icon" id="session-edit" title="Session settings">⚙</button>
-    <button class="icon" id="session-del" title="Delete this session">🗑</button>
-  </div>
-  <span id="status" class="muted"></span>
+<header id="top">
+  <button id="session-btn" aria-haspopup="true" aria-expanded="false" title="Switch session. Each session is a browser with its own logins, rules and chats.">
+    <span class="dot" id="session-dot"></span>
+    <span class="name" id="session-name">default</span>
+    <span class="sub" id="session-sub"></span>
+    <span class="muted">▾</span>
+  </button>
+  <div class="menu" id="session-menu" hidden></div>
+  <button class="pill" id="rules-pill" hidden title="This session can only reach some sites. Click to change."></button>
   <span class="spacer"></span>
-  <button class="icon" id="dock" title="Move the chat to the other side">⇆</button>
-  <button class="icon" id="toggle-chat" title="Hide or show the chat (Ctrl+B)">☰</button>
-  <button id="app-settings" title="Model settings">Models</button>
-</div>
+  <button class="ghost" id="model-btn" title="Choose the AI model and where it runs"><span class="label">Model</span> <span class="value" id="model-name">not set</span></button>
+  <button class="icon ghost" id="theme" title="Theme: follows your system. Click to switch."></button>
+  <button class="icon ghost" id="dock" title="Move the chat to the other side">⇆</button>
+  <button class="icon ghost" id="toggle-chat" title="Hide the chat (Ctrl+B)">⇥</button>
+</header>
 
 <div id="main" class="dock-right">
-  <section id="browser">
+  <section id="browser" aria-label="Browser">
     <div id="tabs"></div>
     <div id="nav">
-      <button class="icon" id="back" title="Back">←</button>
-      <button class="icon" id="fwd" title="Forward">→</button>
-      <button class="icon" id="reload" title="Reload the page">⟳</button>
-      <button class="icon" id="restart" title="Restart this session's browser (it starts and recovers on its own; this is for when a page is wedged)">⏻</button>
-      <input id="url" placeholder="Type a URL and press Enter" spellcheck="false">
-      <button class="icon" id="newtab" title="New tab">＋ tab</button>
+      <button class="icon ghost" id="back" title="Back">←</button>
+      <button class="icon ghost" id="fwd" title="Forward">→</button>
+      <button class="icon ghost" id="reload" title="Reload">⟳</button>
+      <input id="url" placeholder="Type an address and press Enter (Ctrl+L)" spellcheck="false" aria-label="Address">
+      <button class="icon ghost" id="newtab" title="New tab">＋</button>
+      <button class="icon ghost" id="restart" title="Restart this browser. It starts and recovers on its own; use this if a page is stuck.">⏻</button>
     </div>
     <div id="view">
-      <img id="screen" tabindex="0" alt="" draggable="false">
+      <img id="screen" tabindex="0" alt="The live browser page. Click and type here to use it yourself." draggable="false">
       <div id="viewmsg">Starting the browser…</div>
+      <div id="activity" hidden><span class="dot busy"></span><span class="text" id="activity-text"></span></div>
     </div>
   </section>
   <div id="splitter" title="Drag to resize"></div>
-  <aside id="chat">
+  <aside id="chat" aria-label="Chat">
     <div id="chathead">
       <select id="chatpick" title="Conversations in this session"></select>
-      <button class="icon" id="chat-new" title="New chat">+</button>
-      <button class="icon" id="chat-del" title="Delete this chat">🗑</button>
+      <button id="chat-new" title="Start a new conversation">＋ New</button>
+      <button class="icon ghost" id="chat-del" title="Delete this conversation">🗑</button>
     </div>
     <div id="messages"></div>
     <div id="composer">
-      <textarea id="prompt" placeholder="Tell the browser what to do. Enter sends, Shift+Enter for a new line."></textarea>
+      <textarea id="prompt" rows="1" placeholder="Tell the browser what to do…" aria-label="Message"></textarea>
       <div class="row">
-        <select id="model" title="Model for this chat"></select>
-        <button id="stop" disabled>Stop</button>
+        <select id="model" title="Model for this message"></select>
+        <button id="stop" hidden>Stop</button>
         <button id="send" class="primary">Send</button>
       </div>
     </div>
   </aside>
 </div>
-<button id="drawer" title="Show the chat (Ctrl+B)">💬</button>
+<button id="drawer" title="Show the chat (Ctrl+B)">Chat</button>
+<div id="toasts" aria-live="polite"></div>
 
 <dialog id="dlg-settings">
-  <h2>Models</h2>
-  <div class="hint">Any OpenAI-compatible endpoint. The key is stored on this machine only, readable by your account.</div>
-  <label class="field">Endpoint URL<input type="text" id="set-endpoint" spellcheck="false"></label>
-  <label class="field">API key <span class="hint" id="set-keyhint"></span>
-    <input type="password" id="set-key" placeholder="leave empty to keep the current key" autocomplete="off"></label>
-  <label class="field">Models, one per line, first is the default
-    <textarea id="set-models" spellcheck="false"></textarea></label>
-  <div class="hint">If a model fails (no tool support, rate limit), the chat moves down the list.</div>
+  <h2>Model</h2>
+  <p class="lead">The AI that reads the page and decides what to do. Any OpenAI-compatible service works.</p>
+  <label class="field"><span>API key</span>
+    <input type="password" id="set-key" placeholder="Leave empty to keep the saved key" autocomplete="off">
+    <span class="hint" id="set-keyhint"></span></label>
+  <label class="field"><span>Models to use, first one by default</span>
+    <textarea id="set-models" spellcheck="false" placeholder="one model id per line"></textarea>
+    <span class="hint">If one fails — no tool support, too busy — the next one is tried.</span></label>
+  <button id="set-free" type="button">Add free OpenRouter models</button>
+  <details class="more"><summary>Another provider</summary>
+    <label class="field"><span>Service address</span>
+      <input type="text" id="set-endpoint" spellcheck="false">
+      <span class="hint">For example http://localhost:11434/v1 for Ollama.</span></label>
+  </details>
   <div class="actions">
-    <button id="set-free">Fetch free OpenRouter models</button>
-    <span class="spacer" style="flex:1"></span>
+    <span class="spacer"></span>
     <button data-close>Cancel</button>
     <button id="set-save" class="primary">Save</button>
   </div>
 </dialog>
 
 <dialog id="dlg-session">
-  <h2 id="ses-title">Session</h2>
-  <label class="field" id="ses-name-row">Name<input type="text" id="ses-name" placeholder="lowercase, e.g. research" spellcheck="false"></label>
-  <label class="field">Browser profile <span class="hint">— its logins and cookies</span>
+  <h2 id="ses-title">New session</h2>
+  <p class="lead" id="ses-lead">A session is a browser the AI works in, with its own tabs and chats.</p>
+  <label class="field" id="ses-name-row"><span>Name</span>
+    <input type="text" id="ses-name" placeholder="e.g. research" spellcheck="false">
+    <span class="hint">Lowercase letters, numbers and dashes.</span></label>
+  <label class="field"><span>Logins from</span>
     <span style="display:flex; gap:6px">
       <select id="ses-profile" style="flex:1"></select>
-      <button class="icon" id="ses-profile-del" type="button" title="Delete the selected profile (only when no session uses it)">🗑</button>
+      <button class="icon" id="ses-profile-del" type="button" title="Delete this profile and its logins (only if no session uses it)">🗑</button>
     </span>
-  </label>
-  <label class="field" id="ses-newprofile-row" style="display:none">New profile name
-    <input type="text" id="ses-newprofile" placeholder="lowercase, e.g. work" spellcheck="false"></label>
-  <label class="field">Allowed and blocked URLs, one per line
-    <textarea id="ses-rules" spellcheck="false" placeholder="app.example.com/admin&#10;!app.example.com/api"></textarea></label>
-  <div class="hint">A line allows a host and path; a line starting with ! blocks it. Any allowed line makes everything else blocked. Empty means no limits.</div>
-  <label class="check"><input type="checkbox" id="ses-strict"> Check every request (images, scripts, styles too)</label>
-  <label class="check"><input type="checkbox" id="ses-runjs"> Allow run_js (scripts the model writes)</label>
-  <label class="check" id="ses-sealed-row"><input type="checkbox" id="ses-sealed" checked> Sealed: only this app can drive it</label>
+    <span class="hint">A profile keeps logins and cookies. Sessions on the same profile share them.</span></label>
+  <label class="field" id="ses-newprofile-row" hidden><span>New profile name</span>
+    <input type="text" id="ses-newprofile" placeholder="e.g. work" spellcheck="false"></label>
+  <label class="field"><span>Sites it may visit</span>
+    <textarea id="ses-rules" spellcheck="false" placeholder="Leave empty for any site.&#10;app.example.com/admin&#10;!app.example.com/api"></textarea>
+    <span class="hint">One per line. A line allows a site or page; a line starting with ! blocks it. Once anything is allowed, everything else is blocked.</span></label>
+  <details class="more"><summary>More</summary>
+    <label class="check"><input type="checkbox" id="ses-runjs" checked><span>Let the AI run scripts on the page<small>Scripts still cannot reach blocked sites.</small></span></label>
+    <label class="check"><input type="checkbox" id="ses-strict"><span>Also check images, styles and scripts against the site list<small>Stricter, but pages that load from other sites may break.</small></span></label>
+    <label class="check" id="ses-sealed-row"><input type="checkbox" id="ses-sealed" checked><span>Only this app can use it<small>Other programs and agents on this computer cannot drive it.</small></span></label>
+  </details>
   <div class="actions">
+    <button id="ses-del" hidden>Delete session</button>
+    <span class="spacer"></span>
     <button data-close>Cancel</button>
-    <button id="ses-save" class="primary">Save</button>
+    <button id="ses-save" class="primary">Create session</button>
   </div>
 </dialog>
 
 <dialog id="dlg-token">
-  <h2>Operator token</h2>
-  <div class="hint">Opened outside the desktop app, this page needs the server's operator token once.
-    It is in <code id="tok-path">sessions/operator.token</code>, readable only by your account.</div>
-  <label class="field">Token<input type="password" id="tok-value" autocomplete="off"></label>
-  <div class="actions"><button id="tok-save" class="primary">Continue</button></div>
+  <h2>Connect to the toolkit</h2>
+  <p class="lead">Opened outside the desktop app, this page needs the server's access token once.
+    It is in <code id="tok-path">sessions/operator.token</code>.</p>
+  <label class="field"><span>Access token</span><input type="password" id="tok-value" autocomplete="off"></label>
+  <div class="actions"><span class="spacer"></span><button id="tok-save" class="primary">Connect</button></div>
 </dialog>
 
 <script>
@@ -255,9 +362,37 @@ const store = {
 const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
-  meta: null, running: false, busy: false, settings: null, runningChats: new Set(), buffers: {},
+  meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
   starting: false, lastStart: {},
 };
+
+// --- theme ------------------------------------------------------------------------
+
+const THEMES = ["system", "light", "dark"];
+function applyTheme() {
+  const t = store.get("theme", "system");
+  if (t === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  $("#theme").textContent = { system: "◐", light: "☀", dark: "☾" }[t];
+  $("#theme").title = { system: "Theme follows your system", light: "Light theme", dark: "Dark theme" }[t] + " — click to switch";
+}
+$("#theme").onclick = () => {
+  const next = THEMES[(THEMES.indexOf(store.get("theme", "system")) + 1) % THEMES.length];
+  store.set("theme", next); applyTheme();
+  toast({ system: "Theme follows your system", light: "Light theme", dark: "Dark theme" }[next]);
+};
+
+// --- toasts ------------------------------------------------------------------------
+
+function toast(text, bad) {
+  if (!text) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (bad ? " bad" : ""); el.textContent = text;
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), bad ? 6500 : 3200);
+}
+const say = toast;
+function fail(e) { toast(e.hint && e.type === "url_blocked" ? e.message : (e.message || String(e)), true); }
 
 // --- tokens ---------------------------------------------------------------------
 
@@ -307,24 +442,17 @@ async function api(method, path, body, opts = {}) {
   if (token) headers["X-ABT-Token"] = token;
   const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   let b;
-  try { b = await r.json(); } catch (e) { throw new Error(`HTTP ${r.status}`); }
+  try { b = await r.json(); } catch (e) { throw new Error(`The toolkit answered HTTP ${r.status}`); }
   if (b.ok === false) {
     const err = b.error || {};
-    const e = new Error(err.message || "request failed"); e.type = err.type; e.hint = err.hint; throw e;
+    const e = new Error(err.message || "The toolkit refused that"); e.type = err.type; e.hint = err.hint; throw e;
   }
   return b.result !== undefined ? b.result : b;
 }
 
 const run = (cmd) => api("POST", "/command-list", cmd);
 
-function say(text, bad) {
-  const el = $("#status"); el.textContent = text || ""; el.style.color = bad ? "var(--bad)" : "";
-  if (text && !bad) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 4000);
-}
-
-function fail(e) { say((e.type ? e.type + ": " : "") + e.message, true); }
-
-// --- profiles and sessions -------------------------------------------------------------
+// --- sessions -------------------------------------------------------------------------
 
 async function loadAll() {
   S.profiles = await api("GET", "/profiles", undefined, { session: null });
@@ -332,63 +460,111 @@ async function loadAll() {
   if (!S.sessions.find(s => s.name === S.session)) S.session = "default";
   const current = S.sessions.find(s => s.name === S.session);
   S.profile = current ? current.profile : "default";
-  drawSessions();
+  drawSessionButton();
 }
 
-function drawSessions() {
-  // One list, grouped by the profile each session runs on: the profile is a
-  // property of the session, not a second thing to pick.
+function drawSessionButton() {
+  const info = S.sessions.find(s => s.name === S.session) || { name: S.session, profile: S.profile };
+  $("#session-name").textContent = info.name + (info.sealed ? " 🔒" : "");
+  $("#session-sub").textContent = info.profile === info.name ? "" : `logins: ${info.profile}`;
+  $("#session-dot").className = "dot" + (S.runningChats.size ? " busy" : S.running ? " on" : "");
+  const rules = (info.settings && info.settings.rules) || S.rules || [];
+  const pill = $("#rules-pill");
+  pill.hidden = !rules.length;
+  if (rules.length) {
+    const allowed = rules.filter(r => !r.startsWith("!"));
+    pill.textContent = allowed.length ? `Limited to ${allowed.length === 1 ? allowed[0] : allowed.length + " sites"}` : `${rules.length} site${rules.length > 1 ? "s" : ""} blocked`;
+    pill.title = "Site rules for this session:\n" + rules.join("\n") + "\n\nClick to change.";
+  }
+}
+
+function drawSessionMenu() {
   const byProfile = {};
   for (const s of S.sessions) (byProfile[s.profile] = byProfile[s.profile] || []).push(s);
-  $("#session").innerHTML = Object.keys(byProfile).sort().map(profile =>
-    `<optgroup label="profile: ${esc(profile)}">` + byProfile[profile].map(s =>
-      `<option value="${esc(s.name)}"${s.name === S.session ? " selected" : ""}>${esc(s.name)}${s.sealed ? " 🔒" : ""}${s.running ? " ●" : ""}</option>`).join("") +
-    `</optgroup>`).join("");
+  let html = "";
+  for (const profile of Object.keys(byProfile).sort()) {
+    html += `<h4>Logins: ${esc(profile)}</h4>`;
+    for (const s of byProfile[profile]) {
+      html += `<button class="row${s.name === S.session ? " on" : ""}" data-session="${esc(s.name)}">
+        <span class="dot${s.running ? " on" : ""}"></span><span class="grow">${esc(s.name)}</span>
+        <span class="meta">${s.sealed ? "🔒" : ""}</span></button>`;
+    }
+  }
+  html += `<hr><button class="row" data-action="new"><span class="grow">＋ New session</span></button>`;
+  html += `<button class="row" data-action="edit"><span class="grow">Settings for “${esc(S.session)}”</span></button>`;
+  $("#session-menu").innerHTML = html;
 }
+
+function toggleMenu(open) {
+  const menu = $("#session-menu");
+  const show = open === undefined ? menu.hidden : open;
+  if (show) drawSessionMenu();
+  menu.hidden = !show; $("#session-btn").setAttribute("aria-expanded", String(show));
+}
+$("#session-btn").onclick = (e) => { e.stopPropagation(); toggleMenu(); };
+$("#session-menu").onclick = (e) => {
+  const row = e.target.closest(".row"); if (!row) return;
+  toggleMenu(false);
+  if (row.dataset.session) selectSession(row.dataset.session);
+  else if (row.dataset.action === "new") openSessionDialog(false);
+  else if (row.dataset.action === "edit") openSessionDialog(true);
+};
+document.addEventListener("click", (e) => { if (!e.target.closest("#session-menu")) toggleMenu(false); });
+$("#rules-pill").onclick = () => openSessionDialog(true);
 
 async function selectSession(name) {
   if (!name) return;
   S.session = name; store.set("session", name);
   const info = S.sessions.find(s => s.name === name);
   S.profile = info ? info.profile : S.profile;
-  drawSessions();
-  closeScreen();
+  S.rules = null; S.tab = null;
+  drawSessionButton();
+  closeScreen(); hideActivity();
+  loadRules();
   // Chats first, then the socket: what it replays lands on the drawn chat.
   await refreshBrowser(); await loadChats(); openChatSocket();
 }
 
-$("#session").onchange = (e) => selectSession(e.target.value);
+async function loadRules() {
+  try { const info = await api("GET", "/sessions/" + encodeURIComponent(S.session)); S.rules = (info.settings || {}).rules || []; drawSessionButton(); }
+  catch (e) {}
+}
 
 function openSessionDialog(edit) {
   const dlg = $("#dlg-session");
-  $("#ses-title").textContent = edit ? `Session: ${S.session}` : "New session";
-  $("#ses-name-row").style.display = edit ? "none" : "";
-  $("#ses-sealed-row").style.display = edit ? "none" : "";
+  $("#ses-title").textContent = edit ? `Session “${S.session}”` : "New session";
+  $("#ses-lead").textContent = edit ? "Changes apply from the AI's next step." : "A session is a browser the AI works in, with its own tabs and chats.";
+  $("#ses-name-row").hidden = edit;
+  $("#ses-sealed-row").hidden = edit;
+  $("#ses-save").textContent = edit ? "Save changes" : "Create session";
+  $("#ses-del").hidden = !edit || S.session === "default";
   const drawProfiles = (pick) => {
     $("#ses-profile").innerHTML = S.profiles.map(p =>
-      `<option value="${esc(p.name)}"${p.name === pick ? " selected" : ""}>${esc(p.name)}${p.running ? " ●" : ""}</option>`).join("")
-      + `<option value="__new__">+ New profile…</option>`;
-    $("#ses-newprofile-row").style.display = "none";
+      `<option value="${esc(p.name)}"${p.name === pick ? " selected" : ""}>${esc(p.name)}</option>`).join("")
+      + `<option value="__new__"${pick === "__new__" ? " selected" : ""}>New profile — fresh logins</option>`;
+    $("#ses-newprofile-row").hidden = pick !== "__new__";
   };
-  drawProfiles(S.profile);
-  $("#ses-newprofile").value = "";
+  drawProfiles(edit ? S.profile : "__new__");
+  $("#ses-newprofile").value = ""; $("#ses-name").value = "";
+  $("#ses-rules").value = ""; $("#ses-strict").checked = false; $("#ses-runjs").checked = true;
   $("#ses-profile").onchange = () => {
     const isNew = $("#ses-profile").value === "__new__";
-    $("#ses-newprofile-row").style.display = isNew ? "" : "none";
+    $("#ses-newprofile-row").hidden = !isNew;
     if (isNew) $("#ses-newprofile").focus();
   };
+  // A new session's name doubles as its profile's, unless someone says otherwise.
+  $("#ses-name").oninput = () => { if (!edit) $("#ses-newprofile").placeholder = $("#ses-name").value.trim() || "e.g. work"; };
   $("#ses-profile-del").onclick = async () => {
     const name = $("#ses-profile").value;
     if (name === "__new__") return;
-    if (name === "default") return say("The default profile cannot be removed", true);
-    if (!confirm(`Delete profile "${name}" and every login in it? This cannot be undone.`)) return;
+    if (name === "default") return toast("The default profile cannot be removed", true);
+    if (!confirm(`Delete profile “${name}” and every login in it? This cannot be undone.`)) return;
     try {
       await api("DELETE", "/profiles/" + encodeURIComponent(name), undefined, { session: null });
       S.profiles = await api("GET", "/profiles", undefined, { session: null });
-      drawProfiles(S.profile); say("Profile deleted");
+      drawProfiles(S.profile); toast("Profile deleted");
     } catch (e) { fail(e); }
   };
-  $("#ses-name").value = ""; $("#ses-rules").value = ""; $("#ses-strict").checked = false; $("#ses-runjs").checked = true;
   if (edit) {
     api("GET", "/sessions/" + encodeURIComponent(S.session)).then(info => {
       const st = info.settings || {};
@@ -397,45 +573,42 @@ function openSessionDialog(edit) {
       $("#ses-runjs").checked = st.run_js !== false;
     }).catch(fail);
   }
+  $("#ses-del").onclick = async () => {
+    if (!confirm(`Delete session “${S.session}”? Its tabs close. Its logs and chats are kept aside.`)) return;
+    try { await api("DELETE", "/sessions/" + encodeURIComponent(S.session)); dlg.close(); S.session = "default"; await loadAll(); await selectSession("default"); toast("Session deleted"); }
+    catch (e) { fail(e); }
+  };
   $("#ses-save").onclick = async () => {
     const settings = {
       rules: $("#ses-rules").value.split("\n").map(s => s.trim()).filter(Boolean),
       strict: $("#ses-strict").checked, run_js: $("#ses-runjs").checked,
     };
+    const name = edit ? S.session : $("#ses-name").value.trim().toLowerCase();
+    if (!edit && !name) return toast("Give the session a name", true);
     try {
-      // A new profile is made first, then the session on it.
       let profile = $("#ses-profile").value;
       if (profile === "__new__") {
-        profile = $("#ses-newprofile").value.trim();
-        if (!profile) return say("Name the new profile", true);
-        await api("POST", "/profiles", { name: profile }, { session: null });
+        profile = ($("#ses-newprofile").value.trim() || name).toLowerCase();
+        if (!S.profiles.find(p => p.name === profile)) await api("POST", "/profiles", { name: profile }, { session: null });
         S.profiles = await api("GET", "/profiles", undefined, { session: null });
       }
       if (edit) {
         const body = { settings };
         if (profile !== S.profile) body.profile = profile;
         const out = await api("PATCH", "/sessions/" + encodeURIComponent(S.session), body);
-        if (out.warning) say(out.warning);
+        dlg.close(); toast(out.warning || "Session saved");
         await loadAll(); await selectSession(S.session);
       } else {
-        const name = $("#ses-name").value.trim();
         const out = await api("POST", "/sessions", { name, profile, sealed: $("#ses-sealed").checked, settings }, { session: null });
         if (out.token) { S.tokens[name] = out.token; try { sessionStorage.setItem("abt.tok." + name, out.token); } catch (e) {} }
+        dlg.close(); toast(`Session “${name}” created`);
         await loadAll(); await selectSession(name);
       }
-      dlg.close(); say("Saved");
     } catch (e) { fail(e); }
   };
   dlg.showModal();
+  if (!edit) $("#ses-name").focus();
 }
-$("#session-new").onclick = () => openSessionDialog(false);
-$("#session-edit").onclick = () => S.session && openSessionDialog(true);
-$("#session-del").onclick = async () => {
-  if (!S.session || S.session === "default") return say("The default session cannot be removed", true);
-  if (!confirm(`Delete session "${S.session}"? Its tabs close; its logs and chats are kept aside.`)) return;
-  try { await api("DELETE", "/sessions/" + encodeURIComponent(S.session)); S.session = "default"; await loadAll(); await selectSession("default"); }
-  catch (e) { fail(e); }
-};
 
 // --- the browser pane ------------------------------------------------------------------
 
@@ -447,6 +620,7 @@ async function refreshBrowser() {
   try { status = await api("GET", "/browser?session=" + encodeURIComponent(S.session)); }
   catch (e) { fail(e); return; }
   S.running = !!status.running;
+  drawSessionButton();
   if (!S.running) {
     // Nobody presses start: a session that is shown gets its browser.
     S.tabs = []; drawTabs(); closeScreen();
@@ -459,67 +633,66 @@ async function refreshBrowser() {
   }
   const own = S.tabs.filter(t => !t.locked && !t.unowned && !t.pending);
   const active = own.find(t => t.active) || own[0];
-  if (!S.tab || !S.tabs.find(t => t.tab_id === S.tab)) S.tab = active ? active.tab_id : null;
+  if (!S.tab || !own.find(t => t.tab_id === S.tab)) S.tab = active ? active.tab_id : null;
   const shown = S.tabs.find(t => t.tab_id === S.tab);
-  if (shown && document.activeElement !== $("#url")) $("#url").value = shown.url || "";
+  if (shown && document.activeElement !== $("#url")) $("#url").value = shown.url === "about:blank" ? "" : (shown.url || "");
   drawTabs();
   if (S.tab) openScreen(S.tab);
 }
 
 function drawTabs() {
-  $("#tabs").innerHTML = S.tabs.map(t => {
-    const cls = ["tab", t.tab_id === S.tab ? "on" : "", t.locked ? "locked" : ""].join(" ");
-    const label = t.locked ? `🔒 ${t.locked}` : t.pending ? "opening…" : (t.title || t.url || t.tab_id);
-    return `<div class="${cls}" data-tab="${esc(t.tab_id)}" title="${esc(t.url || "")}">${esc(label)}</div>`;
+  // Other sessions' tabs and unclaimed ones are the machinery, not the page
+  // the person is using: only this session's tabs show.
+  const own = S.tabs.filter(t => !t.locked && !t.unowned && !t.pending);
+  $("#tabs").innerHTML = own.map(t => {
+    const label = t.title || (t.url === "about:blank" ? "New tab" : t.url) || "New tab";
+    return `<div class="tab${t.tab_id === S.tab ? " on" : ""}" data-tab="${esc(t.tab_id)}" title="${esc(t.url || "")}">${esc(label)}</div>`;
   }).join("");
 }
 
 $("#tabs").onclick = async (e) => {
   const el = e.target.closest(".tab"); if (!el) return;
-  const tab = S.tabs.find(t => t.tab_id === el.dataset.tab); if (!tab) return;
-  try {
-    if (tab.unowned) await run({ op: "tab_claim", tab_id: tab.tab_id });
-    else if (tab.locked) return say(`That tab belongs to session ${tab.locked}`, true);
-    else await run({ op: "tab_switch", tab_id: tab.tab_id });
-    S.tab = tab.tab_id; await refreshBrowser();
-  } catch (err) { fail(err); }
+  try { await run({ op: "tab_switch", tab_id: el.dataset.tab }); S.tab = el.dataset.tab; await refreshBrowser(); }
+  catch (err) { fail(err); }
 };
 
-// Start or restart this session's browser, once at a time and not in a loop:
-// a browser that will not come up says why instead of retrying forever.
 async function ensureBrowser(op) {
   const session = S.session;
   if (!session || S.starting) return;
   const last = S.lastStart[session] || 0;
   if (Date.now() - last < 15000) {
-    $("#viewmsg").style.display = ""; $("#viewmsg").textContent = "The browser did not come up. ⏻ tries again.";
+    viewMessage("The browser did not start.", "Try again", () => { S.lastStart[session] = 0; ensureBrowser(op); });
     return;
   }
   S.starting = true; S.lastStart[session] = Date.now();
-  $("#viewmsg").style.display = "";
-  $("#viewmsg").textContent = op === "browser_restart" ? "Restarting the browser…" : "Starting the browser…";
+  viewMessage(op === "browser_restart" ? "Restarting the browser…" : "Starting the browser…");
   try { await run({ op }); }
   catch (e) {
-    // A browser already up (another page started it) is what we wanted.
-    if (!/already running/.test(e.message || "")) { fail(e); $("#viewmsg").textContent = e.message; }
+    if (!/already running/.test(e.message || "")) { S.starting = false; viewMessage(e.message, "Try again", () => { S.lastStart[session] = 0; ensureBrowser(op); }); return; }
   }
   S.starting = false;
   if (S.session === session) { await loadAll(); await refreshBrowser(); }
 }
-$("#restart").onclick = () => { S.lastStart[S.session] = 0; ensureBrowser("browser_restart"); };
 
+function viewMessage(text, action, onAction) {
+  const box = $("#viewmsg");
+  box.hidden = false; box.innerHTML = `<div>${esc(text)}</div>` + (action ? `<button>${esc(action)}</button>` : "");
+  if (action) box.querySelector("button").onclick = onAction;
+}
+
+$("#restart").onclick = () => { S.lastStart[S.session] = 0; ensureBrowser("browser_restart"); };
 async function nav(cmd) { try { await run(cmd); await refreshBrowser(); } catch (e) { fail(e); } }
 $("#back").onclick = () => nav({ op: "back", diff: false });
 $("#fwd").onclick = () => nav({ op: "forward", diff: false });
 $("#reload").onclick = () => nav({ op: "reload", diff: false });
 $("#newtab").onclick = async () => {
-  try { const out = await run({ op: "tab_new" }); S.tab = out.tab_id; await refreshBrowser(); } catch (e) { fail(e); }
+  try { const out = await run({ op: "tab_new" }); S.tab = out.tab_id; await refreshBrowser(); $("#url").focus(); } catch (e) { fail(e); }
 };
 $("#url").onkeydown = (e) => {
   if (e.key !== "Enter") return;
   let url = $("#url").value.trim(); if (!url) return;
-  if (!/^[a-z]+:/i.test(url)) url = "https://" + url;
-  nav({ op: "goto", url, diff: false });
+  if (!/^[a-z]+:/i.test(url)) url = (/\s/.test(url) || !/\./.test(url)) ? "https://duckduckgo.com/?q=" + encodeURIComponent(url) : "https://" + url;
+  $("#url").blur(); nav({ op: "goto", url, diff: false });
 };
 
 // --- the live view ------------------------------------------------------------------------
@@ -536,16 +709,15 @@ async function openScreen(tab) {
   const q = new URLSearchParams({ tab, session: S.session, token: op });
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/screencast?${q}`);
   ws._tab = tab; S.screenSock = ws;
-  $("#viewmsg").style.display = ""; $("#viewmsg").textContent = "Connecting…";
+  viewMessage("Connecting…");
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "frame") {
       $("#screen").src = "data:image/jpeg;base64," + m.data; S.meta = m.metadata;
-      $("#viewmsg").style.display = "none";
+      $("#viewmsg").hidden = true;
     } else if (m.ok === false) {
       const err = m.error || {};
-      $("#viewmsg").style.display = ""; $("#viewmsg").textContent = err.message || "Cannot show this tab";
-      // The page's browser went away: bring it back rather than show a corpse.
+      viewMessage(err.message || "This tab cannot be shown");
       if (err.type === "browser_dead") ensureBrowser("browser_restart");
     }
   };
@@ -553,7 +725,6 @@ async function openScreen(tab) {
 }
 
 function sendInput(event) { if (S.screenSock && S.screenSock.readyState === 1) S.screenSock.send(JSON.stringify(event)); }
-
 function pagePoint(e) {
   const img = $("#screen"); const m = S.meta; if (!m) return null;
   const width = m.deviceWidth || img.naturalWidth, height = m.deviceHeight || img.naturalHeight;
@@ -561,7 +732,6 @@ function pagePoint(e) {
 }
 function mods(e) { return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0); }
 const BUTTONS = ["left", "middle", "right"];
-
 $("#screen").addEventListener("mousedown", (e) => {
   e.preventDefault(); $("#screen").focus(); const p = pagePoint(e); if (!p) return;
   sendInput({ type: "mouse", event: "mousePressed", ...p, button: BUTTONS[e.button] || "left", clickCount: e.detail || 1, modifiers: mods(e) });
@@ -582,7 +752,7 @@ $("#screen").addEventListener("wheel", (e) => {
 }, { passive: false });
 $("#screen").addEventListener("contextmenu", (e) => e.preventDefault());
 $("#screen").addEventListener("keydown", (e) => {
-  if (e.ctrlKey && e.key.toLowerCase() === "b") return;
+  if ((e.ctrlKey || e.metaKey) && ["b", "l"].includes(e.key.toLowerCase())) return;
   e.preventDefault();
   if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { sendInput({ type: "text", text: e.key }); return; }
   sendInput({ type: "key", event: "rawKeyDown", key: e.key, code: e.code, windowsVirtualKeyCode: e.keyCode, modifiers: mods(e) });
@@ -594,78 +764,141 @@ $("#screen").addEventListener("keyup", (e) => {
   sendInput({ type: "key", event: "keyUp", key: e.key, code: e.code, windowsVirtualKeyCode: e.keyCode, modifiers: mods(e) });
 });
 
-// --- layout: dock, drawer, width -------------------------------------------------------
+// What the agent is doing, said on the page it is doing it to.
+function showActivity(text) {
+  $("#activity-text").textContent = text; $("#activity").hidden = false; $("#view").classList.add("working");
+}
+function hideActivity() { $("#activity").hidden = true; $("#view").classList.remove("working"); }
+
+// --- layout -------------------------------------------------------------------------
 
 function applyLayout() {
-  const main = $("#main");
-  main.classList.toggle("dock-left", store.get("dock", "right") === "left");
-  main.classList.toggle("dock-right", store.get("dock", "right") !== "left");
-  main.classList.toggle("chat-hidden", !!store.get("hidden", false));
+  const main = $("#main"), left = store.get("dock", "right") === "left", hidden = !!store.get("hidden", false);
+  main.classList.toggle("dock-left", left); main.classList.toggle("dock-right", !left);
+  main.classList.toggle("chat-hidden", hidden);
   $("#chat").style.width = store.get("width", 420) + "px";
+  $("#toggle-chat").textContent = hidden ? "⇤" : "⇥";
+  $("#toggle-chat").title = (hidden ? "Show" : "Hide") + " the chat (Ctrl+B)";
 }
 $("#dock").onclick = () => { store.set("dock", store.get("dock", "right") === "left" ? "right" : "left"); applyLayout(); };
 const toggleChat = () => { store.set("hidden", !store.get("hidden", false)); applyLayout(); };
 $("#toggle-chat").onclick = toggleChat;
 $("#drawer").onclick = toggleChat;
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); toggleChat(); }
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if (k === "b") { e.preventDefault(); toggleChat(); }
+  if (k === "l") { e.preventDefault(); $("#url").focus(); $("#url").select(); }
 }, true);
 $("#splitter").addEventListener("mousedown", (e) => {
   e.preventDefault();
   const left = store.get("dock", "right") === "left";
   const move = (ev) => {
     const width = left ? ev.clientX : window.innerWidth - ev.clientX;
-    const clamped = Math.max(280, Math.min(window.innerWidth * 0.7, width));
+    const clamped = Math.max(300, Math.min(window.innerWidth * 0.7, width));
     $("#chat").style.width = clamped + "px"; store.set("width", Math.round(clamped));
   };
   const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
   document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
 });
 
-// --- models -----------------------------------------------------------------------------
+// --- model settings -----------------------------------------------------------------------
 
 async function loadModels() {
   try { S.settings = await api("GET", "/app/settings", undefined, { operator: true, session: null }); }
   catch (e) { S.settings = { models: [] }; }
   drawModels();
 }
+function ready() { return !!(S.settings.models && S.settings.models.length && (S.settings.has_key || !/openrouter\.ai/.test(S.settings.endpoint || ""))); }
+function shortModel(m) {
+  if (!m) return "";
+  if (m === "openrouter/free") return "Any free model";
+  if (m === "openrouter/auto") return "Automatic";
+  return m.split("/").pop().replace(/:free$/, " (free)");
+}
 function drawModels(chosen) {
   const models = S.settings.models || [];
-  const pick = chosen || (S.chat && S.chat.model) || models[0];
-  $("#model").innerHTML = models.length
-    ? models.map(m => `<option${m === pick ? " selected" : ""}>${esc(m)}</option>`).join("")
-    : `<option value="">add a model in Models</option>`;
+  const pick = chosen || (S.chat && S.chat.model && models.includes(S.chat.model) ? S.chat.model : models[0]);
+  $("#model").innerHTML = models.map(m => `<option value="${esc(m)}"${m === pick ? " selected" : ""}>${esc(shortModel(m))}</option>`).join("");
+  $("#model-name").textContent = pick ? shortModel(pick) : "not set";
+  if (!S.chat || !(S.chat.messages || []).length) drawHistory();
 }
-$("#app-settings").onclick = async () => {
+$("#model").onchange = () => { $("#model-name").textContent = shortModel($("#model").value); };
+$("#model-btn").onclick = openModelDialog;
+async function openModelDialog() {
   await loadModels();
   $("#set-endpoint").value = S.settings.endpoint || "https://openrouter.ai/api/v1";
   $("#set-key").value = "";
-  $("#set-keyhint").textContent = S.settings.has_key ? `(saved: ${S.settings.key_hint})` : "(none saved)";
+  $("#set-keyhint").textContent = S.settings.has_key ? `A key ending ${S.settings.key_hint} is saved.` : "No key saved yet.";
   $("#set-models").value = (S.settings.models || []).join("\n");
   $("#dlg-settings").showModal();
-};
+}
+async function freeModels() {
+  return api("GET", "/app/models/free", undefined, { operator: true, session: null });
+}
 $("#set-free").onclick = async () => {
-  $("#set-free").disabled = true; $("#set-free").textContent = "Fetching…";
+  const b = $("#set-free"); b.disabled = true; b.textContent = "Looking…";
   try {
     await api("PUT", "/app/settings", { endpoint: $("#set-endpoint").value.trim() }, { operator: true, session: null });
-    const found = await api("GET", "/app/models/free", undefined, { operator: true, session: null });
+    const found = await freeModels();
     const have = new Set($("#set-models").value.split("\n").map(s => s.trim()).filter(Boolean));
     const add = found.map(m => m.id).filter(id => !have.has(id));
     $("#set-models").value = [...have, ...add].join("\n");
-    say(`${found.length} free models with tool support; ${add.length} added`);
+    toast(add.length ? `Added ${add.length} free models` : "No new free models found");
   } catch (e) { fail(e); }
-  $("#set-free").disabled = false; $("#set-free").textContent = "Fetch free OpenRouter models";
+  b.disabled = false; b.textContent = "Add free OpenRouter models";
 };
 $("#set-save").onclick = async () => {
-  const body = {
-    endpoint: $("#set-endpoint").value.trim(),
-    models: $("#set-models").value.split("\n").map(s => s.trim()).filter(Boolean),
-  };
+  const body = { endpoint: $("#set-endpoint").value.trim(), models: $("#set-models").value.split("\n").map(s => s.trim()).filter(Boolean) };
   if ($("#set-key").value.trim()) body.api_key = $("#set-key").value.trim();
-  try { S.settings = await api("PUT", "/app/settings", body, { operator: true, session: null }); drawModels(); $("#dlg-settings").close(); say("Saved"); }
+  try { S.settings = await api("PUT", "/app/settings", body, { operator: true, session: null }); drawModels(); $("#dlg-settings").close(); toast("Model settings saved"); }
   catch (e) { fail(e); }
 };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
+
+// First run: set up the model inside the chat, where the person already is.
+function drawSetup() {
+  $("#messages").innerHTML = `<div class="setup">
+    <h3>Connect an AI model</h3>
+    <p class="muted" style="margin:0">It reads the page and decides what to click and type. Two steps, once.</p>
+    <ol>
+      <li><label for="setup-key">Paste an OpenRouter key</label>
+        <input type="password" id="setup-key" placeholder="${S.settings.has_key ? "A key is saved — paste to replace it" : "sk-or-…"}" autocomplete="off">
+        <div class="hint">Free to create at openrouter.ai/keys. It stays on this computer.</div></li>
+      <li><label>Pick a model</label>
+        <button id="setup-find">Show free models</button>
+        <div class="models" id="setup-models"></div></li>
+    </ol>
+    <div style="display:flex; gap:8px; margin-top:16px">
+      <button class="primary" id="setup-save">Start</button>
+      <button class="ghost" id="setup-other">Use another provider</button>
+    </div></div>`;
+  $("#setup-other").onclick = openModelDialog;
+  $("#setup-find").onclick = async () => {
+    const b = $("#setup-find"); b.disabled = true; b.textContent = "Looking…";
+    try {
+      const found = await freeModels();
+      $("#setup-models").innerHTML = found.slice(0, 20).map((m, i) =>
+        `<label><input type="radio" name="setup-model" value="${esc(m.id)}"${i === 0 ? " checked" : ""}> ${esc(m.name || m.id)}</label>`).join("")
+        || `<div class="hint">No free models with tool support right now. Use another provider.</div>`;
+      b.textContent = "Refresh list";
+    } catch (e) { fail(e); b.textContent = "Show free models"; }
+    b.disabled = false;
+  };
+  $("#setup-save").onclick = async () => {
+    const key = $("#setup-key").value.trim();
+    const picked = [...document.querySelectorAll('input[name="setup-model"]')];
+    const chosen = picked.find(r => r.checked);
+    if (!key && !S.settings.has_key) return toast("Paste your OpenRouter key first", true);
+    if (!chosen) return toast("Click “Show free models” and pick one", true);
+    // The chosen model first, the rest behind it to fall back on.
+    const models = [chosen.value, ...picked.map(r => r.value).filter(v => v !== chosen.value)];
+    const body = { endpoint: "https://openrouter.ai/api/v1", models };
+    if (key) body.api_key = key;
+    try { S.settings = await api("PUT", "/app/settings", body, { operator: true, session: null }); drawModels(); toast("Ready — tell the browser what to do"); $("#prompt").focus(); }
+    catch (e) { fail(e); }
+  };
+}
 
 // --- chats ------------------------------------------------------------------------------
 
@@ -682,15 +915,14 @@ async function openChat(id) {
   try { S.chat = await api("GET", "/app/chats/" + encodeURIComponent(id)); } catch (e) { return fail(e); }
   store.set("chat." + S.session, id);
   drawModels(); drawHistory();
-  // A reply still running: its saved history lags, so show what it has done.
   for (const e of S.buffers[id] || []) renderEvent(e);
   setBusy(S.runningChats.has(id));
 }
 $("#chatpick").onchange = (e) => openChat(e.target.value);
-$("#chat-new").onclick = async () => { try { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); await loadChats(c.id); } catch (e) { fail(e); } };
+$("#chat-new").onclick = async () => { try { const c = await api("POST", "/app/chats", { model: $("#model").value || null }); await loadChats(c.id); $("#prompt").focus(); } catch (e) { fail(e); } };
 $("#chat-del").onclick = async () => {
-  if (!S.chat || !confirm("Delete this chat?")) return;
-  try { await api("DELETE", "/app/chats/" + encodeURIComponent(S.chat.id)); store.set("chat." + S.session, null); await loadChats(); } catch (e) { fail(e); }
+  if (!S.chat || !confirm("Delete this conversation?")) return;
+  try { await api("DELETE", "/app/chats/" + encodeURIComponent(S.chat.id)); store.set("chat." + S.session, null); await loadChats(); toast("Conversation deleted"); } catch (e) { fail(e); }
 };
 
 function add(html) { const m = $("#messages"); m.insertAdjacentHTML("beforeend", html); m.scrollTop = m.scrollHeight; }
@@ -698,6 +930,150 @@ function bubble(role, text) {
   if (role === "assistant") return add(`<div class="msg assistant md">${markdown(text)}</div>`);
   add(`<div class="msg ${role}">${esc(text)}</div>`);
 }
+
+// A tool call in words a person would use.
+function describe(name, args) {
+  if (name === "browser_guidelines") return args.domain ? `Checked site notes for ${args.domain}` : "Read the toolkit's notes";
+  if (name === "browser_session") return ({ start: "Started the browser", stop: "Stopped the browser", restart: "Restarted the browser", status: "Checked the browser" })[args.action] || "Checked the browser";
+  const cmds = (args.commands || []);
+  const said = cmds.map(c => {
+    const what = c.text || c.value || c.css || c.level || c.ref || "";
+    switch (c.op) {
+      case "goto": { let host = c.url; try { host = new URL(c.url).host; } catch (e) {} return `Opened ${host}`; }
+      case "click": return `Clicked ${c.text ? "“" + c.text + "”" : "an element"}`;
+      case "input": return `Typed ${c.value && c.value.length < 40 ? "“" + c.value + "”" : "text"}`;
+      case "press": return `Pressed ${c.key}`;
+      case "select": return `Chose “${c.value || ""}”`;
+      case "get_text": return "Read the page";
+      case "find": case "find_full": return `Looked for ${what ? "“" + what + "”" : "an element"}`;
+      case "scroll": return "Scrolled";
+      case "wait_for": return "Waited for the page";
+      case "back": return "Went back"; case "forward": return "Went forward"; case "reload": return "Reloaded";
+      case "tab_new": return "Opened a tab"; case "tab_switch": return "Switched tab"; case "tab_close": return "Closed a tab";
+      case "screenshot": return "Took a screenshot"; case "run_js": return "Ran a script";
+      case "hover": return "Hovered";
+      case "guidelines_note": return "Saved a note about this site";
+      case "guidelines_read": case "guidelines_search": return "Read notes about this site";
+      case "read_console": return "Checked the page's console";
+      case "read_network": return "Checked the page's network requests";
+      case "current_url": case "status": case "tab_list": case "browser_status": return "Checked where the browser is";
+      case "alert": return "Answered a pop-up";
+      case "diff": return "Checked what changed";
+      case "tab_claim": return "Took over a tab"; case "tab_release": return "Let go of a tab";
+      case "browser_start": return "Started the browser"; case "browser_restart": return "Restarted the browser";
+      case "browser_stop": return "Stopped the browser";
+      default: return (c.op || "worked on the page").replace(/_/g, " ");
+    }
+  });
+  if (!said.length) return "Worked on the page";
+  return said.length > 3 ? `${said.slice(0, 3).join(", ")} and ${said.length - 3} more` : said.join(", ");
+}
+
+function step(name, args, result, bad) {
+  const shown = result === undefined ? "" : String(result).slice(0, 4000);
+  add(`<details class="step ${bad ? "fail" : "ok"}"><summary><span class="mark">${bad ? "✗" : "✓"}</span><span>${esc(describe(name, args))}</span></summary>` +
+      `<pre>${esc(name)} ${esc(JSON.stringify(args, null, 1))}</pre>${shown ? `<pre>${esc(shown)}</pre>` : ""}</details>`);
+}
+
+const EXAMPLES = [
+  "Open example.com and tell me what the page says",
+  "Search DuckDuckGo for today's weather in London and summarise it",
+  "Go to news.ycombinator.com and list the top 5 stories",
+];
+function drawHistory() {
+  if (!ready()) return drawSetup();
+  $("#messages").innerHTML = "";
+  const msgs = (S.chat && S.chat.messages) || [];
+  const results = {};
+  msgs.filter(m => m.role === "tool").forEach(m => results[m.tool_call_id] = m.content);
+  for (const m of msgs) {
+    if (m.role === "user") bubble("user", m.content);
+    else if (m.role === "assistant") {
+      for (const call of m.tool_calls || []) {
+        let args = {}; try { args = JSON.parse(call.function.arguments || "{}"); } catch (e) {}
+        const r = results[call.id]; step(call.function.name, args, r, r && r.includes('"ok":false'));
+      }
+      if (m.content && m.content.trim()) bubble("assistant", m.content);
+    }
+  }
+  if (!msgs.length) {
+    add(`<div class="empty"><h3>What should the browser do?</h3>
+      <p>Describe a task in plain words. You will see each step here and on the page, and you can click in the page yourself at any time.</p>
+      <div class="suggestions">${EXAMPLES.map(t => `<button data-example="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>`);
+    document.querySelectorAll("[data-example]").forEach(b => b.onclick = () => { $("#prompt").value = b.dataset.example; grow(); $("#prompt").focus(); });
+  }
+}
+
+function openChatSocket() {
+  if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
+  S.chatSock = null; S.runningChats = new Set(); S.buffers = {};
+  setBusy(false);
+  if (!S.session) return;
+  sessionToken(S.session).then(token => {
+    const q = new URLSearchParams({ session: S.session }); if (token) q.set("token", token);
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/app/chat?${q}`);
+    S.chatSock = ws;
+    ws.onmessage = (ev) => onChatEvent(JSON.parse(ev.data));
+    ws.onclose = () => { if (S.chatSock === ws) S.chatSock = null; };
+  });
+}
+
+let pendingTool = null;
+function renderEvent(e) {
+  if (e.type === "user") bubble("user", e.text);
+  else if (e.type === "assistant") bubble("assistant", e.text);
+  else if (e.type === "tool_call") { pendingTool = e; }
+  else if (e.type === "tool_result") { step(e.name, pendingTool ? pendingTool.args : {}, e.text, e.error); pendingTool = null; }
+  else if (e.type === "notice") bubble("notice", e.text);
+  else if (e.type === "error") bubble("error", e.text);
+}
+
+async function onChatEvent(e) {
+  if (e.ok === false) { bubble("error", (e.error && e.error.message) || "The chat is unavailable"); return; }
+  const id = e.chat_id;
+  const here = S.chat && S.chat.id === id;
+  if (e.type === "resume") {
+    S.runningChats.add(id); S.buffers[id] = [];
+    if (here) { drawHistory(); setBusy(true); }
+    drawSessionButton();
+    return;
+  }
+  if (e.type === "done") {
+    S.runningChats.delete(id); delete S.buffers[id];
+    const opt = [...$("#chatpick").options].find(o => o.value === id); if (opt) opt.textContent = e.title;
+    if (!S.runningChats.size) hideActivity();
+    drawSessionButton();
+    if (here) { await openChat(id); refreshBrowser(); }
+    return;
+  }
+  if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); drawSessionButton(); }
+  if (e.type === "error" && !S.runningChats.has(id)) { if (here) { bubble("error", e.text); setBusy(false); } return; }
+  if (e.type === "tool_call") showActivity(describe(e.name, e.args || {}).replace(/^Opened/, "Opening").replace(/^Clicked/, "Clicking").replace(/^Typed/, "Typing").replace(/^Read/, "Reading").replace(/^Looked/, "Looking").replace(/^Pressed/, "Pressing") + "…");
+  if (!S.buffers[id]) S.buffers[id] = [];
+  S.buffers[id].push(e);
+  if (here) renderEvent(e);
+}
+
+function setBusy(busy) {
+  S.busy = busy; $("#send").hidden = busy; $("#stop").hidden = !busy;
+  $("#prompt").placeholder = busy ? "Working… you can type your next message" : "Tell the browser what to do…";
+}
+
+function grow() { const p = $("#prompt"); p.style.height = "auto"; p.style.height = Math.min(p.scrollHeight, window.innerHeight * 0.4) + "px"; }
+$("#prompt").addEventListener("input", grow);
+
+async function send() {
+  const text = $("#prompt").value.trim();
+  if (!text || S.busy || !S.chat) return;
+  if (!ready()) return drawSetup();
+  if (!S.chatSock || S.chatSock.readyState !== 1) { openChatSocket(); return toast("Reconnecting — send again in a moment", true); }
+  $("#prompt").value = ""; grow(); setBusy(true);
+  if (!(S.chat.messages || []).length && document.querySelector(".empty")) $("#messages").innerHTML = "";
+  S.chatSock.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
+}
+$("#send").onclick = send;
+$("#stop").onclick = () => { if (S.chatSock && S.chat) { S.chatSock.send(JSON.stringify({ type: "stop", chat_id: S.chat.id })); toast("Stopping after this step"); } };
+$("#prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
 // Markdown for the model's replies. Small and self-contained -- the page
 // loads nothing from the network -- and safe by construction: every piece of
@@ -754,7 +1130,6 @@ function markdown(src) {
       const items = [];
       while (i < lines.length && marker.test(lines[i])) {
         let item = lines[i++].replace(marker, "");
-        // A wrapped continuation line belongs to the item above it.
         while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !bullet.test(lines[i]) && !number.test(lines[i])) item += " " + lines[i++].trim();
         items.push(`<li>${inline(item)}</li>`);
       }
@@ -768,103 +1143,11 @@ function markdown(src) {
   }
   return out.join("");
 }
-function toolBlock(name, args, result, bad) {
-  const shown = result === undefined ? "…running" : String(result).slice(0, 4000);
-  add(`<details class="tool${bad ? " fail" : ""}"><summary>${bad ? "✗" : "▸"} ${esc(name)}</summary><pre>${esc(JSON.stringify(args, null, 1))}</pre><pre>${esc(shown)}</pre></details>`);
-}
-function drawHistory() {
-  $("#messages").innerHTML = "";
-  const msgs = (S.chat && S.chat.messages) || [];
-  const results = {};
-  msgs.filter(m => m.role === "tool").forEach(m => results[m.tool_call_id] = m.content);
-  for (const m of msgs) {
-    if (m.role === "user") bubble("user", m.content);
-    else if (m.role === "assistant") {
-      if (m.content) bubble("assistant", m.content);
-      for (const call of m.tool_calls || []) {
-        let args = {}; try { args = JSON.parse(call.function.arguments || "{}"); } catch (e) {}
-        const r = results[call.id]; toolBlock(call.function.name, args, r, r && r.includes('"ok":false'));
-      }
-    }
-  }
-  if (!msgs.length) add(`<div class="msg notice">Ask for something in the browser — for example “open example.com and read me the heading”. Pick a model in Models first.</div>`);
-}
-
-function openChatSocket() {
-  // Leaving a session no longer stops its replies: they run on the server,
-  // and this socket only watches. Coming back replays what was missed.
-  if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
-  S.chatSock = null; S.runningChats = new Set(); S.buffers = {};
-  setBusy(false);
-  if (!S.session) return;
-  sessionToken(S.session).then(token => {
-    const q = new URLSearchParams({ session: S.session }); if (token) q.set("token", token);
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/app/chat?${q}`);
-    S.chatSock = ws;
-    ws.onmessage = (ev) => onChatEvent(JSON.parse(ev.data));
-    ws.onclose = () => { if (S.chatSock === ws) S.chatSock = null; };
-  });
-}
-
-let pendingTool = null;
-function renderEvent(e) {
-  if (e.type === "user") bubble("user", e.text);
-  else if (e.type === "assistant") bubble("assistant", e.text);
-  else if (e.type === "tool_call") { pendingTool = e; }
-  else if (e.type === "tool_result") {
-    // No refresh here: the live view already shows the page, and a tab_list
-    // between the agent's steps holds its session's lock for nothing.
-    toolBlock(e.name, pendingTool ? pendingTool.args : {}, e.text, e.error); pendingTool = null;
-  }
-  else if (e.type === "notice") bubble("notice", e.text);
-  else if (e.type === "error") bubble("error", e.text);
-}
-
-async function onChatEvent(e) {
-  if (e.ok === false) { bubble("error", (e.error && e.error.message) || "chat unavailable"); return; }
-  const id = e.chat_id;
-  const here = S.chat && S.chat.id === id;
-  if (e.type === "resume") {
-    // A reply that was already running when this page connected.
-    S.runningChats.add(id); S.buffers[id] = [];
-    if (here) { drawHistory(); setBusy(true); }
-    return;
-  }
-  if (e.type === "done") {
-    S.runningChats.delete(id); delete S.buffers[id];
-    const opt = [...$("#chatpick").options].find(o => o.value === id); if (opt) opt.textContent = e.title;
-    if (here) { await openChat(id); refreshBrowser(); }
-    return;
-  }
-  if (e.type === "user") { S.runningChats.add(id); S.buffers[id] = []; if (here) setBusy(true); }
-  // Refused before it started (say, that chat was already replying): nothing
-  // else will clear "Working…", so this does.
-  if (e.type === "error" && !S.runningChats.has(id)) { if (here) { bubble("error", e.text); setBusy(false); } return; }
-  if (!S.buffers[id]) S.buffers[id] = [];
-  S.buffers[id].push(e);
-  if (here) renderEvent(e);
-}
-
-function setBusy(busy) {
-  S.busy = busy; $("#send").disabled = busy; $("#stop").disabled = !busy;
-  $("#send").textContent = busy ? "Working…" : "Send";
-}
-
-async function send() {
-  const text = $("#prompt").value.trim();
-  if (!text || S.busy || !S.chat) return;
-  if (!S.chatSock || S.chatSock.readyState !== 1) { openChatSocket(); return say("Reconnecting the chat — send again in a moment", true); }
-  $("#prompt").value = ""; setBusy(true);
-  S.chatSock.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
-}
-$("#send").onclick = send;
-$("#stop").onclick = () => S.chatSock && S.chat && S.chatSock.send(JSON.stringify({ type: "stop", chat_id: S.chat.id }));
-$("#prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
 // --- start -------------------------------------------------------------------------------
 
 (async function boot() {
-  applyLayout();
+  applyTheme(); applyLayout();
   await waitForBridge();
   try {
     await operatorToken();
