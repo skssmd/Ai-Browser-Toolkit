@@ -1,0 +1,477 @@
+"""Sessions: the unit every command runs in.
+
+A session is a name, a profile, settings, and at run time a `BrowserSession`
+of its own, a lock of its own and a log of its own. Two sessions never wait on
+each other; commands within one run in order.
+
+**Open** sessions are addressed by name alone. That keeps cooperating agents
+out of each other's way and is not a security boundary -- any process can name
+any open session. **Sealed** sessions also need a token that exists only in the
+creator's hands (and, hashed, here), so a model driving the desktop app, or
+another agent on the machine, cannot reach one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import threading
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from .browser import Attach, BrowserSession
+from .errors import OpError
+from .profiles import DEFAULT, ProfileRegistry, check_name
+from .recorder import SessionRecorder
+from .tabs import TabGate
+
+NO_SESSIONS = (
+    "sessions need `abt serve` on the playwright engine; this server has "
+    "only the `default` session"
+)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write a file only its owner can read.
+
+    POSIX gets 0600 at creation, so there is no moment at which it is world
+    readable. On Windows the per-user directories this lives in already carry
+    an owner-only ACL, and chmod cannot express more.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+@dataclass
+class SessionRecord:
+    name: str
+    profile: str = DEFAULT
+    sealed: bool = False
+    created: str = ""
+    # Kept verbatim, unknown keys included, so later features can add
+    # settings without a migration.
+    settings: dict = field(default_factory=dict)
+    token_hash: str | None = None
+
+    def public(self, with_settings: bool = True) -> dict:
+        out = {
+            "name": self.name,
+            "profile": self.profile,
+            "sealed": self.sealed,
+            "created": self.created,
+        }
+        if with_settings:
+            out["settings"] = self.settings
+        return out
+
+
+class SessionStore:
+    """`<dir>/<name>.json` per session, plus `<name>.token` for sealed ones."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = Path(directory)
+
+    def _path(self, name: str) -> Path:
+        return self.directory / f"{name}.json"
+
+    def load(self) -> dict[str, SessionRecord]:
+        found: dict[str, SessionRecord] = {}
+        if not self.directory.is_dir():
+            return found
+        for path in sorted(self.directory.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                name = check_name(data.get("name"), "session")
+            except (OSError, ValueError, OpError, AttributeError):
+                continue
+            # A file whose name disagrees with its contents was not written
+            # here. Loading it would let a stray file answer for a session.
+            if path.stem != name:
+                continue
+            found[name] = SessionRecord(
+                name=name,
+                profile=str(data.get("profile") or DEFAULT),
+                sealed=bool(data.get("sealed")),
+                created=str(data.get("created") or ""),
+                settings=dict(data.get("settings") or {}),
+                token_hash=data.get("token_hash"),
+            )
+        return found
+
+    def save(self, record: SessionRecord) -> None:
+        write_private(self._path(record.name), json.dumps(asdict(record), indent=2))
+
+    def delete(self, name: str) -> None:
+        self._path(name).unlink(missing_ok=True)
+        (self.directory / f"{name}.token").unlink(missing_ok=True)
+
+    def write_token(self, name: str, token: str) -> None:
+        write_private(self.directory / f"{name}.token", token)
+
+
+class Session:
+    """A record plus what it needs to run: a browser, a lock, a log."""
+
+    def __init__(
+        self,
+        record: SessionRecord,
+        browser: BrowserSession,
+        *,
+        recorder: SessionRecorder | None = None,
+        recorder_factory: Callable[[], SessionRecorder] | None = None,
+        log_root: Path | None = None,
+    ) -> None:
+        self.record = record
+        # Replaced when the session moves to another profile. Read it only
+        # while holding `lock`.
+        self.browser = browser
+        self.lock = threading.Lock()
+        self.log_root = log_root
+        self._recorder = recorder
+        self._recorder_factory = recorder_factory
+
+    @property
+    def name(self) -> str:
+        return self.record.name
+
+    @property
+    def recorder(self) -> SessionRecorder | None:
+        """Created on first use, so a session that never runs leaves no log."""
+        if self._recorder is None and self._recorder_factory is not None:
+            self._recorder = self._recorder_factory()
+            self._recorder_factory = None
+        return self._recorder
+
+    @property
+    def started_recorder(self) -> SessionRecorder | None:
+        return self._recorder
+
+    def close(self) -> None:
+        try:
+            self.browser.stop()
+        except Exception:
+            pass
+        if self._recorder is not None:
+            self._recorder.close()
+
+
+class SessionRegistry:
+    def __init__(
+        self,
+        store: SessionStore,
+        profiles: ProfileRegistry,
+        make_browser: Callable[[Path, Attach], BrowserSession],
+        log_root: Path | None = None,
+        recorder_options: dict[str, Any] | None = None,
+        operator_token: str | None = None,
+    ) -> None:
+        self.store = store
+        self.profiles = profiles
+        self.operator_token = operator_token
+        self._make_browser = make_browser
+        self._log_root = Path(log_root) if log_root is not None else None
+        self._recorder_options = recorder_options or {}
+        self._lock = threading.Lock()
+        self._records = store.load()
+        # `default` is always there, always open, always on the default
+        # profile -- whatever a file on disk claims.
+        default = self._records.get(DEFAULT) or SessionRecord(name=DEFAULT, created=_now())
+        default.profile, default.sealed, default.token_hash = DEFAULT, False, None
+        self._records[DEFAULT] = default
+        self._live: dict[str, Session] = {}
+        self._stop_reaper = threading.Event()
+
+    # --- lookup ------------------------------------------------------------------
+
+    def get(self, name: str | None, token: str | None = None) -> Session:
+        name = name or DEFAULT
+        with self._lock:
+            record = self._records.get(name)
+            if record is None:
+                raise OpError(
+                    "unknown_session",
+                    f"no session {name!r}; sessions: {', '.join(sorted(self._records))}",
+                )
+            self._authorize(record, token)
+            return self._runtime(record)
+
+    @staticmethod
+    def _authorize(record: SessionRecord, token: str | None) -> None:
+        if not record.sealed:
+            return
+        if not token or not hmac.compare_digest(hash_token(token), record.token_hash or ""):
+            raise OpError("session_sealed", f"session {record.name!r} is sealed")
+
+    def _runtime(self, record: SessionRecord) -> Session:
+        found = self._live.get(record.name)
+        if found is None:
+            root = self._log_root / "sessions" / record.name if self._log_root else None
+            factory = (
+                (lambda: SessionRecorder(root, **self._recorder_options)) if root else None
+            )
+            found = Session(
+                record,
+                self._build_browser(record),
+                recorder_factory=factory,
+                log_root=root,
+            )
+            self._live[record.name] = found
+        return found
+
+    def _build_browser(self, record: SessionRecord) -> BrowserSession:
+        # Captured by value: a later `update` rebinds record.profile, and the
+        # old browser must keep letting go of the profile it was on.
+        name, profile = record.name, record.profile
+
+        def connect() -> str:
+            self.profiles.require(profile)
+            return self.profiles.attach(profile, name)
+
+        attach = Attach(
+            connect=connect,
+            disconnect=lambda: self.profiles.detach(profile, name),
+            list_targets=lambda: self.profiles.targets(profile),
+            gate=TabGate(self.profiles.tabs(profile), name),
+        )
+        return self._make_browser(self.profiles.path(profile), attach)
+
+    # --- management ---------------------------------------------------------------
+
+    def create(
+        self,
+        name: str,
+        profile: str = DEFAULT,
+        sealed: bool = False,
+        settings: dict | None = None,
+    ) -> dict:
+        check_name(name, "session")
+        self.profiles.require(profile)
+        token = None
+        with self._lock:
+            if name in self._records:
+                raise OpError("session_exists", f"session {name!r} already exists")
+            record = SessionRecord(
+                name=name,
+                profile=profile,
+                sealed=bool(sealed),
+                created=_now(),
+                settings=dict(settings or {}),
+            )
+            if record.sealed:
+                token = secrets.token_urlsafe(32)
+                record.token_hash = hash_token(token)
+                self.store.write_token(name, token)
+            self.store.save(record)
+            self._records[name] = record
+        out = record.public()
+        if token:
+            # The only time the token is ever returned.
+            out["token"] = token
+        return out
+
+    def update(
+        self,
+        name: str,
+        token: str | None = None,
+        profile: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        session = self.get(name, token)
+        record = session.record
+        if name == DEFAULT and profile not in (None, DEFAULT):
+            raise OpError("invalid_op", "the default session always uses the default profile")
+        warning = None
+        with session.lock:
+            if profile is not None and profile != record.profile:
+                self.profiles.require(profile)
+                was_running = session.browser.is_running
+                session.browser.stop()
+                record.profile = profile
+                session.browser = self._build_browser(record)
+                warning = "profile changed: this session's tabs were closed"
+                if was_running:
+                    warning += "; send browser_start to connect to the new profile"
+            if settings is not None:
+                merged = {**record.settings, **settings}
+                record.settings = {k: v for k, v in merged.items() if v is not None}
+            self.store.save(record)
+        out = record.public()
+        if warning:
+            out["warning"] = warning
+        return out
+
+    def remove(self, name: str, token: str | None = None) -> None:
+        if name == DEFAULT:
+            raise OpError("invalid_op", "the default session cannot be removed")
+        session = self.get(name, token)
+        with session.lock:
+            session.close()
+        with self._lock:
+            self._live.pop(name, None)
+            self._records.pop(name, None)
+        self.store.delete(name)
+
+    def info(self, name: str, token: str | None = None) -> dict:
+        with self._lock:
+            record = self._records.get(name)
+        if record is None:
+            raise OpError("unknown_session", f"no session {name!r}")
+        try:
+            self._authorize(record, token)
+            authorized = True
+        except OpError:
+            authorized = False
+        return record.public(with_settings=authorized)
+
+    def list(self) -> list[dict]:
+        with self._lock:
+            records = sorted(self._records.values(), key=lambda r: r.name)
+            live = dict(self._live)
+        rows = []
+        for record in records:
+            row = record.public(with_settings=not record.sealed)
+            session = live.get(record.name)
+            row["running"] = bool(session and session.browser.is_running)
+            row["tabs"] = len(self.profiles.tabs(record.profile).owned_by(record.name))
+            rows.append(row)
+        return rows
+
+    def profile_in_use(self, profile: str) -> bool:
+        with self._lock:
+            return any(r.profile == profile for r in self._records.values())
+
+    def remove_profile(self, name: str) -> None:
+        self.profiles.remove(name, in_use=self.profile_in_use(name))
+
+    def is_operator(self, token: str | None) -> bool:
+        return bool(
+            self.operator_token and token and hmac.compare_digest(token, self.operator_token)
+        )
+
+    def touch(self, session: Session) -> None:
+        self.profiles.touch(session.record.profile)
+
+    # --- idle shutdown ------------------------------------------------------------
+
+    def reap_idle(self) -> list[str]:
+        """Stop browsers nobody has used for a while.
+
+        A profile with any session mid-command is skipped rather than waited
+        for: a busy session is by definition not idle, and blocking the reaper
+        on one would stall every other profile's shutdown behind it.
+        """
+        stopped = []
+        for profile in self.profiles.idle():
+            with self._lock:
+                sessions = [
+                    s for s in self._live.values()
+                    if s.record.profile == profile and s.browser.is_running
+                ]
+            acquired = []
+            busy = False
+            for session in sessions:
+                if session.lock.acquire(blocking=False):
+                    acquired.append(session)
+                else:
+                    busy = True
+                    break
+            try:
+                if busy:
+                    continue
+                for session in acquired:
+                    session.browser.stop()
+                self.profiles.stop(profile)
+                stopped.append(profile)
+            finally:
+                for session in acquired:
+                    session.lock.release()
+        return stopped
+
+    def start_reaper(self, interval: float = 60.0) -> threading.Thread:
+        def loop() -> None:
+            while not self._stop_reaper.wait(interval):
+                try:
+                    self.reap_idle()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=loop, name="abt-reaper", daemon=True)
+        thread.start()
+        return thread
+
+    def close_all(self) -> None:
+        self._stop_reaper.set()
+        with self._lock:
+            sessions = list(self._live.values())
+        for session in sessions:
+            session.close()
+        self.profiles.stop_all()
+
+
+class SingleSessionRegistry:
+    """The legacy shape: one BrowserSession, called `default`, nothing else.
+
+    What `create_app(browser_session)` wraps its argument in, so the server has
+    one code path. It behaves exactly as the server did before sessions.
+    """
+
+    profiles = None
+    operator_token = None
+
+    def __init__(self, browser: BrowserSession, recorder: SessionRecorder | None) -> None:
+        record = SessionRecord(name=DEFAULT)
+        self._session = Session(
+            record,
+            browser,
+            recorder=recorder,
+            log_root=recorder.root if recorder is not None else None,
+        )
+
+    def get(self, name: str | None = None, token: str | None = None) -> Session:
+        if name not in (None, DEFAULT):
+            raise OpError("unknown_session", f"no session {name!r}: {NO_SESSIONS}")
+        return self._session
+
+    def list(self) -> list[dict]:
+        return [{**self._session.record.public(), "running": self._session.browser.is_running}]
+
+    def info(self, name: str, token: str | None = None) -> dict:
+        return self.get(name).record.public()
+
+    def create(self, *args, **kwargs) -> dict:
+        raise OpError("invalid_op", NO_SESSIONS)
+
+    update = create
+    remove = create
+    remove_profile = create
+
+    def is_operator(self, token: str | None) -> bool:
+        return False
+
+    def touch(self, session: Session) -> None:
+        pass
+
+    def close_all(self) -> None:
+        self._session.browser.quit()
+        recorder = self._session.started_recorder
+        if recorder is not None:
+            recorder.close()
