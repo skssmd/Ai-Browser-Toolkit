@@ -89,11 +89,16 @@ APP_HTML = r"""<!doctype html>
   .spacer { flex: 1; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-  /* --- top bar --- */
-  #top {
-    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-    background: var(--panel); border-bottom: 1px solid var(--line); position: relative;
+  /* --- the chat's context line: profile and allowed sites --- */
+  #context {
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+    border-bottom: 1px solid var(--line); font-size: 12px; min-height: 30px;
   }
+  #context-btn { display: flex; align-items: center; gap: 7px; padding: 2px 6px; font-weight: 500; font-size: 12px; color: var(--muted); }
+  #context[hidden] { display: none; }
+  #screen:not([src]) { visibility: hidden; }
+  #context-btn:hover { color: var(--ink); }
+  #nav .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
   .dot.on { background: var(--live); }
   .dot.busy { background: var(--live); animation: pulse 1.2s ease-in-out infinite; }
@@ -103,8 +108,6 @@ APP_HTML = r"""<!doctype html>
     color: var(--muted); cursor: pointer; background: transparent;
   }
   .pill.warn { color: var(--bad); border-color: var(--bad); }
-  #model-btn .label { color: var(--muted); }
-  #model-btn .value { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: bottom; }
 
   .menu {
     position: absolute; top: calc(100% + 4px); left: 12px; z-index: 20; width: 330px; max-height: 70vh;
@@ -153,7 +156,6 @@ APP_HTML = r"""<!doctype html>
   }
   #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-menu { left: auto; right: 0; top: calc(100% + 6px); width: 280px; }
-  #context-btn { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   /* New chat: one bordered card above the message box. Rows read label → value. */
   .creator { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
   .card {
@@ -344,19 +346,6 @@ APP_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<header id="top">
-  <button class="ghost" id="context-btn" title="This chat's browser: whose logins it uses. Click to change its settings.">
-    <span class="dot" id="session-dot"></span>
-    <span id="context-text">New chat</span>
-  </button>
-  <button class="pill" id="rules-pill" hidden title="This chat can only reach some sites. Click to change."></button>
-  <span class="spacer"></span>
-  <button class="ghost" id="model-btn" title="Choose the AI model and where it runs"><span class="label">Model</span> <span class="value" id="model-name">not set</span></button>
-  <button class="icon ghost" id="theme" title="Theme: follows your system. Click to switch."></button>
-  <button class="icon ghost" id="dock" title="Move the chat to the other side">⇆</button>
-  <button class="icon ghost" id="toggle-chat" title="Hide the chat (Ctrl+B)">⇥</button>
-</header>
-
 <div id="main" class="dock-right">
   <section id="browser" aria-label="Browser">
     <div id="tabs"></div>
@@ -371,6 +360,10 @@ APP_HTML = r"""<!doctype html>
         <div class="menu files-menu" id="files-menu" hidden></div>
       </span>
       <button class="icon ghost" id="restart" title="Restart this browser. It starts and recovers on its own; use this if a page is stuck.">⏻</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button class="icon ghost" id="theme" title="Theme: follows your system. Click to switch."></button>
+      <button class="icon ghost" id="dock" title="Move the chat to the other side">⇆</button>
+      <button class="icon ghost" id="toggle-chat" title="Hide the chat (Ctrl+B)">⇥</button>
     </div>
     <div id="view">
       <img id="screen" tabindex="0" alt="The live browser page. Click and type here to use it yourself." draggable="false">
@@ -393,11 +386,19 @@ APP_HTML = r"""<!doctype html>
         </div>
       </span>
     </div>
+    <div id="context" hidden>
+      <button class="ghost" id="context-btn" title="This chat's browser: whose logins it uses. Click to change its settings.">
+        <span class="dot" id="session-dot"></span>
+        <span id="context-text">New chat</span>
+      </button>
+      <button class="pill" id="rules-pill" hidden title="This chat can only reach some sites. Click to change."></button>
+    </div>
     <div id="messages"></div>
     <div id="composer">
       <textarea id="prompt" rows="1" placeholder="Tell the browser what to do…" aria-label="Message"></textarea>
       <div class="row">
         <select id="model" title="Model for this message"></select>
+        <button class="icon ghost" id="model-btn" title="Model settings: your API key, the endpoint and the model list">⚙</button>
         <button id="stop" hidden>Stop</button>
         <button id="send" class="primary">Send</button>
       </div>
@@ -587,6 +588,7 @@ async function loadAll() {
 
 function drawSessionButton() {
   // The chat's context: whose logins its browser uses, and any site limits.
+  $("#context").hidden = !S.session;
   if (!S.session) {
     $("#context-text").textContent = "New chat";
     $("#session-dot").className = "dot";
@@ -951,10 +953,10 @@ function drawModels(chosen) {
   const models = S.settings.models || [];
   const pick = chosen || (S.chat && S.chat.model && models.includes(S.chat.model) ? S.chat.model : models[0]);
   $("#model").innerHTML = models.map(m => `<option value="${esc(m)}"${m === pick ? " selected" : ""}>${esc(shortModel(m))}</option>`).join("");
-  $("#model-name").textContent = pick ? shortModel(pick) : "not set";
+
   if (!S.chat || !(S.chat.messages || []).length) drawHistory();
 }
-$("#model").onchange = () => { $("#model-name").textContent = shortModel($("#model").value); };
+
 $("#model-btn").onclick = openModelDialog;
 async function openModelDialog() {
   await loadModels();
