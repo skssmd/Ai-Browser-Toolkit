@@ -258,6 +258,11 @@ APP_HTML = r"""<!doctype html>
     width: min(520px, 92vw); padding: 20px 22px; box-shadow: var(--shadow);
   }
   dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog.wide { width: 92vw; height: 88vh; max-width: none; padding: 14px 16px; display: none; flex-direction: column; }
+  dialog.wide[open] { display: flex; }
+  .log-head { display: flex; align-items: center; margin-bottom: 10px; }
+  .log-head h2 { margin: 0; }
+  #log-frame { flex: 1; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   dialog h2 { margin: 0 0 4px; font-size: 16px; }
   dialog .lead { margin: 0 0 12px; color: var(--muted); }
   dialog .actions { display: flex; gap: 8px; margin-top: 18px; align-items: center; }
@@ -400,6 +405,11 @@ APP_HTML = r"""<!doctype html>
     <button data-close>Cancel</button>
     <button id="ses-save" class="primary">Create session</button>
   </div>
+</dialog>
+
+<dialog id="dlg-log" class="wide">
+  <div class="log-head"><h2 id="log-title">Activity log</h2><span class="spacer"></span><button data-close>Close</button></div>
+  <iframe id="log-frame" title="Activity log"></iframe>
 </dialog>
 
 <dialog id="dlg-token">
@@ -551,6 +561,7 @@ function drawSessionMenu() {
   }
   html += `<hr><button class="row" data-action="new"><span class="grow">＋ New session</span></button>`;
   html += `<button class="row" data-action="edit"><span class="grow">Settings for “${esc(S.session)}”</span></button>`;
+  html += `<button class="row" data-action="log"><span class="grow">Activity log for “${esc(S.session)}”</span><span class="meta">every step, with screenshots</span></button>`;
   $("#session-menu").innerHTML = html;
 }
 
@@ -567,6 +578,7 @@ $("#session-menu").onclick = (e) => {
   if (row.dataset.session) selectSession(row.dataset.session);
   else if (row.dataset.action === "new") openSessionDialog(false);
   else if (row.dataset.action === "edit") openSessionDialog(true);
+  else if (row.dataset.action === "log") openLog();
 };
 document.addEventListener("click", (e) => { if (!e.target.closest("#session-menu, #session-btn")) toggleMenu(false); });
 $("#rules-pill").onclick = () => openSessionDialog(true);
@@ -961,6 +973,17 @@ function drawSetup() {
     try { S.settings = await api("PUT", "/app/settings", body, { operator: true, session: null }); drawModels(); toast("Ready — tell the browser what to do"); $("#prompt").focus(); }
     catch (e) { fail(e); }
   };
+}
+
+// The session's log -- every command, its result, a screenshot per step --
+// in the log viewer, inside the app so a sealed session's token stays here.
+async function openLog() {
+  const q = new URLSearchParams({ session: S.session });
+  const token = await sessionToken(S.session);
+  if (token) q.set("token", token);
+  $("#log-title").textContent = `Activity log — ${S.session}`;
+  $("#log-frame").src = "/viewer?" + q;
+  $("#dlg-log").showModal();
 }
 
 // --- chats ------------------------------------------------------------------------------

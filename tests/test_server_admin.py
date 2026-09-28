@@ -77,3 +77,12 @@ def test_the_legacy_app_has_no_profiles(tmp_path):
     with TestClient(create_app(BrowserSession(profile=tmp_path, headless=True))) as c:
         response = c.get("/profiles")
         assert response.json()["error"]["type"] == "invalid_op"
+
+
+def test_a_sealed_sessions_log_opens_with_its_token_in_the_url(client):
+    """How the app's embedded log viewer asks for it."""
+    token = client.post("/sessions", json={"name": "s", "sealed": True}).json()["result"]["token"]
+    client.post("/command-list", json={"op": "status"}, headers={"X-ABT-Session": "s", "X-ABT-Token": token})
+    assert client.get("/logs", params={"session": "s"}).json()["error"]["type"] == "session_sealed"
+    seen = client.get("/logs", params={"session": "s", "token": token}).json()["result"]
+    assert len(seen["sessions"]) == 1

@@ -189,9 +189,15 @@ const when = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 // Which session's logs these are. Carried on every request, so frames and
 // filtered views stay inside the session that was picked.
 const routeSession = new URLSearchParams(location.search).get("session") || "";
-const withSession = (url) => routeSession
-  ? url + (url.includes("?") ? "&" : "?") + "session=" + encodeURIComponent(routeSession)
-  : url;
+// A sealed session's logs need its token. The desktop app passes it here, to
+// its own embedded viewer, and nowhere else.
+const routeToken = new URLSearchParams(location.search).get("token") || "";
+const withSession = (url) => {
+  if (!routeSession) return url;
+  let out = url + (url.includes("?") ? "&" : "?") + "session=" + encodeURIComponent(routeSession);
+  if (routeToken) out += "&token=" + encodeURIComponent(routeToken);
+  return out;
+};
 
 async function pickerFill() {
   try {
