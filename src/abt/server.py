@@ -15,13 +15,14 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import messenger as messenger_api
+from . import screencast as screencast_util
 from . import shots as shots_util
-from .browser import BrowserSession
+from .browser import NO_BROWSER_MESSAGE, BrowserSession
 from .engine import EngineError
 from .errors import OpError
 from .ops import dispatch
@@ -37,6 +38,7 @@ from .recorder import (
 from .schema import OP_NAMES, op_signatures, parse_command
 from .profiles import DEFAULT
 from .sessions import NO_SESSIONS, Session, SingleSessionRegistry
+from .tabs import OWN
 from .viewer import VIEWER_HTML
 
 # How long /status will wait for the browser before answering without it. A
@@ -908,6 +910,67 @@ def create_app(
             return {"tab_id": tabs.set_owner(target, owner), "session": owner}
 
         return await _admin(work)
+
+    # --- screencast --------------------------------------------------------------
+
+    def _screencast_target(
+        name: str | None, profile: str | None, tab: str | None, token: str | None
+    ) -> tuple[str, str, int]:
+        profiles = _profiles()
+        if not tab:
+            raise OpError("invalid_op", "screencast needs ?tab=")
+        if registry.is_operator(token):
+            # The human at the GUI: any tab, locks included.
+            profile = profile or (registry.info(name)["profile"] if name else DEFAULT)
+            watcher = None
+        else:
+            sess = registry.get(name or None, token)
+            profile, watcher = sess.record.profile, sess.name
+        tabs = profiles.tabs(profile)
+        target = tabs.target_of(tab)
+        if target is None:
+            for row in profiles.targets(profile):
+                tabs.label(row["id"])
+            target = tabs.target_of(tab)
+        if target is None:
+            raise OpError("tab_not_found", f"no tab {tab!r} on {profile}")
+        if watcher is not None and tabs.access(target, watcher) != OWN:
+            raise OpError("tab_locked", f"{tab} is not this session's")
+        running = profiles.running(profile)
+        if running is None:
+            raise OpError("browser_dead", NO_BROWSER_MESSAGE)
+        return profile, target, running.port
+
+    @app.websocket("/screencast")
+    async def screencast(ws: WebSocket):
+        params = ws.query_params
+        token = ws.headers.get("x-abt-token") or params.get("token")
+        await ws.accept()
+        try:
+            profile, target, port = await run_in_threadpool(
+                _screencast_target,
+                params.get("session"),
+                params.get("profile"),
+                params.get("tab"),
+                token,
+            )
+        except OpError as exc:
+            await ws.send_json(fail(exc))
+            await ws.close(code=1008)
+            return
+        registry.profiles.watch(profile, +1)
+        try:
+            await screencast_util.relay(
+                ws, f"ws://127.0.0.1:{port}/devtools/page/{target}"
+            )
+        except Exception:
+            pass
+        finally:
+            registry.profiles.watch(profile, -1)
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
     return app
 
