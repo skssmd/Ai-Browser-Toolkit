@@ -144,6 +144,11 @@ server always has. Whoever launches you picks your session (`ABT_SESSION`,
   `tab_locked` — open your own with `tab_new` rather than retrying.
 - `tab_claim` takes an `unowned` tab; `tab_release` gives one up.
 - Sessions on different profiles, and on the same profile, run in parallel.
+- **Files:** a page's file input takes only files from the session's uploads
+  folder (`Documents/AI Browser Toolkit/<session>/uploads`); anything else is
+  `file_blocked`. Call `files` to see what is there and what was downloaded —
+  names and paths, never contents — and `{"op": "files", "open": true}` to open
+  the folder so the person can drop the file in. Ask them to; do not guess paths.
 - A session may have **URL rules**. `url_blocked` is final: the rules belong to
   whoever runs you. Say what you needed and stop — no other route will work,
   `run_js` included, because the rules are enforced on the network.
@@ -153,7 +158,7 @@ server always has. Whoever launches you picks your session (`ABT_SESSION`,
 `invalid_op` `element_not_found` `stale_ref` `not_interactable` `not_a_select`
 `timeout` `navigation_failed` `js_error` `last_tab` `tab_not_found`
 `browser_dead` `unknown_session` `session_exists` `session_sealed` `tab_locked`
-`profile_limit` `profile_in_use` `profile_not_found` `url_blocked`
+`profile_limit` `profile_in_use` `profile_not_found` `url_blocked` `file_blocked`
 
 Branch on `error.type`, never on the message. `invalid_op` means you guessed a
 parameter — check `GET /ops`.

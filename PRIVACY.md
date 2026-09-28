@@ -2,15 +2,16 @@
 
 **Applies to:** AI Browser Toolkit (ABT), including the Windows installer
 distributed as `skssmd.AIBrowserToolkit` on WinGet.
-**Last updated:** 2026-09-27.
+**Last updated:** 2026-09-28 — sessions, named profiles, URL rules, and the desktop app.
 **Project:** <https://github.com/skssmd/Ai-Browser-Toolkit> (Apache-2.0).
 
 ## The short version
 
-ABT is a local server that lets an AI agent drive a real Chrome or Edge window. It
-has no account, no sign-up, and no server of its own. It stores nothing on any
-machine other than the one it runs on, and it collects no telemetry, no analytics
-and no crash reports.
+ABT is a local server that lets an AI agent drive a real Chrome or Edge window,
+and an optional desktop app (`abt app`) with a chat that drives it for you. It has
+no account, no sign-up, and no server of its own. It stores nothing on any machine
+other than the one it runs on, and it collects no telemetry, no analytics and no
+crash reports.
 
 **What ABT is:** a data-curation and command layer between an AI agent and a real
 browser. It has no model, no goals and no agenda of its own. The agent decides
@@ -33,23 +34,28 @@ It does handle information that can be personal, and you should know exactly wha
   on by default so you can check afterwards whether the agent did the right
   thing. They are also unencrypted, and they are the most sensitive thing ABT
   writes. ABT's own documentation calls `logs/` secret.
-- The **AI agent** you run decides what to do with the page text, the diffs and
-  the screenshots ABT returns. Depending on which model that agent uses, **that
-  content leaves your device** to reach the model provider. ABT itself never
-  contacts a model, and never reads or stores a model API key.
+- The **AI agent** decides what to do with the page text, the diffs and the
+  screenshots ABT returns, and **that content leaves your device** to reach the
+  agent's model provider. With an outside agent (Claude Code, Codex, an MCP
+  client) the agent makes that call. **With the desktop app's chat, ABT makes it**:
+  it sends the conversation and page content to the endpoint you configured, with
+  the API key you entered, which ABT stores on this machine.
+- **Session folders** in `Documents\AI Browser Toolkit\<session>` hold files you
+  put there for the AI to upload, and files the browser downloads.
 - The **browser** makes ordinary network requests to the sites the agent visits,
   carrying that profile's cookies, exactly as a browser you signed into would.
 
-Those two flows — the pages the browser loads, and the content your agent hands
-to a model — are the only data paths off the device. The single outbound request
-ABT makes on its own is a fetch of a public playbook index, described in
-[Playbook lookups](#playbook-lookups-the-only-outbound-request-abt-makes-on-its-own).
+Those two flows — the pages the browser loads, and the content that goes to a
+model — are the only data paths off the device. Apart from the desktop app's model
+calls, the outbound requests ABT makes on its own are a fetch of a public playbook
+index, and — only when you press the button — the list of free models from
+OpenRouter; both are described in [section 5](#5-what-leaves-your-device).
 
 ## 1. Who this policy covers
 
 This policy covers the AI Browser Toolkit software: the `abt` command, the local
-HTTP server, the MCP shim, the browser automation code, and the installer that
-puts it on your machine.
+HTTP server, the MCP shim, the browser automation code, the desktop app
+(`abt app`), and the installer that puts it on your machine.
 
 It does **not** cover:
 
@@ -62,7 +68,8 @@ It does **not** cover:
   and by the settings in the browser's own UI.
 - **The sites an agent visits**, which have their own policies, and whatever
   third parties those pages embed.
-- **The AI agent and model provider you choose to connect to ABT** — see
+- **The AI agent and model provider you choose to connect to ABT**, including the
+  endpoint you enter in the desktop app — see
   [What leaves your device](#5-what-leaves-your-device).
 
 ## 2. What ABT accesses, stores, and whether it leaves the device
@@ -71,19 +78,26 @@ It does **not** cover:
 | --- | --- | --- | --- |
 | Cookies, saved passwords, session storage, history, cache, download state in the persistent profile | Hands the directory to the browser as its user-data-dir; reads none of those files | No — the browser writes them, as in any Chrome profile | Only as ordinary web traffic to the sites an agent visits, carrying those cookies |
 | Page and DOM content (text, element structure, frames, open shadow roots) | Returned to the caller of each op — usually a diff of what changed, a full page on navigation — and written into the session log | Yes, in `events.jsonl` | To the sites' own servers as page loads; to your model provider if your agent sends it there |
-| Screenshots of the browser window | Written per command, and returned by the `screenshot` op | Yes, JPEG frames under `logs/<session-id>/shots/` | To your model provider if your agent sends them there |
+| Screenshots of the browser window | Written per command, and returned by the `screenshot` op | Yes, JPEG frames under each session's log directory | To your model provider if your agent sends them there |
+| The live view in the desktop app | Frames streamed from the tab to the app window as it changes, and your clicks and typing sent back | No — frames are shown, not saved | No |
 | Session logs: what the agent saw, ran, and got back — every command, its parameters, its result, URL, tab, timing | Appended to a JSONL file as commands run | Yes, `events.jsonl` | To your model provider if your agent sends it there |
 | Browser network activity: request URLs, method, status, timing, content length | Read on request (`read_network`), and into the session log | Yes, as part of the recorded result | No |
 | Browser console output | Read on request (`read_console`) | Yes, as part of the recorded result | No |
 | Messenger thread names, previews, message bodies, senders, timestamps | Held in memory, and written into the session log | Yes, in `events.jsonl` | To Messenger itself when an agent sends; to your model provider if your agent sends it there |
-| Local file paths handed to `input` (uploads) or attached to a message | Passed to the page or to the site; the path string is recorded | Yes, as part of the recorded request | Only to the site the upload is aimed at |
+| Local file paths handed to `input` (uploads) or attached to a message | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the session's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
+| Files you put in a session's uploads folder, and files the browser downloads | Listed by name, size and path (the `files` op); never read into a response | Yes, in `Documents/AI Browser Toolkit/<session>/uploads` and `/downloads` | Uploads only to the site you or the agent upload them to |
+| Desktop app settings: model endpoint, **API key**, model list | Read when the chat calls the model | Yes, `app.json` in the sessions folder, readable only by your user account | The key goes to the endpoint you configured, with every request |
+| Desktop app chats: your messages, the model's replies, every tool call and its result | Sent to your model provider on each turn, and shown in the app | Yes, one JSON file per chat in the sessions folder | To your model provider, on every turn |
+| Sessions: name, profile, URL rules, settings; a sealed session's token | Read on every command to decide where it runs and what it may do | Yes, in the sessions folder; tokens owner-only | No |
 | Playbook notes an agent writes (`guidelines_note`) | Written to a local playbook directory | Yes | Not until you run `abt guidelines submit` yourself |
 | Machine details: browser choice, profile path, listening port, installed versions | Printed at startup and by `abt doctor` | Briefly, in `server.log` | No |
 
 ## 3. The persistent browser profile
 
 ABT's premise is that the browser stays up between agent turns, so tabs, focus
-and **logins** survive. That means one long-lived browser profile:
+and **logins** survive. That means long-lived browser profiles: `default`, and any
+**named profiles** you create (`abt profile new NAME`, or *New profile* in the
+app). Each is a separate directory with its own logins, next to `default`:
 
 | Platform | Default location |
 | --- | --- |
@@ -127,7 +141,7 @@ Two deliberate ways to give the separation up, both yours to choose:
   ABT does not stop you. That other browser must be closed, and from then on the
   agent acts as whoever is signed in there.
 - `ABT_CDP_URL`, which attaches the server to a browser you started yourself —
-  see [No remote debugging port](#no-remote-debugging-port).
+  see [The browser's debugging port](#the-browsers-debugging-port).
 
 One thing worth keeping separate: signing **the browser** into a Google or
 Microsoft account is a different decision from signing **a site** in. Chrome and
@@ -193,13 +207,36 @@ Claude Code, Codex, opencode, Cursor or anything else, whether the content is
 sent to a model provider is governed by that agent's configuration and the
 provider's terms. ABT has no visibility into it and no setting that governs it.
 
+### Sessions: open and sealed
+
+Every command runs in a **session** — a profile, its tabs, its rules and its log.
+
+- An **open** session is chosen by name alone (`--session`, `ABT_SESSION`, a
+  header). That keeps cooperating agents out of each other's tabs; it is **not**
+  a security boundary, because any local process can name any open session.
+- A **sealed** session — every session the desktop app creates, by default —
+  requires a token on every command, every log read and every settings change.
+  The token is stored hashed in the session record and in plain text in an
+  owner-only file only the desktop app reads. A model in the app's chat never sees
+  it, and no tool lets a model choose or leave its session.
+- The **operator token**, in `sessions/operator.token`, lets the desktop app view
+  and click any tab in the live view and manage model settings. It is kept across
+  restarts.
+- A session's **URL rules** (`app.example.com/admin`, `!app.example.com/api`)
+  are enforced before a navigation and on the network: a link, a redirect or a
+  `fetch()` from `run_js` to a blocked address fails in the browser itself.
+  Cross-site embedded frames and background workers are not covered.
+
 ### Any other local process, and any web page
 
 The HTTP server **binds to `127.0.0.1` only** (`src/abt/cli.py` `HOST`), so it is
-not reachable from another machine. It is, however, **not authenticated at all**:
-there is no token, no API key, no session, no origin check, no CORS headers and
-no `Host` header validation. Anything that can open a TCP connection to that
-loopback port has the same access as the agent. That includes:
+not reachable from another machine. **Open sessions are not authenticated**: there
+is no token on them, no CORS headers and no `Host` header validation, so anything
+that can open a TCP connection to that loopback port has the same access to an
+open session — `default` included — as the agent. Sealed sessions refuse any
+command without their token. The WebSockets behind the app's live view and chat
+refuse any connection whose `Origin` is not the local server, so a web page cannot
+watch or drive a tab through them. For open sessions, that exposure includes:
 
 - any other process running as any user on the same machine, and any other user
   session on a shared or multi-user host;
@@ -224,16 +261,22 @@ Practical mitigations are in [Controls](#7-controls). The short version: don't
 run ABT on a shared machine, don't port-forward the port, and stop the server
 when you are not using it.
 
-### No remote debugging port
+### The browser's debugging port
 
-ABT never opens a remote debugging port itself and never listens on anything but
-loopback. Setting `ABT_CDP_URL` opts into attaching to a browser you started
-yourself; that connection is yours to make and yours to protect.
+With sessions (the default on the Playwright engine), ABT starts each profile's
+browser with `--remote-debugging-port=0`: Chrome picks a free port **on
+`127.0.0.1` only**. That is how several sessions share one browser, how URL rules
+are enforced on the network, and how the app shows the live view. The port is not
+published over ABT's API, but any process running as you can find it and drive
+that browser directly, around sessions, rules and tokens — the same trust boundary
+as the profile files themselves. Setting `ABT_CDP_URL` still attaches to a browser
+you started yourself, and switches sessions off.
 
 ## 5. What leaves your device
 
-Three flows carry information off the device, and only one of them is initiated
-by ABT itself.
+These flows carry information off the device. The desktop app's chat, the
+optional free-model lookup and the playbook index are initiated by ABT; the rest
+are the browser's and your agent's.
 
 ### Pages an agent visits
 
@@ -250,9 +293,25 @@ browser.
 Page text, diffs, screenshots, console output and network rows are handed to the
 agent, and an agent's whole purpose is to send that context to a model. **Expect
 content from your authenticated pages to be transmitted to whichever model
-provider you have configured.** ABT does not make that call, does not choose the
-provider, and does not read or store any API key — the key lives in your agent
-process, and ABT's only configuration file holds no credentials.
+provider you have configured.** With an outside agent, ABT does not make that call
+and does not hold the key.
+
+### Your model provider, through the desktop app
+
+The app's chat **is** an agent, and ABT runs it. On every turn ABT sends, to the
+endpoint you entered (OpenRouter by default, or any OpenAI-compatible service):
+
+- your API key, in the `Authorization` header;
+- the whole conversation so far — your messages, the model's replies, and the
+  result of every tool call, which includes page text from your signed-in
+  sessions (older results are shortened);
+- the list of tools and the session's URL rules, so the model knows its limits.
+
+Screenshots are not sent. File contents are never sent: the model sees file names
+and paths, not what is in them. `openrouter/free` and other routers may hand each
+request to a different provider, each under its own terms; pick a single model if
+that matters. **Fetch free models** sends one request for OpenRouter's public
+model list, with your key if you have saved one.
 
 ### How much leaves: curated, not raw
 
@@ -276,7 +335,7 @@ This reduces how much of your browsing is transmitted. It does not reduce how
 sensitive it is. A diff of a private page is still private content, and the first
 time a value appears in a diff it appears whole.
 
-### Playbook lookups: the only outbound request ABT makes on its own
+### Playbook lookups
 
 ABT keeps a library of site playbooks — notes that tell an agent how a
 particular site is structured. To tell you when that library has been updated,
@@ -304,9 +363,8 @@ ABT never collects an account, a name, an email address, an IP address, a device
 identifier, an advertising identifier or a usage profile, and it has nowhere to
 put them: there is no backend. There is no telemetry, no analytics, no usage
 reporting, no crash reporting, no update check, no version ping and no
-phone-home. ABT does not call any model API and does not upload anything. It
-contacts no AI service. The only network libraries it uses are an HTTP client
-for the playbook index and the browser driver itself.
+phone-home. ABT contacts an AI service only for the desktop app's chat, only the
+endpoint you entered, and only when you send a message.
 
 The repository also contains a benchmark harness under `benchmarks/` that calls
 model APIs directly. It is a developer tool, is not part of the installed
@@ -351,9 +409,13 @@ you and to anyone who can read the log directory or the loopback port.
 | Linux (installed) | `$XDG_STATE_HOME/aibrowsertoolkit/logs`, else `~/.local/state/aibrowsertoolkit/logs` |
 
 `--log-dir` changes it. `--no-log` turns the recorder off entirely — which also
-stops frames being written to disk. Each run gets its own directory:
-`logs/<YYYYMMDD-HHMMSS>/` with `events.jsonl`, a `meta.json` summary, and
-`shots/`.
+stops frames being written to disk. With sessions, each session has its own
+directory and each server run a folder inside it:
+`logs/sessions/<session>/<YYYYMMDD-HHMMSS>/` with `events.jsonl`, a `meta.json`
+summary, and `shots/`. A sealed session's log is readable over HTTP only with its
+token. The desktop app shows a session's log under *Activity log*. Removing a
+session moves its logs to `logs/removed-sessions/`, so a new session with the same
+name does not inherit them.
 
 **These files are not redacted.** Individual string fields are truncated at
 4,000 characters and nothing else is filtered, so a value typed into a form —
@@ -392,6 +454,8 @@ directory — which is why uninstalling does not take them with it.
 | What | Where | Note |
 | --- | --- | --- |
 | `config.json` | data root | Playbook lookup settings and the last check timestamp. No credentials. |
+| `sessions/` | beside the profiles (`<checkout>/sessions`, or the data root) | Session records (`<name>.json`), sealed-session tokens (`<name>.token`), `operator.token`, the desktop app's `app.json` **including your model API key**, and `chats/<session>/` with every chat. Files are created readable only by your account on macOS and Linux; on Windows they inherit your user profile's permissions. Removed sessions' chats move to `removed-chats/`. |
+| `Documents/AI Browser Toolkit/<session>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, and files the browser downloaded. Nothing is deleted automatically. |
 | `guidelines/local/`, `guidelines/trusted/`, `guidelines/pending/` | data root | Playbooks read, trusted, or pulled but not yet trusted. An agent's own `guidelines_note` is written locally and is not shared until you run `abt guidelines submit`. |
 | `server.log` | next to the source checkout | The launcher's stdout, including the resolved profile path, log directory and listening address. |
 | `abt-attach-*` | system temp directory | Remote Messenger attachments downloaded at your or your agent's request. **Not deleted automatically.** |
@@ -400,7 +464,9 @@ directory — which is why uninstalling does not take them with it.
 
 ### In-memory only
 
-The network ring buffer (500 entries per page, cleared on main-frame navigation)
+The desktop app's live view frames are streamed and never written to disk; a
+reply that is still running is held in memory and saved to the chat when it
+finishes. The network ring buffer (500 entries per page, cleared on main-frame navigation)
 and the page console buffer (500 messages, 2,000 characters each) are held in
 memory and never written to disk. Messenger cursors and job state are in memory
 for the life of the process — but every Messenger route is recorded, so the
@@ -423,7 +489,11 @@ session log is the durable copy.
 
 | Control | Effect |
 | --- | --- |
-| `--no-run-js` | Disable arbitrary JavaScript execution in pages. |
+| `--no-run-js` | Disable arbitrary JavaScript execution in pages. Per session: `abt session set NAME --no-run-js`, or *Let the AI run scripts* in the app. |
+| URL rules per session | `abt session set NAME --rules "app.example.com,!app.example.com/api"`, or *Sites it may visit* in the app. Enforced before navigation and on the network. `--strict` checks images, scripts and styles too. |
+| Sealed sessions | `abt session new NAME --sealed`, or the default in the app. Nothing without the token can drive it. |
+| Uploads only from the session folder | On by default for every session but `default`, and always for the app's chat; `uploads_only` in the session settings. The AI cannot hand a page `~/.ssh/id_rsa` or any other file outside the folder. |
+| `--max-profiles`, `--profile-idle-minutes` | Cap how many browsers run, and stop idle ones. |
 | `ABT_URL_SCHEMES=http,https` | Restrict navigation to a scheme allow-list. With it set, the agent can no longer open a `file://` path on your machine or a `chrome://` page such as the password manager. |
 | `--headless` | Run with no visible window, so nothing is shoulder-surfed. |
 | `--profile <dir>` | Use a profile that holds no logins. A second server on a second `--port` and `--profile` gives you a clean session with no shared state. |
@@ -462,7 +532,9 @@ account until you give it one.
 
 - Choose an agent and a model provider whose handling of your page content you
   accept, or one that runs locally. This is the only lever on the largest data
-  flow, and it belongs to the agent, not to ABT.
+  flow. In the desktop app, that choice is *Models*: a local endpoint (for
+  example Ollama at `http://localhost:11434/v1`) keeps the conversation on this
+  machine.
 - Keep the default dedicated profile for agent work, so the agent's
   authenticated sessions are not the same ones you use day to day.
 
@@ -478,6 +550,11 @@ Deletion is manual, and the paths are:
 | What | How to delete it |
 | --- | --- |
 | Session logs and screenshots | Delete the session directories under your log directory, or the whole `logs` directory. |
+| Desktop app chats | Delete a chat in the app, or the `sessions/chats/` folder. |
+| The model API key | Clear it in *Models*, or delete `sessions/app.json`. |
+| Session records and tokens | `abt session rm NAME`, or delete the `sessions/` folder. |
+| Uploaded and downloaded files | Delete them from `Documents/AI Browser Toolkit/<session>/`. |
+| Named profiles | `abt profile rm NAME`, or *Logins from → delete* in the app. |
 | Logins, cookies, history, site storage | Sign out inside the browser window and use Chrome's own "Clear browsing data" on that profile, or delete the profile directory. `abt doctor` prints the path. There is no ABT command for this. |
 | Playbooks, config, first-run marker | Delete the data root (and the state root on Linux, where they differ). Local notes go with it; a submitted playbook is a separate Git history. |
 | Downloaded Messenger attachments | Delete `abt-attach-*` directories in your system temp folder. |
@@ -489,23 +566,28 @@ the server first.
 
 ## 9. Security notes
 
-- **The loopback boundary is the only boundary.** There is no authentication on
-  the server, on the log endpoints, or on the MCP shim. See
+- **For open sessions, the loopback boundary is the only boundary.** They are not
+  authenticated, and neither is the MCP shim. Sealed sessions and the operator
+  token are the exception, and protect against other programs using ABT — not
+  against a program running as you, which can read the same token files. See
   [section 4](#4-how-agents-and-local-processes-reach-profile-data).
+- **Your model API key is stored unencrypted** in `sessions/app.json`, protected
+  by file permissions only.
 - **The profile directory is not encrypted by ABT** and is protected only by your
   operating system's file permissions and disk encryption. Anyone who can read
   your user profile on that machine can read the cookies.
 - **Session logs and screenshots are not encrypted** and are protected only by
   file permissions. Back them up, sync them or delete them accordingly.
-- **The WebSocket/CDP ports opened internally by the browser driver** are chosen
-  by the driver, not by ABT, and are not exposed by ABT.
+- **Each profile's browser listens on a debugging port on `127.0.0.1`**, chosen by
+  Chrome, not published by ABT's API. See [The browser's debugging port](#the-browsers-debugging-port).
 - **Anti-automation flags** (`--disable-blink-features=AutomationControlled`,
   `excludeSwitches: enable-automation`) are applied on the Selenium engine
   (`--engine selenium`) and not on the default Playwright engine. This is about
   site compatibility, not privacy; it is mentioned because sites can observe the
   difference.
-- ABT never contacts a model provider and never handles an API key. If a report
-  ever suggests otherwise, that is a bug — please report it.
+- ABT contacts a model provider only for the desktop app's chat, and only the
+  endpoint you configured. If a report ever suggests it contacts anything else,
+  that is a bug — please report it.
 - Reports go to
   [GitHub issues](https://github.com/skssmd/Ai-Browser-Toolkit/issues). Please do
   not paste cookies, tokens, session-log excerpts or page content into a public
@@ -519,6 +601,8 @@ they handle your information when you use the product.
 | Party | What they receive | When |
 | --- | --- | --- |
 | Your AI agent / model provider (Anthropic, OpenAI, Google, OpenRouter, or a local model) | Page text, diffs, screenshots, console and network data from the pages your agent opened, subject to that agent's configuration | Every agent turn, if the agent sends context to a model |
+| The model endpoint you enter in the desktop app (OpenRouter by default, and through `openrouter/free` whichever provider it routes to) | Your API key; the conversation, including page text from tool results; tool definitions and the session's URL rules | Every chat turn you start |
+| OpenRouter (`openrouter.ai/api/v1/models`) | One request for the public model list, with your key if saved | Only when you press *Fetch free models* |
 | Every site an agent visits, and the third parties embedded in those pages | Ordinary web request data plus the profile's cookies for that site; form values, searches and messages you or your agent submit | Every page load and submission |
 | Google Chrome / Microsoft Edge | The profile contents, and whatever the browser's own sync and telemetry settings send | Whenever the browser is running |
 | GitHub (`raw.githubusercontent.com`, `api.github.com`) | One GET for a public playbook index, containing no data about you | Once per 24 hours, and on first visit to a new domain |

@@ -359,6 +359,17 @@ when one fails. The chat docks left or right, resizes, and hides like a drawer
 its own chats. Sessions the app creates are sealed, so the model can never
 leave the one it was given.
 
+Each session has two folders in `Documents/AI Browser Toolkit/<session>/`.
+**uploads** is the only place a page's file input will take a file from — the
+AI can list it but never read it, and a path anywhere else, `~/.ssh` included,
+is refused. **downloads** is where the browser saves what it downloads. The 📁
+button shows both. When a page asks for a file, the app offers what is in
+uploads, or lets you pick one, which is copied there first. The *Activity log*
+in the session menu shows every step the AI took, with screenshots.
+
+The chat's model call is the one place the app sends your data out: to the
+endpoint you entered, with your key. See [PRIVACY.md](PRIVACY.md).
+
 ## Sessions and profiles
 
 One server runs several agents at once. Each works in a **session**: a named
