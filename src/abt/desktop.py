@@ -77,4 +77,17 @@ def open_window(base: str, width: int = 1440, height: int = 900) -> str:
     # were in, the theme and the chat panel's side and width.
     storage = str(where / "app-window") if where is not None else None
     webview.start(private_mode=False, storage_path=storage)
+    # The window is closed. Its browsers run hidden, so nothing else would
+    # ever close them: ask the server to. The server itself stays up.
+    close_browsers(base, api)
     return "window"
+
+
+def close_browsers(base: str, api: "Bridge | None") -> None:
+    token = api.operator_token() if api is not None else None
+    if not token:
+        return
+    try:
+        httpx.post(f"{base}/app/quit", headers={"X-ABT-Token": token}, timeout=30)
+    except Exception:
+        pass

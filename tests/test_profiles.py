@@ -196,11 +196,48 @@ def test_a_profile_held_by_another_chrome_fails_fast(make, tmp_path):
         process.die()
         return process
 
-    reg = make(spawn=spawn, launch_timeout=30.0)
+    reg = make(spawn=spawn, launch_timeout=30.0, find_holders=lambda d, ours_only: [])
     with pytest.raises(OpError) as exc:
         reg.attach(DEFAULT, "a")
     assert exc.value.type == "browser_dead"
     assert "holding the profile" in exc.value.message
+    assert "pkill" not in exc.value.message and "force-close" in exc.value.message
+
+
+def test_a_browser_left_by_an_earlier_server_is_ended_and_the_launch_retried(make, tmp_path):
+    """A server killed without closing its browsers used to wedge the profile."""
+    calls = []
+
+    def spawn(argv):
+        calls.append(argv)
+        if len(calls) == 1:
+            process = FakeProcess(argv, write_port=False)
+            (process.dir / "SingletonLock").write_text("", encoding="utf-8")
+            process.die()
+            return process
+        (Path(argv[1].split("=", 1)[1]) / "SingletonLock").unlink(missing_ok=True)
+        return FakeProcess(argv)
+
+    asked, killed = [], []
+    reg = make(
+        spawn=spawn,
+        find_holders=lambda d, ours_only: asked.append(ours_only) or [4242],
+        kill_holders=lambda pids: killed.extend(pids) or len(pids),
+    )
+    reg.attach(DEFAULT, "a")
+    assert asked == [True]  # only abt's own leftovers, never a person's window
+    assert killed == [4242]
+    assert len(calls) == 2
+
+
+def test_force_close_ends_every_holder_when_asked(make):
+    asked, killed = [], []
+    reg = make(
+        find_holders=lambda d, ours_only: asked.append(ours_only) or [7, 8],
+        kill_holders=lambda pids: killed.extend(pids) or len(pids),
+    )
+    assert reg.force_close(DEFAULT) == {"profile": DEFAULT, "closed": 2}
+    assert asked == [False] and killed == [7, 8]
 
 
 def test_no_browser_installed(make):

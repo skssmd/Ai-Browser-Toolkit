@@ -268,3 +268,20 @@ def test_the_overview_lists_every_chat_for_the_operator_only(client, registry):
     assert by_chat[sealed["id"]]["session"] == "chat-a" and by_chat[sealed["id"]]["sealed"] is True
     assert by_chat[plain["id"]]["session"] == "default"
     assert all(r["running"] is False and r["messages"] == 0 for r in rows)
+
+
+def test_closing_the_app_closes_its_browsers_but_not_the_server(client, registry, monkeypatch):
+    stopped = []
+    monkeypatch.setattr(registry.profiles, "stop_all", lambda: stopped.append(True))
+    assert client.post("/app/quit").json()["error"]["type"] == "session_sealed"
+    assert client.post("/app/quit", headers=OP).json()["ok"] is True
+    assert stopped == [True]
+    assert client.get("/health").status_code == 200
+
+
+def test_force_close_is_for_the_operator_only(client, registry, monkeypatch):
+    monkeypatch.setattr(registry.profiles, "force_close", lambda name: {"profile": name, "closed": 1})
+    assert client.post("/profiles/default/force-close").json()["error"]["type"] == "session_sealed"
+    assert client.post("/profiles/default/force-close", headers=OP).json()["result"] == {
+        "profile": "default", "closed": 1,
+    }

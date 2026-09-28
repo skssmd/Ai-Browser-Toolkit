@@ -825,10 +825,27 @@ async function ensureBrowser(op) {
   viewMessage(op === "browser_restart" ? "Restarting the browser…" : "Starting the browser…");
   try { await run({ op }); }
   catch (e) {
+    if (/holding the profile/.test(e.message || "")) { S.starting = false; return offerForceClose(session, op); }
     if (!/already running/.test(e.message || "")) { S.starting = false; viewMessage(e.message, "Try again", () => { S.lastStart[session] = 0; ensureBrowser(op); }); return; }
   }
   S.starting = false;
   if (S.session === session) { await loadAll(); await refreshBrowser(); }
+}
+
+// Another browser holds this chat's profile: usually a Chrome window someone
+// opened on it. Closing it is the person's call, so it is a button.
+function offerForceClose(session, op) {
+  const info = S.sessions.find(x => x.name === session) || {};
+  const profile = info.profile || S.profile || "default";
+  viewMessage(`Another browser is using the “${profile}” profile, so this one can't start. Close that Chrome window, or force it closed here (anything unsaved in it is lost).`,
+    "Force close the browser", async () => {
+      viewMessage("Closing it…");
+      try {
+        const out = await api("POST", `/profiles/${encodeURIComponent(profile)}/force-close`, undefined, { operator: true, session: null });
+        toast(out.closed ? "Closed the browser holding the profile" : "Nothing was holding it any more");
+      } catch (e) { fail(e); }
+      S.lastStart[session] = 0; ensureBrowser(op);
+    });
 }
 
 function viewMessage(text, action, onAction) {

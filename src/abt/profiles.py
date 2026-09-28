@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 import httpx
 
+from . import holders
 from .errors import OpError
 from .tabs import TabRegistry
 
@@ -131,6 +132,10 @@ class Running:
         return self.process.poll() is None
 
 
+class _ProfileHeld(Exception):
+    """Chrome handed off to a browser already holding the folder, and exited."""
+
+
 class ProfileRegistry:
     def __init__(
         self,
@@ -145,6 +150,8 @@ class ProfileRegistry:
         http_get: Callable[[str], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
         launch_timeout: float = LAUNCH_TIMEOUT,
+        find_holders: Callable[..., list[int]] | None = None,
+        kill_holders: Callable[[list[int]], int] | None = None,
     ) -> None:
         self.root = Path(root).resolve()
         self.default_dir = (
@@ -159,6 +166,8 @@ class ProfileRegistry:
         self._http_get = http_get or _http_get
         self._clock = clock
         self.launch_timeout = launch_timeout
+        self._find_holders = find_holders or holders.find
+        self._kill_holders = kill_holders or holders.kill
         # Guards the maps only. Launching and stopping take seconds, so they
         # happen outside it -- one profile starting must never stall another
         # session's `tab_list` on a different profile.
@@ -406,9 +415,43 @@ class ProfileRegistry:
         # A file left by an earlier run names a port nobody is listening on.
         port_file.unlink(missing_ok=True)
         headed = self.meta(name)["headed"]
-        process = self._spawn(launch_argv(binary, directory, headed))
-        port = self._await_port(process, port_file, directory)
+        argv = launch_argv(binary, directory, headed)
+        process = self._spawn(argv)
+        try:
+            port = self._await_port(process, port_file, directory)
+        except _ProfileHeld:
+            # Most often a hidden browser left by an earlier server that died
+            # without closing it. Those are ours to end; then try once more.
+            if not self._kill_holders(self._find_holders(directory, ours_only=True)):
+                raise self._held(name, directory) from None
+            time.sleep(1.0)
+            port_file.unlink(missing_ok=True)
+            process = self._spawn(argv)
+            try:
+                port = self._await_port(process, port_file, directory)
+            except _ProfileHeld:
+                raise self._held(name, directory) from None
         return Running(process=process, port=port, headed=headed, last_used=self._clock())
+
+    def _held(self, name: str, directory: Path) -> OpError:
+        return OpError(
+            "browser_dead",
+            f"another browser is holding the profile at {directory}. Close the "
+            "Chrome window that uses it, or force-close it: in the app, the "
+            f"button beside this message; over HTTP, POST /profiles/{name}/force-close "
+            "with the operator token. Then start again.",
+        )
+
+    def force_close(self, name: str) -> dict:
+        """End every browser holding `name`'s folder, ours or not.
+
+        For the person, who has said to: this also closes a Chrome window they
+        opened on the profile themselves. Unsaved work in it is lost.
+        """
+        self.require(name)
+        self.stop(name)
+        pids = self._find_holders(self.path(name), ours_only=False)
+        return {"profile": name, "closed": self._kill_holders(pids)}
 
     def _await_port(self, process: Any, port_file: Path, directory: Path) -> int:
         deadline = time.monotonic() + self.launch_timeout
@@ -426,15 +469,7 @@ class ProfileRegistry:
                     or (directory / "lockfile").exists()
                     or process.returncode == 0
                 ):
-                    raise OpError(
-                        "browser_dead",
-                        f"another browser is holding the profile at {directory}. "
-                        "Close any Chrome window using it. If none is open, a hidden "
-                        "browser left by an earlier abt server may still hold it: end "
-                        "the chrome processes whose command line names this folder "
-                        "(Task Manager > Details, or `pkill -f` with the path), then "
-                        "start again",
-                    )
+                    raise _ProfileHeld(directory)
                 raise OpError(
                     "browser_dead",
                     f"chrome exited during launch (exit code {process.returncode})",

@@ -935,6 +935,38 @@ def create_app(
     async def profiles_remove(name: str):
         return await _admin(lambda: registry.remove_profile(name) or {"removed": name})
 
+    @app.post("/profiles/{name}/force-close")
+    async def profiles_force_close(name: str, request: Request):
+        """End every browser holding this profile, a person's own window too.
+
+        Operator only: it can close a Chrome window somebody is using.
+        """
+        def work():
+            if not registry.is_operator(_token(request)):
+                raise OpError("session_sealed", "force-closing a browser needs the operator token")
+            return _profiles().force_close(name)
+
+        return await _admin(work)
+
+    @app.post("/app/quit")
+    async def app_quit(request: Request):
+        """The app's window closed: close every browser it may have left open.
+
+        They start again on demand, so a CLI agent on this server only notices
+        a fresh browser. Operator only.
+        """
+        def work():
+            if not registry.is_operator(_token(request)):
+                raise OpError("session_sealed", "this needs the operator token")
+            profiles = registry.profiles
+            if profiles is None:
+                return {"closed": []}
+            names = [row["name"] for row in profiles.list() if profiles.running(row["name"])]
+            profiles.stop_all()
+            return {"closed": names}
+
+        return await _admin(work)
+
     @app.post("/tabs/owner")
     async def tabs_owner(request: Request):
         """The operator hands a tab to a session, or frees it (session: null)."""
