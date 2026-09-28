@@ -1,21 +1,21 @@
-```
- █████╗ ██████╗ ████████╗
-██╔══██╗██╔══██╗╚══██╔══╝
-███████║██████╔╝   ██║
-██╔══██║██╔══██╗   ██║
-██║  ██║██████╔╝   ██║
-╚═╝  ╚═╝╚═════╝    ╚═╝
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skssmd/Ai-Browser-Toolkit/main/assets/logo-white-256.png">
+    <img src="https://raw.githubusercontent.com/skssmd/Ai-Browser-Toolkit/main/assets/logo-black-256.png" alt="AI Browser Toolkit" width="112" height="112">
+  </picture>
+</p>
 
 # AI Browser Toolkit (ABT)
 
 A local HTTP server that gives an LLM agent a real browser — driven by
 descriptions, not screenshots or snapshot indices.
 
-One persistent browser profile per server instance. Send it JSON ops —
-`goto`, `find`, `click`, `input`, `run_js` — one at a time or twenty at once.
-Every op that changes the page returns a diff of what changed, so the agent
-never re-reads state it already has.
+Send it JSON ops — `goto`, `find`, `click`, `input`, `run_js` — one at a time or
+twenty at once. Every op that changes the page returns a diff of what changed,
+so the agent never re-reads state it already has. One server runs many
+**sessions** in parallel, each on its own browser profile with its own logins,
+tabs, site rules and log — and a **desktop app** puts a browser and a chat with
+your model side by side.
 
 Built for agent harnesses — **Claude Code, Codex, OpenCode, Cursor, Gemini
 CLI, Copilot**, or anything you write yourself — over **CLI**, **MCP**, or
@@ -48,7 +48,12 @@ paru -S aibrowsertoolkit-bin
 brew install skssmd/tap/aibrowsertoolkit
 ```
 
-**Windows** — Scoop, or winget:
+**Windows** — the installer from the
+[latest release](https://github.com/skssmd/Ai-Browser-Toolkit/releases/latest)
+(`aibrowsertoolkit-<version>-windows-x86_64-setup.exe`). It asks what to set
+up — the **desktop app**, the **command line**, or both — and needs no admin
+rights. The app gets Start-menu and desktop shortcuts and opens with no console
+window. Or Scoop, or winget:
 
 ```powershell
 scoop bucket add skssmd https://github.com/skssmd/scoop-bucket
@@ -97,7 +102,8 @@ abt doctor          # what browsers are installed, and where
 ```
 
 **The desktop app** — a window with the browser and a chat side by side, for
-driving it yourself with a model of your choice:
+driving it yourself with a model of your choice. The Windows installer sets it
+up; anywhere else:
 
 ```bash
 pip install "ai-browser-toolkit[app]"   # adds the window; without it the app opens in a browser tab
@@ -257,7 +263,7 @@ signal about which parts of a site churn and which are stable.
                         │
 ┌───────────────────────▼───────────────────────┐
 │  Playwright                                   │
-│  persistent browser profile                   │
+│  one Chrome per profile, shared by sessions   │
 └───────────────────────┬───────────────────────┘
                         │  raw page state
 ┌───────────────────────▼───────────────────────┐
@@ -361,22 +367,34 @@ pip install "ai-browser-toolkit[app]"   # the window; without it the app opens i
 abt app
 ```
 
-One window: the session's browser tab, live and clickable, beside a chat with a
-model you choose. **Models** takes any OpenAI-compatible endpoint, your API key
-and a list of models; **Fetch free OpenRouter models** fills the list with the
-current free models that support tools, and the chat falls back down the list
-when one fails. The chat docks left or right, resizes, and hides like a drawer
-(Ctrl+B). Pick or create a profile and a session at the top; each session keeps
-its own chats. Sessions the app creates are sealed, so the model can never
-leave the one it was given.
+One window: the chat's browser, live and clickable, beside a chat with a model
+you choose. The chat docks left or right, resizes, and hides like a drawer
+(Ctrl+B).
 
-Each session has two folders in `Documents/AI Browser Toolkit/<session>/`.
-**uploads** is the only place a page's file input will take a file from — the
-AI can list it but never read it, and a path anywhere else, `~/.ssh` included,
-is refused. **downloads** is where the browser saves what it downloads. The 📁
-button shows both. When a page asks for a file, the app offers what is in
-uploads, or lets you pick one, which is copied there first. The *Activity log*
-in the session menu shows every step the AI took, with screenshots.
+- **Every chat is its own session.** *New chat* opens a small card: whose
+  logins to use (a profile, or a new one), which sites it may visit, and whether
+  it may run scripts. Type the first message and that chat gets its own sealed
+  session and browser — the model can never leave it.
+- **Allowed sites** start as `all`. Add `!site` lines to block some, or replace
+  `all` with the sites it may use; an empty list blocks every site. Enforced on
+  the network, so a link, a redirect or a script cannot get around it.
+- **Models** (⚙ beside the model picker): an OpenRouter key, or any
+  OpenAI-compatible endpoint, and a list of models. *Add free OpenRouter models*
+  fills it with the current free models that support tools, and the chat falls
+  back down the list when one fails.
+- **The chat list** keeps the newest activity on top, with the last 30 minutes
+  first. Chats idle for a day move to **Archived**; carry one on and it comes
+  back to the top. Replies keep running while you switch chats.
+- **Files.** Each chat has two folders in `Documents/AI Browser Toolkit/<chat>/`.
+  **uploads** is the only place a page's file input takes a file from — the AI
+  can list it but never read it, and a path anywhere else, `~/.ssh` included, is
+  refused. **downloads** is where downloads land. The 📁 button shows both.
+- The ⋯ menu has the chat's settings, its **Activity log** (every step, with
+  screenshots) and Delete.
+- **Closing the window closes its browsers**; the server keeps running for
+  anything else using it. A browser left behind by a server that died is
+  cleaned up on the next start, and a profile held by another Chrome window can
+  be force-closed from the app.
 
 The chat's model call is the one place the app sends your data out: to the
 endpoint you entered, with your key. See [PRIVACY.md](PRIVACY.md).
