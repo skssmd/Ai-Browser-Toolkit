@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 — unreleased
+## 0.7.0 — 2026-09-28
 
 One server now runs many sessions, each in its own browser profile, in
 parallel — and there is a desktop app to drive them with a model of your choice.
@@ -45,8 +45,24 @@ parallel — and there is a desktop app to drive them with a model of your choic
   with tool support, and the chat falls back down your model list when one fails.
 - Replies run on the server: switching session or profile, or closing the
   window, leaves them running; coming back replays what was missed.
-- Sessions, profiles, rules, chats per session, an activity log with screenshots,
-  uploads and downloads — all from the window. Light and dark themes.
+- **Every chat is its own session.** New chat opens a short settings card —
+  which profile's logins, which sites it may visit (`all` by default), scripts —
+  and the first message creates a sealed session with those settings.
+- The chat list keeps the newest activity on top, divides the last 30 minutes
+  from the rest of the day, and moves chats idle for a day to an Archived menu;
+  carrying one on brings it back.
+- Closing the window closes its browsers; the server stays up. A browser left
+  behind by a server that died is ended on the next launch, and a profile held
+  by another window can be force-closed from the app.
+- An activity log with screenshots, uploads and downloads, light and dark
+  themes, and a logo of its own.
+
+### Install
+
+- **Windows installer** with a choice of the desktop app, the command line, or
+  both; Start-menu and desktop shortcuts that open the app with no console. The
+  server, and its logon task, start with no window.
+- Bundles leave out pip (packages go in at build time) and Selenium.
 
 ### Other changes
 
@@ -55,7 +71,7 @@ parallel — and there is a desktop app to drive them with a model of your choic
   always reported.
 - A guessed parameter name is answered with the op's real parameters.
 - Profile browsers launch without popup blocking, as Playwright did.
-- CI runs in four shards per platform, with a job timeout.
+- CI and the release's test run go in four shards, each with a job timeout.
 
 ### Selenium retired
 
