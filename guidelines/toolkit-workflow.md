@@ -89,6 +89,22 @@ HTTP calls and want to avoid a process launch per command; otherwise prefer
 | Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` `tab_claim` `tab_release` |
 | Control | `diff` `status` `shutdown` |
 
+### Sessions
+
+Every command runs in a session — a profile, its own tabs, its own log. With
+none named it is `default`, which behaves as the server always has. Whoever
+launches you picks your session; do not pick one yourself.
+
+- `--session` is **not** a security boundary. Any process can name any open
+  session; it only keeps cooperating agents out of each other's way.
+- **Sealed** sessions need a token only their launcher holds. `session_sealed`
+  means it is not yours to use.
+- A tab belongs to the session that opened it, and popups follow it. Another
+  session's tab shows in `tab_list` as `locked` and refuses every action with
+  `tab_locked` — open your own with `tab_new` rather than retrying.
+- `tab_claim` takes an `unowned` tab; `tab_release` gives one up.
+- Sessions on different profiles, and on the same profile, run in parallel.
+
 A few sites have sequences that always run together, and those are packaged as
 shortcuts of their own. They are shortcuts over these same ops, never a
 replacement: when one does not fit what you need, drive the page with the ops

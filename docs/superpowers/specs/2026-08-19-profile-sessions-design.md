@@ -1,7 +1,7 @@
 # Profile Sessions — Design
 
 Date: 2026-08-19
-Status: Approved
+Status: Superseded by 2026-09-28-multi-profile-sessions-design.md (never built)
 
 ## Purpose
 

@@ -146,6 +146,7 @@ VIEWER_HTML = r"""<!doctype html>
 <header>
   <h1>abt session logs</h1>
   <span class="sub" id="hint">loading…</span>
+  <select id="session-pick" hidden></select>
 </header>
 
 <div class="layout">
@@ -185,14 +186,38 @@ let mode = "sessions", sessions = [], sites = [], current = null, siteFilter = n
 const esc = (s) => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const when = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 
+// Which session's logs these are. Carried on every request, so frames and
+// filtered views stay inside the session that was picked.
+const routeSession = new URLSearchParams(location.search).get("session") || "";
+const withSession = (url) => routeSession
+  ? url + (url.includes("?") ? "&" : "?") + "session=" + encodeURIComponent(routeSession)
+  : url;
+
+async function pickerFill() {
+  try {
+    const r = await fetch("/sessions");
+    const b = await r.json();
+    // Sealed sessions' logs need their token, which this page never has.
+    const open = (b.result || []).filter(s => !s.sealed);
+    if (open.length < 2) return;
+    const pick = $("#session-pick");
+    pick.innerHTML = open.map(s =>
+      `<option value="${esc(s.name)}"${s.name === (routeSession || "default") ? " selected" : ""}>${esc(s.name)}</option>`
+    ).join("");
+    pick.hidden = false;
+    pick.onchange = () => { location.search = "?session=" + encodeURIComponent(pick.value); };
+  } catch (e) { /* an older server without sessions */ }
+}
+
 async function get(url) {
-  const r = await fetch(url);
+  const r = await fetch(withSession(url));
   const b = await r.json();
   if (!b.ok) throw new Error((b.error && b.error.message) || "request failed");
   return b.result;
 }
 
 async function boot() {
+  pickerFill();
   const data = await get("/logs");
   sessions = data.sessions || [];
   sites = await get("/logs/sites");
@@ -301,7 +326,7 @@ function outcome(e) {
 }
 
 function shotUrl(e) {
-  return `/logs/${encodeURIComponent(e.session_id)}/shots/${encodeURIComponent(e.shot)}`;
+  return withSession(`/logs/${encodeURIComponent(e.session_id)}/shots/${encodeURIComponent(e.shot)}`);
 }
 
 function boxStyle(b) {

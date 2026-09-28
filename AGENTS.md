@@ -128,11 +128,29 @@ One honest limit: a `mode: "closed"` shadow root cannot be read by *any*
 JavaScript, so "not there" means nothing reachable has it. Closed roots are
 rare outside browser internals.
 
+## Sessions
+
+Every command runs in a **session**: a profile (its logins), its own tabs, its
+own log. Say nothing and you are in `default`, which behaves exactly as this
+server always has. Whoever launches you picks your session (`ABT_SESSION`,
+`abt --session`, `abt mcp --session`) — do not pick one yourself.
+
+- `--session` is **not** a security boundary. Any process can name any open
+  session; it only keeps cooperating agents out of each other's way.
+- **Sealed** sessions need a token only their launcher holds. `session_sealed`
+  means it is not yours to use.
+- A tab belongs to the session that opened it, and popups follow it. Another
+  session's tab shows in `tab_list` as `locked` and refuses every action with
+  `tab_locked` — open your own with `tab_new` rather than retrying.
+- `tab_claim` takes an `unowned` tab; `tab_release` gives one up.
+- Sessions on different profiles, and on the same profile, run in parallel.
+
 ## Errors are a closed set
 
 `invalid_op` `element_not_found` `stale_ref` `not_interactable` `not_a_select`
 `timeout` `navigation_failed` `js_error` `last_tab` `tab_not_found`
-`browser_dead`
+`browser_dead` `unknown_session` `session_exists` `session_sealed` `tab_locked`
+`profile_limit` `profile_in_use` `profile_not_found`
 
 Branch on `error.type`, never on the message. `invalid_op` means you guessed a
 parameter — check `GET /ops`.

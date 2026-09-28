@@ -862,6 +862,18 @@ A closed set, so you can branch on `error.type` instead of parsing prose:
 
 `invalid_op` `element_not_found` `stale_ref` `not_interactable` `not_a_select`
 `timeout` `navigation_failed` `js_error` `last_tab` `tab_not_found` `browser_dead`
+`unknown_session` `session_exists` `session_sealed` `tab_locked`
+`profile_limit` `profile_in_use` `profile_not_found`
+
+| Session error | What to do |
+|---|---|
+| `unknown_session` | `abt session list` shows what exists. A command never creates a session, so a typo cannot land you somewhere unrestricted. |
+| `session_exists` | Pick another name, or use the session that is already there. |
+| `session_sealed` | Only the program that created the session holds its token. Use your own session. |
+| `tab_locked` | Another session owns the tab. Open your own with `tab_new` rather than retrying. |
+| `profile_limit` | Too many browsers are running. `browser_stop` in a session you are done with, or raise `--max-profiles`. Nothing is ever closed to make room. |
+| `profile_in_use` | Remove or move the sessions on the profile, and stop its browser, first. |
+| `profile_not_found` | `abt profile list` shows what exists; `abt profile new NAME` creates one. |
 
 A failed page load is caught even though Chrome reports success for it — Chrome
 renders its own error page, and `goto` raises `navigation_failed` rather than

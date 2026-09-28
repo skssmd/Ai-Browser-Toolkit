@@ -376,6 +376,13 @@ running more ops and asks for a defensible answer from the evidence in hand.
 
 ## Open
 
+### Each running profile is a whole Chrome
+
+Every profile a session is using runs its own Chrome, roughly 300–500 MB each.
+`--max-profiles` (default 4) caps how many run at once — a launch past it is
+refused, never evicts — and a profile nobody has used for
+`--profile-idle-minutes` (default 30) is stopped.
+
 ### 15. The shared test browser sometimes dies partway through a full run
 
 Running the whole suite occasionally kills the session-scoped Chrome that

@@ -343,6 +343,29 @@ a site change leaves the next run better informed than the last.
 | **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
 | **HTTP** — `POST /command-list` on :8765 | You are writing the integration yourself. |
 
+## Sessions and profiles
+
+One server runs several agents at once. Each works in a **session**: a named
+browser profile (its logins), its own tabs, its own log. A session with no name
+is `default`, and behaves exactly as the server always has.
+
+```bash
+abt profile new work                      # an empty profile; sign in through a session on it
+abt session new research --profile work   # a session on it
+ABT_SESSION=research abt command-list '{"op":"browser_start"}'
+abt mcp --session research                # an MCP client bound to it for its whole life
+```
+
+- Each profile runs its own hidden Chrome. Sessions on different profiles, and
+  on the same profile, run **in parallel**.
+- A tab belongs to the session that opened it. Other sessions on the profile
+  see it as `locked`; sessions on other profiles do not see it at all.
+- `--session` / `ABT_SESSION` is **not a security boundary**: any process can
+  name any open session. `abt session new NAME --sealed` issues a token that
+  every command must carry; only the program holding it can drive the session.
+- `--max-profiles` (default 4) caps running browsers; `--profile-idle-minutes`
+  (default 30) stops idle ones.
+
 ## Benchmark
 
 WebArena tasks across five sites, driven through `abt`, one fresh agent
