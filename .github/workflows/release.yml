@@ -17,7 +17,16 @@ permissions:
 
 jobs:
   test:
+    name: test (shard ${{ matrix.shard }}/4)
+    # Sharded like ci.yml: four quarters side by side finish long before the
+    # whole suite in one job, and a hang costs 40 minutes, not six hours.
+    # `wheel` waits for all four.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +39,7 @@ jobs:
           ABT_TEST_SLOWDOWN: "5"
         run: >
           python -m pytest -q
+          --shard ${{ matrix.shard }}/4
           --deselect tests/test_lifecycle_live.py
           --deselect tests/test_shots_live.py
 
