@@ -128,14 +128,41 @@ def dispatch(session: BrowserSession, cmd) -> Any:
 
     want_diff = session.diff_enabled if getattr(cmd, "diff", None) is None else cmd.diff
     if cmd.op in DIFFABLE_OPS and want_diff:
-        return _run_with_diff(session, cmd, handler)
+        return note_file_chooser(session, _run_with_diff(session, cmd, handler))
     if cmd.op in NAVIGATION_OPS and want_diff:
-        return _run_with_page_text(session, cmd, handler)
+        return note_file_chooser(session, _run_with_page_text(session, cmd, handler))
 
-    result = handler(session, cmd)
+    result = note_file_chooser(session, handler(session, cmd))
     if cmd.op in DOM_TOUCHING_OPS:
         session.set_baseline()
     return result
+
+
+FILE_CHOOSER_NOTE = (
+    "The page asked for a file. No file picker opens here, so it was dismissed. "
+    'To upload: call {"op": "files"} to see this session\'s uploads folder, then '
+    'put a path from it into the file field: {"op": "input", "css": '
+    '"input[type=file]", "value": "<path>"}. Only files in that folder are '
+    "accepted. If the file you need is not there, ask the person to put it in "
+    '({"op": "files", "open": true} opens the folder for them), wait for them to '
+    "say it is there, and list it again. Never guess a path elsewhere on disk."
+)
+
+
+def note_file_chooser(session: BrowserSession, result: Any) -> Any:
+    """Tell the caller a page tried to open a file picker, and what to do.
+
+    A shared session's browser never shows one: the picker is dismissed where
+    it opens, and the command that caused it says so, with the route that
+    does work -- a path from the session's uploads folder, via `input`.
+    """
+    driver = session._driver
+    take = getattr(driver, "take_file_chooser", None)
+    if take is None or not take():
+        return result
+    if isinstance(result, dict):
+        return {**result, "file_chooser": FILE_CHOOSER_NOTE}
+    return {"result": result, "file_chooser": FILE_CHOOSER_NOTE}
 
 
 def note_no_change(info: dict, changed_elements: bool) -> None:

@@ -643,6 +643,9 @@ class PlaywrightDriver:
         # Where this session's downloads are saved. Playwright otherwise keeps
         # them in a temporary folder it deletes when the connection closes.
         self._downloads = downloads
+        # Set when a page of this session opened a file picker. See
+        # `take_file_chooser`.
+        self._file_chooser = False
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
@@ -799,6 +802,11 @@ class PlaywrightDriver:
     def _handle(self, page) -> str:
         return self._tid(page) if self._gate is not None else _handle_of(page)
 
+    def take_file_chooser(self) -> bool:
+        """Whether a file picker opened since the last ask. Clears it."""
+        opened, self._file_chooser = self._file_chooser, False
+        return opened
+
     def opener_of(self, target: str) -> str | None:
         """The target id of the page that opened `target`, if there was one."""
 
@@ -872,6 +880,16 @@ class PlaywrightDriver:
                 pass
 
         page.on("dialog", on_dialog)
+
+        if self._gate is not None:
+            # A file picker never opens in a shared session. Listening makes
+            # Playwright intercept it, so no dialog appears (and none can hang
+            # a headless page); the command that caused it is told what to do
+            # instead. See ops.note_file_chooser.
+            def on_file_chooser(_chooser) -> None:
+                self._file_chooser = True
+
+            page.on("filechooser", on_file_chooser)
 
         if self._downloads is not None:
             def on_download(download) -> None:

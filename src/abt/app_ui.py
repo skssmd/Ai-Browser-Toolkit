@@ -154,14 +154,6 @@ APP_HTML = r"""<!doctype html>
     background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px;
   }
   #activity .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #chooser {
-    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 5;
-    width: min(460px, 92%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    box-shadow: var(--shadow); padding: 14px 16px;
-  }
-  .chooser-title { font-weight: 600; margin-bottom: 10px; }
-  .chooser-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .chooser-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .files-menu { left: auto; right: 0; top: calc(100% + 6px); width: 320px; }
   .menu-empty { color: var(--muted); font-size: 12px; padding: 4px 8px 8px; }
 
@@ -329,8 +321,6 @@ APP_HTML = r"""<!doctype html>
     <div id="view">
       <img id="screen" tabindex="0" alt="The live browser page. Click and type here to use it yourself." draggable="false">
       <div id="viewmsg">Starting the browser…</div>
-      <div id="chooser" hidden></div>
-      <input type="file" id="file-pick" hidden>
       <div id="activity" hidden><span class="dot busy"></span><span class="text" id="activity-text"></span></div>
     </div>
   </section>
@@ -432,7 +422,7 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
-  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null, follow: null, freshStart: true,
+  starting: false, lastStart: {}, downloadsSeen: {}, follow: null, freshStart: true,
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -803,7 +793,7 @@ async function openScreen(tab) {
       $("#screen").src = "data:image/jpeg;base64," + m.data; S.meta = m.metadata;
       $("#viewmsg").hidden = true;
     } else if (m.type === "file_chooser") {
-      fileChooser(m);
+      toast("File pickers don't open here. Put the file in this session's uploads folder (📁) and ask the AI to upload it.");
     } else if (m.ok === false) {
       const err = m.error || {};
       viewMessage(err.message || "This tab cannot be shown");
@@ -1399,49 +1389,6 @@ $("#files-menu").onclick = async (e) => {
   const body = row.dataset.folder ? { which: row.dataset.folder } : { which: row.dataset.open, name: row.dataset.name };
   try { await api("POST", "/app/files/open", body); $("#files-menu").hidden = true; } catch (err) { fail(err); }
 };
-
-// The page asked for a file. Offer what is already in the uploads folder,
-// or let the person pick one -- which is copied there first, so the rule
-// "only files from the uploads folder" holds for people and AI alike.
-async function fileChooser(m) {
-  const banner = $("#chooser");
-  S.chooser = m;
-  const out = await loadFiles();
-  const ready = out ? out.uploads.files.slice(0, 6) : [];
-  banner.innerHTML = `<div class="chooser-title">The page is asking for a file</div>
-    ${ready.length ? `<div class="chooser-files">${ready.map(f => `<button data-path="${esc(f.path)}">${esc(f.name)}</button>`).join("")}</div>` : ""}
-    <div class="chooser-actions">
-      <button class="primary" id="chooser-pick">Choose file…</button>
-      <button id="chooser-folder">Open uploads folder</button>
-      <button class="ghost" id="chooser-cancel">Cancel</button>
-    </div>`;
-  banner.hidden = false;
-  banner.querySelectorAll("[data-path]").forEach(b => b.onclick = () => handFiles([b.dataset.path], [b.textContent]));
-  $("#chooser-cancel").onclick = () => { banner.hidden = true; };
-  $("#chooser-folder").onclick = () => api("POST", "/app/files/open", { which: "uploads" }).catch(fail);
-  $("#chooser-pick").onclick = () => { const input = $("#file-pick"); input.multiple = m.mode === "selectMultiple"; input.value = ""; input.click(); };
-}
-$("#file-pick").onchange = async (e) => {
-  const picked = [...e.target.files]; if (!picked.length) return;
-  const paths = [], names = [];
-  for (const file of picked) {
-    const data = await new Promise((res, rej) => {
-      const reader = new FileReader();
-      reader.onload = () => res(String(reader.result).split(",")[1] || "");
-      reader.onerror = () => rej(reader.error);
-      reader.readAsDataURL(file);
-    });
-    try { const out = await api("POST", "/app/upload", { name: file.name, data }); paths.push(out.path); names.push(out.name); }
-    catch (err) { return fail(err); }
-  }
-  handFiles(paths, names);
-};
-function handFiles(paths, names) {
-  if (!S.chooser || !S.screenSock) return;
-  S.screenSock.send(JSON.stringify({ type: "files", node: S.chooser.node, paths }));
-  $("#chooser").hidden = true; S.chooser = null;
-  toast(`Added ${names.join(", ")}`);
-}
 
 // Ctrl+V in the live view types the clipboard into the page.
 document.addEventListener("paste", (e) => {

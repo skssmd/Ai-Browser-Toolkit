@@ -65,3 +65,23 @@ def test_a_download_lands_in_the_sessions_downloads_folder(work, base_url):
             break
         time.sleep(0.3)
     assert names == ["catalogue.html"]
+
+
+def test_a_file_picker_is_dismissed_and_the_ai_told_what_to_do(work, base_url):
+    """No picker ever opens in a session: the click that tried says so, and
+    points at the uploads folder and `input` -- the only route that works."""
+    browser, _ = work
+    run(browser, op="goto", url=f"{base_url}/download.html")
+    started = time.monotonic()
+    result = run(browser, op="click", css="#doc")
+    assert time.monotonic() - started < 15, "the picker hung the click"
+    assert "file_chooser" in result
+    assert '"op": "files"' in result["file_chooser"]
+    # The note is given once, for the picker that opened, not on every command.
+    assert "file_chooser" not in run(browser, op="current_url")
+    # And the route it points at works.
+    browser.uploads_dir.mkdir(parents=True, exist_ok=True)
+    (browser.uploads_dir / "cv.pdf").write_bytes(b"%PDF")
+    path = run(browser, op="files")["uploads"]["files"][0]["path"]
+    run(browser, op="input", css="input[type=file]", value=path)
+    assert browser.driver.execute_script("return document.getElementById('picked').textContent") == "cv.pdf"

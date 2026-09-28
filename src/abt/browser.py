@@ -796,10 +796,12 @@ class BrowserSession:
             raise OpError("invalid_op", "files needs sessions: run `abt serve` on the playwright engine")
         if self._driver is not None:
             # A finished download is saved by an event, and a sync Playwright
-            # connection only hands events over during a call. One cheap call
-            # first, so a download that already landed is listed.
+            # connection only hands events over during a call to the browser.
+            # One cheap call first, so a download that already landed is
+            # listed. It must be a real round trip: `current_url` is answered
+            # from Playwright's own cache and delivers nothing.
             try:
-                self._driver.current_url
+                self._driver.title
             except Exception:
                 pass
 
