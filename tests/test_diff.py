@@ -151,10 +151,12 @@ def test_attribute_only_change_is_invisible_to_the_text_track(clean_session):
 
 def test_removed_text_is_counted_not_listed_by_default(clean_session):
     """A page that swaps its body would otherwise return the whole old document."""
+    # Emptied, not removed: removing the card would move every card after it,
+    # and a line at a new address is a change -- see the test below.
     result = run(
         clean_session,
         op="run_js",
-        script="document.getElementById('p1').remove(); return 1;",
+        script="document.getElementById('p1').replaceChildren(); return 1;",
     )
     text = result["dom_diff"]["text"]
     assert text["added"] == []
@@ -162,11 +164,23 @@ def test_removed_text_is_counted_not_listed_by_default(clean_session):
     assert "removed" not in text
 
 
-def test_removed_text_is_listed_on_request(clean_session):
+def test_text_that_moved_to_a_new_address_is_reported(clean_session):
+    """The tree is the page as laid out. Removing the first card moves the
+    second into its slot: same words, new address, so it is a change -- and
+    the address an agent held for it is stale."""
     result = run(
         clean_session,
         op="run_js",
         script="document.getElementById('p1').remove(); return 1;",
+    )
+    assert "Nice Widget" in words(result["dom_diff"]["text"]["added"])
+
+
+def test_removed_text_is_listed_on_request(clean_session):
+    result = run(
+        clean_session,
+        op="run_js",
+        script="document.getElementById('p1').replaceChildren(); return 1;",
         include_removed=True,
     )
     text = result["dom_diff"]["text"]

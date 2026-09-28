@@ -627,4 +627,11 @@ def _format_errors(op: str, exc: ValidationError) -> str:
     for err in exc.errors():
         loc = ".".join(str(p) for p in err["loc"] if p not in ("command", op))
         parts.append(f"{loc}: {err['msg']}" if loc else err["msg"])
-    return f"invalid args for op {op!r}: " + "; ".join(parts)
+    message = f"invalid args for op {op!r}: " + "; ".join(parts)
+    # A guessed parameter name is the commonest bad call, and "extra inputs
+    # are not permitted" alone leaves the caller to guess again: a chat model
+    # tried `url_pattern`, then `timeout_ms`, on one wait_for. Say what it takes.
+    if any(err.get("type") == "extra_forbidden" for err in exc.errors()):
+        params = sorted(op_signatures().get(op, {}))
+        message += "; it takes: " + (", ".join(params) if params else "no parameters")
+    return message

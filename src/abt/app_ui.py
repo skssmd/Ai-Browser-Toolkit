@@ -405,8 +405,10 @@ $("#session-del").onclick = async () => {
 
 async function refreshBrowser() {
   if (!S.session) return;
+  // /browser answers without touching the browser. /status reads every tab,
+  // and doing that under an agent's feet switches tabs mid-command.
   let status;
-  try { status = await api("GET", "/status?session=" + encodeURIComponent(S.session)); }
+  try { status = await api("GET", "/browser?session=" + encodeURIComponent(S.session)); }
   catch (e) { fail(e); return; }
   S.running = !!status.running;
   $("#power").textContent = S.running ? "Stop browser" : "Start browser";
@@ -510,7 +512,7 @@ $("#screen").addEventListener("mousedown", (e) => {
 $("#screen").addEventListener("mouseup", (e) => {
   const p = pagePoint(e); if (!p) return;
   sendInput({ type: "mouse", event: "mouseReleased", ...p, button: BUTTONS[e.button] || "left", clickCount: e.detail || 1, modifiers: mods(e) });
-  setTimeout(refreshBrowser, 800);
+  if (!S.busy) setTimeout(refreshBrowser, 800);
 });
 let lastMove = 0;
 $("#screen").addEventListener("mousemove", (e) => {
@@ -674,8 +676,9 @@ function onChatEvent(e) {
   if (e.type === "assistant") bubble("assistant", e.text);
   else if (e.type === "tool_call") { pendingTool = e; }
   else if (e.type === "tool_result") {
+    // No refresh here: the live view already shows the page, and a tab_list
+    // between the agent's steps holds its session's lock for nothing.
     toolBlock(e.name, pendingTool ? pendingTool.args : {}, e.text, e.error); pendingTool = null;
-    refreshBrowser();
   }
   else if (e.type === "notice") bubble("notice", e.text);
   else if (e.type === "error") { bubble("error", e.text); }

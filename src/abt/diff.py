@@ -21,7 +21,9 @@ because a frame is a separate document that no amount of walking the parent will
 reach. Each snapshot also reports the frames its own document embeds, so the
 walk pays for itself only where there is something to walk -- see `frames.py`.
 
-Two snapshots diff with difflib. The text track reports what appeared, counts
+The text track compares two snapshots line by line, where a line matches only
+the same text at the same tree address -- the tree is the page as laid out, so
+the same words somewhere else are a change. It reports what appeared, counts
 what left, and lists what left only on request -- a page that replaces its body
 would otherwise return the whole old document as removals. The element track
 diffs into a unified diff capped at a token budget.
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections import Counter
 
 # Element lines captured per snapshot. Enough to see any real mutation on an
 # SPA; short enough that two snapshots still diff fast.
@@ -900,29 +903,38 @@ def diff_text(
     page that swaps its whole body the removals are the entire old document for
     no benefit. So removals are counted always and listed only when asked.
 
-    autojunk is off: it would classify a string repeated across a long list --
-    every "Add to cart" on a results page -- as noise and drop real changes.
+    Lines match on (address, text) and nothing looser, counted, so a string
+    repeated down a long list -- every "Add to cart" on a results page -- is
+    matched one for one and a new one is never lost among the old.
     """
     # Accept either shape. The walk hands over (path, value) pairs, but a caller
     # holding plain strings -- a unit test, an older snapshot -- gets the same
     # answer, rendered without positions rather than crashing on the unpack.
     before, after = _pairs(before), _pairs(after)
-    # Aligned on the text alone, not on (path, value). A path is the element's
-    # sibling index, so removing one element renumbers everything after it --
-    # and matching on the pair would then read every surviving element as
-    # deleted-and-reinserted merely because its position shifted, even though
-    # nothing about it actually changed. What "appeared" and "disappeared"
-    # means is about the text, not where it happens to sit this time.
-    before_values = [value for _, value in before]
-    after_values = [value for _, value in after]
-    matcher = difflib.SequenceMatcher(a=before_values, b=after_values, autojunk=False)
+    # A line is unchanged only when the same text sits at the same place in
+    # the tree. The tree is the page as it is laid out -- the address is where
+    # a thing *is* -- so the same words somewhere else are a different thing,
+    # and a difference is never hidden.
+    #
+    # This used to align on the text alone, so that an insertion renumbering
+    # its siblings stayed quiet. That hid real changes: a dialog's "Decline"
+    # matched the "Decline" that opened it, was withheld as unchanged, and an
+    # agent shown only "Cancel" clicked Cancel four times. A shifted address is
+    # also a stale handle, so reporting it is what the caller needs anyway.
+    unmatched = Counter(before)
     added_pairs: list[tuple[str, str]] = []
+    for pair in after:
+        if unmatched[pair]:
+            unmatched[pair] -= 1
+        else:
+            added_pairs.append(pair)
+    leftover = Counter(after)
     removed_pairs: list[tuple[str, str]] = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("replace", "delete"):
-            removed_pairs.extend(before[i1:i2])
-        if tag in ("replace", "insert"):
-            added_pairs.extend(after[j1:j2])
+    for pair in before:
+        if leftover[pair]:
+            leftover[pair] -= 1
+        else:
+            removed_pairs.append(pair)
 
     removed_count = len(removed_pairs)
     added = render_text(added_pairs)
