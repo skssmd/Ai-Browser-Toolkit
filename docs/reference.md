@@ -787,7 +787,7 @@ belongs to) and clicked through rather than blocked.
 | Navigate | `goto` `back` `forward` `reload` `current_url` |
 | Read | `get_html` `get_text` `find` `find_full` `screenshot` |
 | Interact | `click` `input` `select` `hover` `scroll` `wait_for` `press` |
-| Tabs | `tab_new` `tab_list` `tab_switch` `tab_close` |
+| Tabs | `tab_new` `tab_list` `tab_switch` `tab_close` `tab_claim` `tab_release` |
 | Control | `run_js` `diff` `status` `shutdown` |
 | Browser lifecycle | `browser_start` `browser_stop` `browser_restart` `browser_status` |
 

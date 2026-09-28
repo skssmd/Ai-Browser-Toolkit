@@ -181,6 +181,7 @@ def browser_open_manual(session: BrowserSession, cmd) -> dict:
     directions of that swap (which one to keep, whether to wait) are the
     caller's call, not this op's to make silently.
     """
+    session.refuse_other_profile(cmd.profile)
     config = session.defaults.merge(browser=cmd.browser, profile=cmd.profile)
     if session.is_running:
         raise OpError(

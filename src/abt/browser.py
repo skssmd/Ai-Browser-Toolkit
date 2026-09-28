@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
@@ -14,6 +16,7 @@ from . import diff as diff_util
 from . import frames as frame_util
 from .errors import OpError
 from .launch import LaunchConfig
+from .tabs import TabGate
 
 # How long the DOM must hold still before a freshly loaded page counts as
 # settled, and how often to look.
@@ -43,6 +46,10 @@ PROFILE_LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 PROFILE_RELEASE_TIMEOUT = 8.0
 PROFILE_RELEASE_INTERVAL = 0.2
 
+# How long `claim_tab` waits for a claimed tab to reach this session's own
+# connection. See the comment there.
+CLAIM_VISIBLE_TIMEOUT = 2.0
+
 
 def _profile_locked(config) -> bool:
     """Whether a browser still appears to hold this profile.
@@ -60,6 +67,21 @@ def _profile_locked(config) -> bool:
         except OSError:
             continue
     return False
+
+
+@dataclass
+class Attach:
+    """How a session reaches a browser it shares rather than owns.
+
+    Supplied by the SessionRegistry. `connect` makes sure the profile's Chrome
+    is running and returns its CDP URL; `disconnect` says this session is
+    finished with it; `list_targets` is every page in that Chrome.
+    """
+
+    connect: Callable[[], str]
+    disconnect: Callable[[], None]
+    list_targets: Callable[[], list[dict]]
+    gate: TabGate
 
 # After the last response lands the app still has to render it, so idle is not
 # the same as done. This also has to absorb the *gap* in a chain: fetch a URL,
@@ -106,6 +128,7 @@ class BrowserSession:
         max_frames: int = frame_util.MAX_FRAMES,
         max_frame_depth: int = frame_util.MAX_FRAME_DEPTH,
         engine: str = "playwright",
+        attach: Attach | None = None,
     ) -> None:
         # Validation lives in LaunchConfig, so an unsupported browser is
         # rejected identically whether it arrived from `abt serve` or from
@@ -140,6 +163,12 @@ class BrowserSession:
         if engine not in ("selenium", "playwright"):
             raise ValueError(f"unknown engine {engine!r}")
         self._engine = engine
+        if attach is not None and engine != "playwright":
+            raise ValueError("a shared session needs the playwright engine")
+        # Set when this session is one of several on a profile's browser.
+        # Everything that differs between owning a browser and sharing one
+        # branches on this.
+        self._attach = attach
         self._baselines: dict[str, dict] = {}  # tab_id -> {"url", "dom"}
         self._driver: webdriver.Chrome | webdriver.Edge | None = None
         self._handles: dict[str, str] = {}  # tab_id -> window handle
@@ -202,6 +231,23 @@ class BrowserSession:
     def is_running(self) -> bool:
         return self._driver is not None
 
+    @property
+    def shared(self) -> bool:
+        return self._attach is not None
+
+    def refuse_other_profile(self, profile) -> None:
+        """A session's profile changes through `abt session set`, never from
+        inside it: `browser_start {"profile": ...}` would otherwise walk an
+        agent out of the profile it was given."""
+        if self._attach is None or profile is None:
+            return
+        if Path(profile).expanduser().resolve() != self.defaults.profile:
+            raise OpError(
+                "invalid_op",
+                "this session's profile is fixed; change it with "
+                "`abt session set NAME --profile P`, not from inside the session",
+            )
+
     # --- lifecycle ------------------------------------------------------------
 
     def start(
@@ -217,6 +263,7 @@ class BrowserSession:
         no way to tell -- and the profile is the logins. A caller that wants
         "running, whatever it takes" wants `restart`.
         """
+        self.refuse_other_profile(profile)
         if self.is_running:
             raise OpError(
                 "invalid_op",
@@ -245,6 +292,18 @@ class BrowserSession:
         if self._engine == "playwright":
             from .pwdriver import PlaywrightDriver
 
+            if self._attach is not None:
+                url = self._attach.connect()
+                try:
+                    return PlaywrightDriver(
+                        config,
+                        action_timeout=self.action_timeout,
+                        cdp_url=url,
+                        gate=self._attach.gate,
+                    )
+                except Exception:
+                    self._attach.disconnect()
+                    raise
             return PlaywrightDriver(config, action_timeout=self.action_timeout)
         options = self._make_options(config)
         if config.browser == "edge":
@@ -254,8 +313,10 @@ class BrowserSession:
     def stop(self) -> dict:
         """Quit the browser and forget everything tied to it.
 
-        Safe when nothing is running. See `_wait_for_profile_release` for why
-        this does more than call quit().
+        Safe when nothing is running. A shared session only closes its own tabs
+        and lets go; the profile's browser outlives it while anyone else is on
+        it. See `_wait_for_profile_release` for why the owning case does more
+        than call quit().
         """
         was_running = self.is_running
         if self._driver is not None:
@@ -263,7 +324,17 @@ class BrowserSession:
                 self._driver.quit()
             except WebDriverException:
                 pass
+            except Exception:
+                # A shared browser that died under us raises Playwright's own
+                # errors on the way out. Letting go must still succeed.
+                if self._attach is None:
+                    raise
             self._driver = None
+        if self._attach is not None:
+            if was_running:
+                self._attach.disconnect()
+            self._reset_state()
+            return {"stopped": was_running, "profile_released": True}
         released = self._wait_for_profile_release(self.config) if was_running else True
         self._reset_state()
         return {"stopped": was_running, "profile_released": released}
@@ -281,6 +352,7 @@ class BrowserSession:
         on a throwaway profile stays on it. `start` is the one that means
         "fresh". Works as `start` when nothing is running.
         """
+        self.refuse_other_profile(profile)
         target = self.config.merge(
             browser=browser, profile=profile, headless=headless
         )
@@ -488,7 +560,11 @@ class BrowserSession:
 
     # --- tabs -----------------------------------------------------------------
 
-    def _new_tab_id(self) -> str:
+    def _new_tab_id(self, handle: str | None = None) -> str:
+        # Shared: the profile's registry numbers tabs, so every session and
+        # the GUI agree on which one `tab_3` is.
+        if self._attach is not None and handle is not None:
+            return self._attach.gate.label(handle)
         tab_id = f"tab_{self._counter}"
         self._counter += 1
         return tab_id
@@ -508,7 +584,7 @@ class BrowserSession:
             self._baselines.pop(tab_id, None)
         for handle in live:
             if handle not in known:
-                tab_id = self._new_tab_id()
+                tab_id = self._new_tab_id(handle)
                 self._handles[tab_id] = handle
                 self._order.append(tab_id)
 
@@ -588,6 +664,93 @@ class BrowserSession:
         neighbour = self._order[min(position, len(self._order) - 1)]
         self.driver.switch_to.window(self._handles[neighbour])
         self._install_console_capture()
+
+    # --- sharing ----------------------------------------------------------------
+
+    def _gate(self, op: str) -> TabGate:
+        if self._attach is None:
+            raise OpError(
+                "invalid_op",
+                f"{op} needs sessions: run `abt serve` on the playwright engine",
+            )
+        return self._attach.gate
+
+    def check_tab(self, tab_id: str) -> None:
+        """Refuse another session's tab before looking it up. No-op unshared."""
+        if self._attach is not None:
+            self._attach.gate.check(tab_id)
+
+    def foreign_tabs(self) -> list[dict]:
+        """Tabs on this profile that are not this session's.
+
+        Another session's tab is named with its owner and nothing else: what is
+        on it is that session's business. An unowned tab shows its page, since
+        claiming it is the only thing to do with it.
+        """
+        if self._attach is None or not self.is_running:
+            return []
+        own = set(self._handles.values())
+        gate = self._attach.gate
+        rows = []
+        for target in self._attach.list_targets():
+            tid = target.get("id")
+            if not tid or tid in own:
+                continue
+            label = gate.label(tid)
+            owner = gate.owner(tid)
+            if owner is None:
+                rows.append({
+                    "tab_id": label,
+                    "url": target.get("url"),
+                    "title": target.get("title"),
+                    "unowned": True,
+                })
+            else:
+                rows.append({"tab_id": label, "locked": owner})
+        return rows
+
+    def claim_tab(self, tab_id: str) -> str:
+        gate = self._gate("tab_claim")
+        target = gate.target_of(tab_id)
+        if target is None:
+            # An id straight from the GUI may not have been numbered on this
+            # connection yet; listing numbers every page.
+            self.foreign_tabs()
+            target = gate.target_of(tab_id)
+        if target is None:
+            raise OpError("tab_not_found", f"no tab {tab_id!r}")
+        gate.claim(target, self.driver.opener_of(target))
+        # Each session has its own connection, and a page another connection
+        # opened reaches this one's page list a moment after the registry knew
+        # of it. Returning before it lands would report a claim whose tab this
+        # session cannot yet see.
+        deadline = time.monotonic() + CLAIM_VISIBLE_TIMEOUT
+        while True:
+            self._sync_tabs()
+            if target in self._handles.values() or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        return tab_id
+
+    def release_tab(self, tab_id: str | None) -> str:
+        gate = self._gate("tab_release")
+        self._sync_tabs()
+        label = tab_id or self.active_tab
+        handle = self._handles.get(label)
+        if handle is None:
+            self.check_tab(label)
+            raise OpError("tab_not_found", f"no tab {label!r}")
+        if len(self._order) == 1:
+            # Same rule as close_tab: a session with no tab has no active page,
+            # and every command after this would fail for a reason nobody
+            # would guess.
+            raise OpError(
+                "last_tab",
+                "refusing to release your last tab; open another with tab_new first",
+            )
+        gate.release(handle)
+        self._sync_tabs()
+        return label
 
     # --- navigation -----------------------------------------------------------
 

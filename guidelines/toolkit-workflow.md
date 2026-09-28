@@ -86,7 +86,7 @@ HTTP calls and want to avoid a process launch per command; otherwise prefer
 | Read | `find` `find_full` `get_text` `get_html` `run_js` `screenshot` |
 | Inspect | `read_console` `read_network` |
 | Interact | `click` `input` `press` `select` `hover` `scroll` `wait_for` |
-| Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` |
+| Tabs | `tab_new` `tab_switch` `tab_close` `tab_list` `tab_claim` `tab_release` |
 | Control | `diff` `status` `shutdown` |
 
 A few sites have sequences that always run together, and those are packaged as

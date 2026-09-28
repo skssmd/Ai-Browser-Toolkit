@@ -333,6 +333,20 @@ class TabClose(Base):
     tab_id: str | None = None
 
 
+class TabClaim(Base):
+    """Take a tab nobody owns. Shared sessions only."""
+
+    op: Literal["tab_claim"]
+    tab_id: str
+
+
+class TabRelease(Base):
+    """Give a tab up so another session can claim it. Defaults to the active tab."""
+
+    op: Literal["tab_release"]
+    tab_id: str | None = None
+
+
 # --- control ------------------------------------------------------------------
 
 
@@ -522,7 +536,7 @@ Command = Annotated[
         Goto, Back, Forward, Reload, CurrentUrl,
         GetHtml, GetText, Find, FindFull, Screenshot,
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
-        TabNew, TabList, TabSwitch, TabClose,
+        TabNew, TabList, TabSwitch, TabClose, TabClaim, TabRelease,
         RunJs, Diff, Status, Shutdown, Alert,
         ReadConsole, ReadNetwork,
         GuidelinesSearch, GuidelinesRead, GuidelinesNote,
