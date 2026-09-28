@@ -35,7 +35,8 @@ from .recorder import (
     sites_index,
 )
 from .schema import OP_NAMES, op_signatures, parse_command
-from .sessions import Session, SingleSessionRegistry
+from .profiles import DEFAULT
+from .sessions import NO_SESSIONS, Session, SingleSessionRegistry
 from .viewer import VIEWER_HTML
 
 # How long /status will wait for the browser before answering without it. A
@@ -697,27 +698,35 @@ def create_app(
 
     # --- session logs ---------------------------------------------------------
 
-    def _root() -> Path | None:
-        return recorder.root if recorder is not None else None
+    # "session" in these routes' own names is a recorder run -- one server
+    # lifetime. The session a request runs in picks *whose* runs they are.
 
     @app.get("/logs")
-    async def logs():
+    async def logs(request: Request):
         """Every recorded session, newest first."""
-        root = _root()
+        try:
+            sess = _session_for(request)
+        except OpError as exc:
+            return _refused(exc)
+        root = sess.log_root
         if root is None:
             return ok({"recording": False, "sessions": []})
+        current = sess.started_recorder
         return ok(
             {
                 "recording": True,
-                "current": recorder.session_id,
+                "current": current.session_id if current is not None else None,
                 "sessions": await run_in_threadpool(list_sessions, root),
             }
         )
 
     @app.get("/logs/sites")
-    async def logs_sites():
+    async def logs_sites(request: Request):
         """Every site touched across every session."""
-        root = _root()
+        try:
+            root = _session_for(request).log_root
+        except OpError as exc:
+            return _refused(exc)
         if root is None:
             return ok([])
         return ok(await run_in_threadpool(sites_index, root))
@@ -725,12 +734,16 @@ def create_app(
     @app.get("/logs/{session_id}")
     async def logs_session(
         session_id: str,
+        request: Request,
         site: str | None = None,
         tab: str | None = None,
         op: str | None = None,
         errors_only: bool = False,
     ):
-        root = _root()
+        try:
+            root = _session_for(request).log_root
+        except OpError as exc:
+            return _refused(exc)
         if root is None:
             return fail(OpError("invalid_op", "recording is disabled"))
         events = await run_in_threadpool(read_events, root, session_id)
@@ -758,9 +771,12 @@ def create_app(
         )
 
     @app.get("/logs/{session_id}/shots/{name}")
-    async def logs_shot(session_id: str, name: str):
+    async def logs_shot(session_id: str, name: str, request: Request):
         """One recorded frame. Named in the event that produced it."""
-        root = _root()
+        try:
+            root = _session_for(request).log_root
+        except OpError as exc:
+            return _refused(exc)
         path = None if root is None else shot_path(root, session_id, name)
         if path is None:
             return JSONResponse(
@@ -778,6 +794,120 @@ def create_app(
     @app.get("/viewer", response_class=HTMLResponse)
     async def viewer():
         return HTMLResponse(VIEWER_HTML)
+
+    # --- sessions and profiles -------------------------------------------------
+    #
+    # Management, not commands: these never touch a page, so they take no
+    # session lock of their own beyond what the registry takes.
+
+    def _token(request: Request) -> str | None:
+        return request.headers.get("x-abt-token") or request.query_params.get("token")
+
+    async def _admin(work: Callable[[], Any]):
+        try:
+            return ok(await run_in_threadpool(work))
+        except OpError as exc:
+            return _refused(exc)
+
+    async def _object(request: Request) -> Any:
+        body = await _json(request)
+        if isinstance(body, JSONResponse):
+            return body
+        if not isinstance(body, dict):
+            return _refused(OpError("invalid_op", "body must be an object"))
+        return body
+
+    def _profiles():
+        if registry.profiles is None:
+            raise OpError("invalid_op", NO_SESSIONS)
+        return registry.profiles
+
+    @app.get("/sessions")
+    async def sessions_list():
+        return await _admin(registry.list)
+
+    @app.post("/sessions")
+    async def sessions_create(request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: registry.create(
+            body.get("name"),
+            body.get("profile") or DEFAULT,
+            bool(body.get("sealed")),
+            body.get("settings"),
+        ))
+
+    @app.get("/sessions/{name}")
+    async def sessions_show(name: str, request: Request):
+        return await _admin(lambda: registry.info(name, _token(request)))
+
+    @app.patch("/sessions/{name}")
+    async def sessions_update(name: str, request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: registry.update(
+            name, _token(request), profile=body.get("profile"), settings=body.get("settings")
+        ))
+
+    @app.delete("/sessions/{name}")
+    async def sessions_remove(name: str, request: Request):
+        return await _admin(
+            lambda: registry.remove(name, _token(request)) or {"removed": name}
+        )
+
+    @app.get("/profiles")
+    async def profiles_list():
+        return await _admin(lambda: _profiles().list())
+
+    @app.post("/profiles")
+    async def profiles_create(request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: _profiles().create(body.get("name")))
+
+    @app.patch("/profiles/{name}")
+    async def profiles_update(name: str, request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: _profiles().set_headed(name, bool(body.get("headed"))))
+
+    @app.delete("/profiles/{name}")
+    async def profiles_remove(name: str):
+        return await _admin(lambda: registry.remove_profile(name) or {"removed": name})
+
+    @app.post("/tabs/owner")
+    async def tabs_owner(request: Request):
+        """The operator hands a tab to a session, or frees it (session: null)."""
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+
+        def work():
+            if not registry.is_operator(_token(request)):
+                raise OpError(
+                    "session_sealed", "reassigning tabs needs the operator token"
+                )
+            profile = body.get("profile") or DEFAULT
+            tabs = _profiles().tabs(profile)
+            target = tabs.target_of(str(body.get("tab_id")))
+            if target is None:
+                for row in _profiles().targets(profile):
+                    tabs.label(row["id"])
+                target = tabs.target_of(str(body.get("tab_id")))
+            if target is None:
+                raise OpError(
+                    "tab_not_found", f"no tab {body.get('tab_id')!r} on {profile}"
+                )
+            owner = body.get("session")
+            if owner is not None:
+                registry.info(owner)  # unknown_session if there is no such session
+            return {"tab_id": tabs.set_owner(target, owner), "session": owner}
+
+        return await _admin(work)
 
     return app
 
