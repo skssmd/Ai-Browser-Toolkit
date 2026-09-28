@@ -16,4 +16,4 @@ def test_the_wheel_ships_the_icon():
     from pathlib import Path
 
     pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
-    assert '"assets/logo.ico" = "abt/assets/logo.ico"' in pyproject
+    assert '"assets/logo-white.ico" = "abt/assets/logo-white.ico"' in pyproject

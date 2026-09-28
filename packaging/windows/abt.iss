@@ -27,8 +27,8 @@ Compression=lzma2
 SolidCompression=yes
 LicenseFile={#PayloadDir}\LICENSE
 WizardStyle=modern
-SetupIconFile={#PayloadDir}\assets\logo.ico
-UninstallDisplayIcon={app}\assets\logo.ico
+SetupIconFile={#PayloadDir}\assets\logo-white.ico
+UninstallDisplayIcon={app}\assets\logo-white.ico
 UninstallDisplayName={#AppName}
 DisableProgramGroupPage=yes
 
@@ -48,8 +48,8 @@ Name: "cli"; Description: "Command line: the abt command, for AI agents, scripts
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; IconFilename: "{app}\assets\logo.ico"; Comment: "Open the browser and the chat"; Components: app
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; IconFilename: "{app}\assets\logo.ico"; Comment: "Open the browser and the chat"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; IconFilename: "{app}\assets\logo-white.ico"; Comment: "Open the browser and the chat"; Components: app
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppGui}"; Parameters: "{#AppGuiArgs}";     WorkingDir: "{app}"; IconFilename: "{app}\assets\logo-white.ico"; Comment: "Open the browser and the chat"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Put a shortcut on the desktop"; Components: app

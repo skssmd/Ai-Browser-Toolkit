@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>AI Browser Toolkit</title>
   <!-- // from https:// (the web), a pointer acting on it, and a spark: the AI doing the acting. -->
   <circle class="disc" cx="32" cy="32" r="31" fill="#ffffff"/>
-  <g transform="translate(32 32) scale(0.64) translate(-32.5 -31.5)">
+  <g transform="translate(32 32) scale(0.78) translate(-32.5 -31.5)">
     <path class="mark" d="M6 56 L19 8 L27 8 L14 56 Z" fill="#111111"/>
     <path class="mark" d="M20 56 L33 8 L41 8 L28 56 Z" fill="#111111"/>
     <path class="mark" d="M51.00 6.00 L52.76 12.24 L59.00 14.00 L52.76 15.76 L51.00 22.00 L49.24 15.76 L43.00 14.00 L49.24 12.24Z" fill="#111111"/>

@@ -50,7 +50,7 @@ APP_ID = "AIBrowserToolkit.App"
 
 
 def icon_path() -> Path | None:
-    name = "logo.ico" if sys.platform == "win32" else "logo-black-256.png"
+    name = "logo-white.ico" if sys.platform == "win32" else "logo-white-256.png"
     here = Path(__file__).resolve().parent
     for candidate in (here / "assets" / name, here.parents[1] / "assets" / name):
         if candidate.is_file():

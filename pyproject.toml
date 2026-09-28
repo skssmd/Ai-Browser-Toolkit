@@ -86,8 +86,8 @@ exclude = ["**/onehr/**", "**/*onehr*"]
 # can serve one to an agent that is already talking to it.
 "guidelines" = "abt/guidelines"
 # The app window's icon.
-"assets/logo.ico" = "abt/assets/logo.ico"
-"assets/logo-black-256.png" = "abt/assets/logo-black-256.png"
+"assets/logo-white.ico" = "abt/assets/logo-white.ico"
+"assets/logo-white-256.png" = "abt/assets/logo-white-256.png"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
