@@ -793,6 +793,42 @@ def up(
 
 
 
+@app.command("app")
+def app_window(
+    port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Server port."),
+    browser: str = typer.Option("chrome", "--browser", help="chrome or edge."),
+    headed: bool = typer.Option(
+        False,
+        "--headed",
+        help="Also show the default profile's real Chrome window. Off by "
+        "default: the app shows the page itself.",
+    ),
+) -> None:
+    """Open the desktop app: the browser and a chat with your model, side by side.
+
+    Starts the server first if none is running, with the default profile's
+    browser hidden -- the app shows its pages. Needs the optional extra for a
+    real window (`pip install "ai-browser-toolkit[app]"`); without it the app
+    opens in your default browser instead.
+    """
+    from . import desktop
+
+    base = f"http://{HOST}:{port}"
+    if not _healthy(base):
+        typer.echo(f"[abt] starting the server on {HOST}:{port}")
+        try:
+            up(port=port, browser=browser, profile=None, headless=not headed, wait=60.0)
+        except typer.Exit as done:
+            if done.exit_code:
+                raise
+    how = desktop.open_window(base)
+    if how == "browser":
+        typer.echo(
+            f"[abt] opened {base}/app in your browser. For a window of its own: "
+            'pip install "ai-browser-toolkit[app]"'
+        )
+
+
 @app.command()
 def doctor(
     json_out: bool = typer.Option(False, "--json", help="Machine-readable output."),

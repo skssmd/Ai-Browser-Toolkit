@@ -10,13 +10,14 @@ stays answerable meanwhile.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -41,6 +42,7 @@ from .profiles import DEFAULT
 from .sessions import NO_SESSIONS, Session, SingleSessionRegistry
 from .tabs import OWN
 from .viewer import VIEWER_HTML
+from .app_ui import APP_HTML
 
 # How long /status will wait for the browser before answering without it. A
 # status check is a question about liveness, so it has to come back while the
@@ -895,9 +897,13 @@ def create_app(
 
     @app.delete("/sessions/{name}")
     async def sessions_remove(name: str, request: Request):
-        return await _admin(
-            lambda: registry.remove(name, _token(request)) or {"removed": name}
-        )
+        def work():
+            registry.remove(name, _token(request))
+            if chats is not None:
+                chats.retire(name)
+            return {"removed": name}
+
+        return await _admin(work)
 
     @app.get("/profiles")
     async def profiles_list():
@@ -981,14 +987,17 @@ def create_app(
             raise OpError("browser_dead", NO_BROWSER_MESSAGE)
         return profile, target, running.port
 
+    def _local_origin(ws: WebSocket) -> bool:
+        """Browsers apply no CORS to WebSockets, so without this any web page
+        open anywhere on the machine could watch a logged-in tab, type into
+        it, or drive a chat. The app's own page is served from here; nothing
+        else has a reason to connect with an Origin at all."""
+        origin = ws.headers.get("origin")
+        return not origin or urlparse(origin).hostname in ("127.0.0.1", "localhost", "::1")
+
     @app.websocket("/screencast")
     async def screencast(ws: WebSocket):
-        # Browsers apply no CORS to WebSockets, so without this any web page
-        # open anywhere on the machine could watch a logged-in tab and type
-        # into it. The app's own page is served from here; nothing else has a
-        # reason to connect with an Origin at all.
-        origin = ws.headers.get("origin")
-        if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
+        if not _local_origin(ws):
             await ws.close(code=1008)
             return
         params = ws.query_params
@@ -1019,6 +1028,214 @@ def create_app(
                 await ws.close()
             except Exception:
                 pass
+
+    # --- the desktop app ---------------------------------------------------------
+
+    from . import agent as agent_util
+    from .appstate import AppSettings, ChatStore, free_models
+    from .mcp import to_op
+
+    base = registry.store.directory if registry.profiles is not None else None
+    app_settings = AppSettings(base / "app.json") if base else None
+    chats = ChatStore(base / "chats") if base else None
+
+    def _app_ready() -> None:
+        if app_settings is None:
+            raise OpError("invalid_op", NO_SESSIONS)
+
+    def _operator(request: Request) -> None:
+        _app_ready()
+        if not registry.is_operator(_token(request)):
+            raise OpError("session_sealed", "this needs the operator token")
+
+    @app.get("/app", response_class=HTMLResponse)
+    async def app_page():
+        return HTMLResponse(APP_HTML)
+
+    @app.get("/app/where")
+    async def app_where():
+        """Where the token files are, so the desktop shell can read them.
+
+        A path, never a token: the shell reads the files itself, as the user.
+        """
+        return await _admin(lambda: _app_ready() or {"sessions_dir": str(base)})
+
+    @app.get("/app/settings")
+    async def app_settings_get(request: Request):
+        return await _admin(lambda: _operator(request) or app_settings.public())
+
+    @app.put("/app/settings")
+    async def app_settings_put(request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: _operator(request) or app_settings.update(body))
+
+    @app.get("/app/models/free")
+    async def app_models_free(request: Request):
+        def work():
+            _operator(request)
+            data = app_settings.load()
+            return free_models(data["endpoint"], data["api_key"])
+
+        return await _admin(work)
+
+    def _chat_session(request: Request) -> Session:
+        _app_ready()
+        return _session_for(request)
+
+    @app.get("/app/chats")
+    async def app_chats(request: Request):
+        return await _admin(lambda: chats.list(_chat_session(request).name))
+
+    @app.post("/app/chats")
+    async def app_chats_new(request: Request):
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        return await _admin(lambda: chats.create(_chat_session(request).name, body.get("model")))
+
+    @app.get("/app/chats/{chat_id}")
+    async def app_chat_get(chat_id: str, request: Request):
+        return await _admin(lambda: chats.get(_chat_session(request).name, chat_id))
+
+    @app.delete("/app/chats/{chat_id}")
+    async def app_chat_delete(chat_id: str, request: Request):
+        def work():
+            chats.delete(_chat_session(request).name, chat_id)
+            return {"deleted": chat_id}
+
+        return await _admin(work)
+
+    def call_tool(sess: Session, name: str, args: dict) -> tuple[str, bool]:
+        """Run one tool call from the chat, in the chat's session.
+
+        The same path `/command-list` takes, so the session's lock, rules, tab
+        locks and run_js switch all apply to the model exactly as to anyone.
+        """
+        from . import guidelines as g
+
+        try:
+            if name == "browser_guidelines":
+                try:
+                    if args.get("name"):
+                        body = ok({"name": args["name"], "markdown": g.read(args["name"])})
+                    elif args.get("domain"):
+                        body = ok(g.search(args["domain"]))
+                    else:
+                        body = ok({"installed": list(g.installed().values()), "general": g.general()})
+                except KeyError:
+                    body = fail(OpError("element_not_found", f"no playbook {args.get('name')!r}"))
+            else:
+                try:
+                    payload = to_op(name, args)
+                except KeyError:
+                    return f"no such tool: {name}", True
+                envelope = isinstance(payload, dict) and "commands" in payload
+                items = payload["commands"] if envelope else [payload]
+                if not isinstance(items, list):
+                    raise OpError("invalid_op", "commands must be a list")
+                # Transport fields are not the model's to set; the chat's
+                # session is fixed.
+                items = [_strip(item)[0] for item in items]
+                if any(_is_shutdown(item) for item in items):
+                    raise OpError("invalid_op", "shutdown is not available from the chat")
+                results = execute(sess, items, bool(envelope and payload.get("continue_on_error")))
+                if envelope:
+                    failed = [r for r in results if not r["ok"]]
+                    body = {"ok": not failed, "results": results, "ran": len(results), "total": len(items)}
+                    if failed:
+                        body["error"] = failed[0]["error"]
+                else:
+                    body = results[0]
+        except OpError as exc:
+            body = fail(exc)
+        return json.dumps(body, separators=(",", ":"), default=str), body.get("ok") is False
+
+    @app.websocket("/app/chat")
+    async def app_chat(ws: WebSocket):
+        if not _local_origin(ws):
+            await ws.close(code=1008)
+            return
+        params = ws.query_params
+        token = ws.headers.get("x-abt-token") or params.get("token")
+        await ws.accept()
+        try:
+            _app_ready()
+            sess = await run_in_threadpool(registry.get, params.get("session") or None, token)
+        except OpError as exc:
+            await ws.send_json(fail(exc))
+            await ws.close(code=1008)
+            return
+
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+        running: asyncio.Task | None = None
+
+        async def turn(message: dict) -> None:
+            text = str(message.get("text") or "").strip()
+            try:
+                chat = await run_in_threadpool(chats.get, sess.name, str(message.get("chat_id")))
+            except OpError as exc:
+                await ws.send_json({"type": "error", "text": exc.message})
+                return
+            settings = app_settings.load()
+            models = [m for m in [message.get("model"), chat.get("model"), *settings["models"]] if m]
+            chat["messages"].append({"role": "user", "content": text})
+            if chat.get("title") in (None, "", "New chat"):
+                chat["title"] = text[:60] or "New chat"
+            events: asyncio.Queue = asyncio.Queue()
+
+            def emit(event: dict) -> None:
+                loop.call_soon_threadsafe(events.put_nowait, event)
+
+            def work() -> None:
+                tool_list = agent_util.tools()
+                system = agent_util.system_prompt(
+                    sess.record.settings.get("rules"), sess.browser.run_js_enabled
+                )
+                try:
+                    used = agent_util.run_turn(
+                        chat["messages"],
+                        models=models,
+                        complete_fn=lambda model, msgs: agent_util.complete(
+                            settings["endpoint"], settings["api_key"], model, msgs, tool_list
+                        ),
+                        call_tool=lambda name, args: call_tool(sess, name, args),
+                        emit=emit,
+                        should_stop=stop.is_set,
+                        system=system,
+                    )
+                    if used:
+                        chat["model"] = used
+                except Exception as exc:  # the chat must say so, not go quiet
+                    emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
+                finally:
+                    chats.save(sess.name, chat)
+                    emit({"type": "_end"})
+
+            loop.run_in_executor(None, work)
+            while True:
+                event = await events.get()
+                if event.get("type") == "_end":
+                    break
+                await ws.send_json(event)
+            await ws.send_json({"type": "done", "chat_id": chat["id"], "title": chat["title"]})
+
+        try:
+            while True:
+                message = await ws.receive_json()
+                kind = message.get("type") if isinstance(message, dict) else None
+                if kind == "stop":
+                    stop.set()
+                elif kind == "send":
+                    if running is not None and not running.done():
+                        await ws.send_json({"type": "error", "text": "still working on the last message"})
+                        continue
+                    stop.clear()
+                    running = asyncio.create_task(turn(message))
+        except (WebSocketDisconnect, RuntimeError):
+            stop.set()
 
     return app
 

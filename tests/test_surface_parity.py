@@ -32,6 +32,7 @@ LIFECYCLE = {
     "command-list",                                       # every page action
     # sessions and profiles: where commands run, not what they do
     "session", "profile",
+    "app",                                                # the desktop window
 }
 
 # `health` is here rather than being a drift: there is no `health` op, so it

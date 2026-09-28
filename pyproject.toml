@@ -73,6 +73,8 @@ Playbooks = "https://github.com/skssmd/ABT-Playbooks"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pyyaml>=6.0"]
+# The desktop window for `abt app`. Without it the app opens in a browser.
+app = ["pywebview>=5.0"]
 
 [project.scripts]
 abt = "abt.cli:main"

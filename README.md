@@ -343,6 +343,22 @@ a site change leaves the next run better informed than the last.
 | **MCP** — `abt mcp` over stdio | Your client speaks MCP. Typed schemas, no shell quoting. |
 | **HTTP** — `POST /command-list` on :8765 | You are writing the integration yourself. |
 
+## Desktop app
+
+```bash
+pip install "ai-browser-toolkit[app]"   # the window; without it the app opens in your browser
+abt app
+```
+
+One window: the session's browser tab, live and clickable, beside a chat with a
+model you choose. **Models** takes any OpenAI-compatible endpoint, your API key
+and a list of models; **Fetch free OpenRouter models** fills the list with the
+current free models that support tools, and the chat falls back down the list
+when one fails. The chat docks left or right, resizes, and hides like a drawer
+(Ctrl+B). Pick or create a profile and a session at the top; each session keeps
+its own chats. Sessions the app creates are sealed, so the model can never
+leave the one it was given.
+
 ## Sessions and profiles
 
 One server runs several agents at once. Each works in a **session**: a named
@@ -365,6 +381,12 @@ abt mcp --session research                # an MCP client bound to it for its wh
   every command must carry; only the program holding it can drive the session.
 - `--max-profiles` (default 4) caps running browsers; `--profile-idle-minutes`
   (default 30) stops idle ones.
+- **URL rules** per session: `abt session set research --rules
+  "app.example.com/admin,!app.example.com/api"`. A rule allows a host and path;
+  `!` blocks one; any allow rule makes everything else blocked. They are
+  enforced on the network too, so a link, a redirect or a `fetch()` from
+  `run_js` cannot get around them. `--no-run-js` switches `run_js` off for the
+  session; `--strict` checks every request, not just pages and API calls.
 
 ## Benchmark
 

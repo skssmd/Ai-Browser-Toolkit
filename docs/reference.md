@@ -863,7 +863,7 @@ A closed set, so you can branch on `error.type` instead of parsing prose:
 `invalid_op` `element_not_found` `stale_ref` `not_interactable` `not_a_select`
 `timeout` `navigation_failed` `js_error` `last_tab` `tab_not_found` `browser_dead`
 `unknown_session` `session_exists` `session_sealed` `tab_locked`
-`profile_limit` `profile_in_use` `profile_not_found`
+`profile_limit` `profile_in_use` `profile_not_found` `url_blocked`
 
 | Session error | What to do |
 |---|---|
@@ -873,6 +873,7 @@ A closed set, so you can branch on `error.type` instead of parsing prose:
 | `tab_locked` | Another session owns the tab. Open your own with `tab_new` rather than retrying. |
 | `profile_limit` | Too many browsers are running. `browser_stop` in a session you are done with, or raise `--max-profiles`. Nothing is ever closed to make room. |
 | `profile_in_use` | Remove or move the sessions on the profile, and stop its browser, first. |
+| `url_blocked` | The session's URL rules do not allow it. They are set by whoever runs the session; ask them, do not work around it. |
 | `profile_not_found` | `abt profile list` shows what exists; `abt profile new NAME` creates one. |
 
 A failed page load is caught even though Chrome reports success for it — Chrome
