@@ -1362,6 +1362,34 @@ def create_app(
 
         return await _admin(work)
 
+    @app.get("/app/tabs")
+    async def app_tabs(request: Request):
+        """This session's tabs, read from Chrome's own page list.
+
+        Never takes the session's lock and never touches its driver, so the
+        tab strip stays live while an agent is mid-command -- `tab_list` would
+        queue behind it, and switching the driver's tab to look at one would
+        move the agent's next click with it.
+        """
+
+        def work():
+            sess = _chat_session(request)
+            profile = sess.record.profile
+            profiles = _profiles()
+            tabs = profiles.tabs(profile)
+            mine = set(tabs.owned_by(sess.name))
+            rows = []
+            for target in profiles.targets(profile):
+                if target.get("id") in mine:
+                    rows.append({
+                        "tab_id": tabs.label(target["id"]),
+                        "url": target.get("url", ""),
+                        "title": target.get("title", ""),
+                    })
+            return sorted(rows, key=lambda r: int(r["tab_id"].split("_")[-1]))
+
+        return await _admin(work)
+
     @app.get("/app/runs")
     async def app_runs(request: Request):
         """Which chats in this session are replying right now."""

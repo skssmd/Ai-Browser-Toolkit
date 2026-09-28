@@ -432,7 +432,7 @@ const S = {
   op: null, tokens: {}, sessions: [], profiles: [], session: store.get("session", "default"),
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
-  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null,
+  starting: false, lastStart: {}, downloadsSeen: {}, chooser: null, follow: null,
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -697,19 +697,28 @@ async function refreshBrowser() {
     S.tabs = []; drawTabs(); closeScreen();
     return ensureBrowser("browser_start");
   }
-  try { S.tabs = await run({ op: "tab_list" }); }
-  catch (e) {
-    S.tabs = [];
-    if (e.type === "browser_dead") return ensureBrowser("browser_restart");
+  // Read from Chrome's own page list: never queues behind an agent's command.
+  try { S.tabs = await api("GET", "/app/tabs"); } catch (e) { S.tabs = []; }
+  if (!S.tabs.length && !S.runningChats.size) {
+    // No tab at all: either the session let its last one go, or the browser
+    // died. Ask the session, which knows the difference.
+    try { await run({ op: "tab_list" }); }
+    catch (e) { if (e.type === "browser_dead") return ensureBrowser("browser_restart"); }
   }
-  const own = S.tabs.filter(t => !t.locked && !t.unowned && !t.pending);
-  const active = own.find(t => t.active) || own[0];
-  if (!S.tab || !own.find(t => t.tab_id === S.tab)) S.tab = active ? active.tab_id : null;
+  if (S.follow) {
+    // The agent just opened or switched a tab: show that one.
+    const wanted = S.follow === "newest" ? S.tabs[S.tabs.length - 1] : S.tabs.find(t => t.tab_id === S.follow);
+    if (wanted) S.tab = wanted.tab_id;
+    S.follow = null;
+  }
+  if (!S.tab || !S.tabs.find(t => t.tab_id === S.tab)) S.tab = S.tabs.length ? S.tabs[0].tab_id : null;
   const shown = S.tabs.find(t => t.tab_id === S.tab);
   if (shown && document.activeElement !== $("#url")) $("#url").value = shown.url === "about:blank" ? "" : (shown.url || "");
   drawTabs();
   if (S.tab) openScreen(S.tab);
-  checkDownloads();
+  // Listing downloads makes one call through the session's connection;
+  // leave it until the agent is not mid-command.
+  if (!S.runningChats.size) checkDownloads();
 }
 
 function drawTabs() {
@@ -722,10 +731,16 @@ function drawTabs() {
   }).join("");
 }
 
-$("#tabs").onclick = async (e) => {
+// Looking at a tab is instant: it only changes what the live view shows. The
+// session's own current tab -- where the agent's next click lands -- moves
+// with it only while no agent is working, so watching never redirects one.
+$("#tabs").onclick = (e) => {
   const el = e.target.closest(".tab"); if (!el) return;
-  try { await run({ op: "tab_switch", tab_id: el.dataset.tab }); S.tab = el.dataset.tab; await refreshBrowser(); }
-  catch (err) { fail(err); }
+  S.tab = el.dataset.tab;
+  const shown = S.tabs.find(t => t.tab_id === S.tab);
+  $("#url").value = shown && shown.url !== "about:blank" ? shown.url : "";
+  drawTabs(); openScreen(S.tab);
+  if (!S.runningChats.size) run({ op: "tab_switch", tab_id: S.tab }).catch(() => {});
 };
 
 async function ensureBrowser(op) {
@@ -1120,7 +1135,16 @@ function renderEvent(e) {
   if (e.type === "user") bubble("user", e.text);
   else if (e.type === "assistant") bubble("assistant", e.text);
   else if (e.type === "tool_call") { pendingTool = e; }
-  else if (e.type === "tool_result") { step(e.name, pendingTool ? pendingTool.args : {}, e.text, e.error); pendingTool = null; }
+  else if (e.type === "tool_result") {
+    const args = pendingTool ? pendingTool.args : {};
+    step(e.name, args, e.text, e.error); pendingTool = null;
+    // Follow the agent between tabs, so the view shows what it is working on.
+    const cmds = args.commands || [];
+    const switched = [...cmds].reverse().find(c => c.op === "tab_switch" && c.tab_id);
+    if (cmds.some(c => c.op === "tab_new")) S.follow = "newest";
+    else if (switched) S.follow = switched.tab_id;
+    if (S.follow) refreshBrowser();
+  }
   else if (e.type === "notice") bubble("notice", e.text);
   else if (e.type === "error") bubble("error", e.text);
 }
@@ -1419,7 +1443,8 @@ document.addEventListener("paste", (e) => {
     await loadModels();
     await selectSession(S.session);
   } catch (e) { fail(e); }
-  setInterval(() => { if (!document.hidden && !S.runningChats.size) refreshBrowser(); }, 5000);
+  // Lock-free now, so the tab strip stays live while an agent works too.
+  setInterval(() => { if (!document.hidden) refreshBrowser(); }, 3000);
 })();
 </script>
 </body>
