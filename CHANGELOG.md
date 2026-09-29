@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Back where it was.** Every session remembers its open pages and which one
+  was active, and reopens them when its browser starts again -- after a
+  `browser_restart`, a crash, or a server restart. The session's site rules
+  still apply; a page that no longer loads is skipped. For app chats and for
+  agents driving a session over the CLI or MCP alike.
 - **A stopped server really stops.** A chat reply still running at shutdown
   kept the old process alive for up to five minutes, still driving its browser
   -- restarting it whenever the new server took the profile, which then lost

@@ -312,6 +312,7 @@ class BrowserSession:
             self._install_console_capture()
             self._sync_tabs()
             self.sync_guard()
+            self._restore_pages()
         except Exception:
             # A shared start that fails part way must let go of the profile,
             # or the connection leaks and the session stays counted on it.
@@ -342,6 +343,67 @@ class BrowserSession:
                 self._attach.disconnect()
                 raise
         return PlaywrightDriver(config, action_timeout=self.action_timeout)
+
+    # How many pages a start reopens, at most. Each one is a full page load
+    # before the start answers.
+    RESTORE_LIMIT = 6
+
+    def page_snapshot(self) -> dict | None:
+        """This session's open web pages, in tab order, and which is active.
+
+        Read from Chrome's own list of pages -- no switching tabs, no page
+        loads -- so it is cheap enough to take after every command.
+        """
+        if self._attach is None or not self.is_running:
+            return None
+        try:
+            gate = self._attach.gate
+            rows = [r for r in self._attach.list_targets() if gate.owns(r.get("id", ""))]
+            active_url = self._driver.current_url
+        except Exception:
+            return None
+
+        def order(row):
+            label = gate.label(row["id"])
+            return int(label.split("_")[-1]) if label.split("_")[-1].isdigit() else 0
+
+        urls = [r.get("url", "") for r in sorted(rows, key=order)]
+        urls = [u for u in urls if u.startswith(("http://", "https://"))]
+        active = urls.index(active_url) if active_url in urls else len(urls) - 1
+        return {"urls": urls, "active": max(active, 0)}
+
+    def _restore_pages(self) -> None:
+        """Reopen the pages this session had open when its browser last ran.
+
+        Each one still goes through `goto`, so the session's site rules apply;
+        a page that is now blocked, or will not load, is skipped rather than
+        failing the start.
+        """
+        source = getattr(self, "pages_to_restore", None)
+        if self._attach is None or source is None:
+            return
+        pages = source() or {}
+        urls = [u for u in pages.get("urls") or [] if str(u).startswith(("http://", "https://"))]
+        urls = urls[: self.RESTORE_LIMIT]
+        if not urls:
+            return
+        tabs: list[str | None] = []
+        for index, url in enumerate(urls):
+            try:
+                if index == 0:
+                    self.goto(url)
+                    tabs.append(self.active_tab)
+                else:
+                    tabs.append(self.new_tab(url, activate=False))
+            except Exception:
+                tabs.append(None)
+        want = pages.get("active", len(urls) - 1)
+        target = tabs[want] if isinstance(want, int) and 0 <= want < len(tabs) else None
+        if target:
+            try:
+                self.switch_tab(target)
+            except Exception:
+                pass
 
     def stop(self) -> dict:
         """Quit the browser and forget everything tied to it.

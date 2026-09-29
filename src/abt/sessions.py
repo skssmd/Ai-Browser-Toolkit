@@ -72,6 +72,9 @@ class SessionRecord:
     # settings without a migration.
     settings: dict = field(default_factory=dict)
     token_hash: str | None = None
+    # The session's open pages, last seen: {"urls": [...], "active": index}.
+    # Reopened when its browser starts again, after a crash or a restart.
+    pages: dict = field(default_factory=dict)
 
     def public(self, with_settings: bool = True) -> dict:
         out = {
@@ -115,6 +118,7 @@ class SessionStore:
                 created=str(data.get("created") or ""),
                 settings=dict(data.get("settings") or {}),
                 token_hash=data.get("token_hash"),
+                pages=dict(data.get("pages") or {}),
             )
         return found
 
@@ -265,6 +269,8 @@ class SessionRegistry:
             gate=TabGate(self.profiles.tabs(profile), name),
         )
         browser = self._make_browser(self.profiles.path(profile), attach)
+        # Read when the browser starts, so it reopens what was open last.
+        browser.pages_to_restore = lambda: record.pages
         if self.files_root is not None:
             browser.uploads_dir = self.files_root / name / "uploads"
             browser.downloads_dir = self.files_root / name / "downloads"
@@ -456,6 +462,18 @@ class SessionRegistry:
         thread = threading.Thread(target=loop, name="abt-reaper", daemon=True)
         thread.start()
         return thread
+
+    def remember_pages(self, session: Session) -> None:
+        """Note the session's open pages, so a restart can reopen them.
+
+        Saved only when they changed, and never as nothing: a browser that has
+        just died lists no pages, and that must not erase the last good list.
+        """
+        snapshot = session.browser.page_snapshot()
+        if not snapshot or not snapshot["urls"] or snapshot == session.record.pages:
+            return
+        session.record.pages = snapshot
+        self.store.save(session.record)
 
     def close_all(self) -> None:
         self._stop_reaper.set()

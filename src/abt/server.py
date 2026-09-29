@@ -285,6 +285,13 @@ def create_app(
                     break
                 if not response["ok"] and not continue_on_error:
                     break
+            # Where it is now, for a restart to come back to.
+            remember = getattr(registry, "remember_pages", None)
+            if remember is not None:
+                try:
+                    remember(sess)
+                except Exception:
+                    pass
             return results
 
     def teardown() -> None:
