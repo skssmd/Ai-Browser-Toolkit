@@ -2,7 +2,7 @@
 
 **Applies to:** AI Browser Toolkit (ABT), including the Windows installer
 distributed as `skssmd.AIBrowserToolkit` on WinGet.
-**Last updated:** 2026-09-28 — sessions, named profiles, URL rules, and the desktop app.
+**Last updated:** 2026-09-29 — per-profile file folders, documents the AI saves, remembered pages, and how ABT closes the browsers it starts.
 **Project:** <https://github.com/skssmd/Ai-Browser-Toolkit> (Apache-2.0).
 
 ## The short version
@@ -40,8 +40,9 @@ It does handle information that can be personal, and you should know exactly wha
   client) the agent makes that call. **With the desktop app's chat, ABT makes it**:
   it sends the conversation and page content to the endpoint you configured, with
   the API key you entered, which ABT stores on this machine.
-- **Session folders** in `Documents\AI Browser Toolkit\<session>` hold files you
-  put there for the AI to upload, and files the browser downloads.
+- **Profile folders** in `Documents\AI Browser Toolkit\<profile>` hold files you
+  put there for the AI to upload, files the browser downloads, and documents the
+  AI writes for you. Every session on a profile shares them, like its logins.
 - The **browser** makes ordinary network requests to the sites the agent visits,
   carrying that profile's cookies, exactly as a browser you signed into would.
 
@@ -85,6 +86,7 @@ It does **not** cover:
 | Browser console output | Read on request (`read_console`) | Yes, as part of the recorded result | No |
 | Local file paths handed to `input` (uploads) | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the profile's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
 | Files you put in a profile's uploads folder, files the browser downloads, and documents the AI saves (`save_file`) | Listed by name, size and path (the `files` op); never read into a response | Yes, in `Documents/AI Browser Toolkit/<profile>/uploads` and `/downloads` | Uploads only to the site you or the agent upload them to |
+| The addresses of each session's open pages, and which one was active | Noted after every command, so the session reopens them when its browser starts again (after a restart or a crash) | Yes, in the session record (`sessions/<name>.json`) until the next command replaces it | No |
 | Desktop app settings: model endpoint, **API key**, model list | Read when the chat calls the model | Yes, `app.json` in the sessions folder, readable only by your user account | The key goes to the endpoint you configured, with every request |
 | Desktop app chats: your messages, the model's replies, every tool call and its result | Sent to your model provider on each turn, and shown in the app | Yes, one JSON file per chat in the sessions folder | To your model provider, on every turn |
 | Sessions: name, profile, URL rules, settings; a sealed session's token | Read on every command to decide where it runs and what it may do | Yes, in the sessions folder; tokens owner-only | No |
@@ -224,6 +226,11 @@ Every command runs in a **session** — a profile, its tabs, its rules and its l
   are enforced before a navigation and on the network: a link, a redirect or a
   `fetch()` from `run_js` to a blocked address fails in the browser itself.
   Cross-site embedded frames and background workers are not covered.
+- **What a profile's sessions share.** Sessions on the same profile — sealed ones
+  too — share its logins and cookies, and its uploads and downloads folders: a
+  file one chat or agent downloads or saves can be listed, and uploaded, by any
+  other session on that profile. Their tabs, rules, logs and chats stay separate.
+  Keep work that must not mix on separate profiles.
 
 ### Any other local process, and any web page
 
@@ -258,6 +265,25 @@ Consequences to plan for:
 Practical mitigations are in [Controls](#7-controls). The short version: don't
 run ABT on a shared machine, don't port-forward the port, and stop the server
 when you are not using it.
+
+### The browser processes ABT starts and stops
+
+ABT starts one hidden or windowed Chrome per profile and ends it when no session
+needs it. It also ends browsers in these cases, and only these:
+
+- **Closing the desktop app** closes the browsers it was using. The server keeps
+  running for anything else using it, and they start again on demand.
+- **A browser left behind** by an ABT server that stopped without closing it —
+  identified by its profile folder and ABT's own launch flag — is ended when the
+  next server needs that profile. A Chrome window you opened yourself is never
+  ended this way.
+- **Force close**, only when you press it in the app (or call
+  `POST /profiles/<name>/force-close` with the operator token): ends every
+  browser holding that profile, including a window you opened on it. Anything
+  unsaved in it is lost.
+
+Stopping the server stops any reply the app's chat is still running, and the
+process exits, so nothing keeps acting on a browser after you stop ABT.
 
 ### The browser's debugging port
 
@@ -452,8 +478,8 @@ directory — which is why uninstalling does not take them with it.
 | What | Where | Note |
 | --- | --- | --- |
 | `config.json` | data root | Playbook lookup settings and the last check timestamp. No credentials. |
-| `sessions/` | beside the profiles (`<checkout>/sessions`, or the data root) | Session records (`<name>.json`), sealed-session tokens (`<name>.token`), `operator.token`, the desktop app's `app.json` **including your model API key**, and `chats/<session>/` with every chat. Files are created readable only by your account on macOS and Linux; on Windows they inherit your user profile's permissions. Removed sessions' chats move to `removed-chats/`. |
-| `Documents/AI Browser Toolkit/<profile>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, and files the browser downloaded. Nothing is deleted automatically. |
+| `sessions/` | beside the profiles (`<checkout>/sessions`, or the data root) | Session records (`<name>.json`: profile, settings, and the addresses of the session's open pages), sealed-session tokens (`<name>.token`), `operator.token`, the desktop app's `app.json` **including your model API key**, and `chats/<session>/` with every chat. Files are created readable only by your account on macOS and Linux; on Windows they inherit your user profile's permissions. Removed sessions' chats move to `removed-chats/`. |
+| `Documents/AI Browser Toolkit/<profile>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, files the browser downloaded, and documents the AI saved with `save_file` (text only, up to 2 MB, never overwriting an existing file unless asked). Shared by every session on the profile. Nothing is deleted automatically. |
 | `guidelines/local/`, `guidelines/trusted/`, `guidelines/pending/` | data root | Playbooks read, trusted, or pulled but not yet trusted. An agent's own `guidelines_note` is written locally and is not shared until you run `abt guidelines submit`. |
 | `server.log` | next to the source checkout | The launcher's stdout, including the resolved profile path, log directory and listening address. |
 | `.first-run-shown` | state root | An empty marker file. |
@@ -463,7 +489,8 @@ directory — which is why uninstalling does not take them with it.
 
 The desktop app's live view frames are streamed and never written to disk; a
 reply that is still running is held in memory and saved to the chat when it
-finishes. The network ring buffer (500 entries per page, cleared on main-frame navigation)
+finishes. A message you send while it runs is held until the model reads it at
+its next step, then saved with the chat. The network ring buffer (500 entries per page, cleared on main-frame navigation)
 and the page console buffer (500 messages, 2,000 characters each) are held in
 memory and never written to disk.
 
@@ -484,13 +511,13 @@ memory and never written to disk.
 
 | Control | Effect |
 | --- | --- |
-| `--no-run-js` | Disable arbitrary JavaScript execution in pages. Per session: `abt session set NAME --no-run-js`, or *Let the AI run scripts* in the app. |
-| URL rules per session | `abt session set NAME --rules "app.example.com,!app.example.com/api"`, or *Sites it may visit* in the app. Enforced before navigation and on the network. `--strict` checks images, scripts and styles too. |
+| `--no-run-js` | Disable arbitrary JavaScript execution in pages. Per session: `abt session set NAME --no-run-js`, or the *Scripts* switch on a new chat and in its settings. |
+| URL rules per session | `abt session set NAME --rules "app.example.com,!app.example.com/api"`, or *Allowed sites* in the app (`all` by default; an empty list blocks every site). Enforced before navigation and on the network. `--strict` checks images, scripts and styles too. |
 | Sealed sessions | `abt session new NAME --sealed`, or the default in the app. Nothing without the token can drive it. |
-| Uploads only from the session folder | On by default for every session but `default`, and always for the app's chat; `uploads_only` in the session settings. The AI cannot hand a page `~/.ssh/id_rsa` or any other file outside the folder. |
+| Uploads only from the profile's uploads folder | On by default for every session but `default`, and always for the app's chat; `uploads_only` in the session settings. The AI cannot hand a page `~/.ssh/id_rsa` or any other file outside the folder. |
 | `--max-profiles`, `--profile-idle-minutes` | Cap how many browsers run, and stop idle ones. |
 | `ABT_URL_SCHEMES=http,https` | Restrict navigation to a scheme allow-list. With it set, the agent can no longer open a `file://` path on your machine or a `chrome://` page such as the password manager. |
-| `--headless` | Run with no visible window, so nothing is shoulder-surfed. |
+| Hidden browsers | The app's chats always run hidden — the app shows their pages. Sessions from the CLI or HTTP open a window unless the server was started `--headless`; `abt profile set NAME --headless` fixes it per profile. |
 | `--profile <dir>` | Use a profile that holds no logins. A second server on a second `--port` and `--profile` gives you a clean session with no shared state. |
 | Do not enable autostart unless you want a driven browser at every logon. `abt autostart uninstall` removes it. |
 | `abt browser stop`, or `{"op": "shutdown"}` | Close the browser and stop the server. |
@@ -547,7 +574,7 @@ Deletion is manual, and the paths are:
 | Session logs and screenshots | Delete the session directories under your log directory, or the whole `logs` directory. |
 | Desktop app chats | Delete a chat in the app, or the `sessions/chats/` folder. |
 | The model API key | Clear it in *Models*, or delete `sessions/app.json`. |
-| Session records and tokens | `abt session rm NAME`, or delete the `sessions/` folder. |
+| Session records, tokens and remembered pages | `abt session rm NAME`, or delete the `sessions/` folder. Deleting a chat in the app removes its session too. |
 | Uploaded, downloaded and saved files | Delete them from `Documents/AI Browser Toolkit/<profile>/`. |
 | Named profiles | `abt profile rm NAME`, or *Logins from → delete* in the app. |
 | Logins, cookies, history, site storage | Sign out inside the browser window and use Chrome's own "Clear browsing data" on that profile, or delete the profile directory. `abt doctor` prints the path. There is no ABT command for this. |
@@ -574,11 +601,9 @@ the server first.
   file permissions. Back them up, sync them or delete them accordingly.
 - **Each profile's browser listens on a debugging port on `127.0.0.1`**, chosen by
   Chrome, not published by ABT's API. See [The browser's debugging port](#the-browsers-debugging-port).
-- **Anti-automation flags** (`--disable-blink-features=AutomationControlled`,
-  `excludeSwitches: enable-automation`) are applied on the Selenium engine
-  (`--engine selenium`) and not on the default Playwright engine. This is about
-  site compatibility, not privacy; it is mentioned because sites can observe the
-  difference.
+- **Anti-automation flag.** Every profile browser starts with
+  `--disable-blink-features=AutomationControlled`. This is about site
+  compatibility, not privacy; it is mentioned because sites can observe it.
 - ABT contacts a model provider only for the desktop app's chat, and only the
   endpoint you configured. If a report ever suggests it contacts anything else,
   that is a bug — please report it.
