@@ -19,10 +19,19 @@
   a combined one. Without *Helpers* a chat is a single loop, as before.
 - **Connect an agent in one tap.** From the Agents view, *Connect an agent*
   finds Claude Code, Codex, Cursor, VS Code, Gemini CLI, OpenCode and Windsurf
-  on this computer. Connecting gives the agent its own session on the profile
-  you pick and adds an `abt` MCP entry to its settings (`claude mcp` for Claude
-  Code); disconnecting removes only that entry. The file is backed up first,
-  and one that is not plain JSON is left alone.
+  on this computer. Connecting adds an `abt` MCP entry to its settings on the
+  profile you pick (`claude mcp` for Claude Code); disconnecting removes only
+  that entry. The file is backed up first, and one that is not plain JSON is
+  left alone.
+- **Every MCP agent names its own session.** Without `--session`, the MCP
+  browser tools require a `session`: a short name for the task ("ebay price
+  research"), used on every call. It is made on first use, on the bridge's
+  `--profile`, and is the name the Agents view shows. Parallel agents in one
+  harness -- several OpenCode agents, say -- used to share one session and
+  navigate each other's pages away; now each has its own tabs, and an agent
+  that restarts with the same name picks its tabs back up. `abt mcp --session`
+  still fixes one for the connection. An entry written by an earlier Connect
+  shows *Connect again* to switch over.
 
 ## 0.7.1 — 2026-09-29
 

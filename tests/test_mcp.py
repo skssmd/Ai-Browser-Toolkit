@@ -193,7 +193,7 @@ def test_unknown_tool_is_an_error_message_not_a_crash():
 
 def test_a_server_that_is_not_running_says_how_to_start_it():
     text, failed = Bridge(api="http://127.0.0.1:9").call(
-        "command_list", {"commands": [{"op": "goto", "url": "u"}]}
+        "command_list", {"session": "s", "commands": [{"op": "goto", "url": "u"}]}
     )
     assert failed is True
     assert "abt serve" in text
@@ -229,16 +229,12 @@ def test_responses_are_compact_not_pretty_printed():
     every response the model reads back."""
     import httpx
 
-    class _Stub(Bridge):
-        def __init__(self):
-            self.api = "http://stub"
-            self.client = httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda r: httpx.Response(200, json={"ok": True, "result": {"a": 1, "b": 2}})
-                )
-            )
+    stub = Bridge("http://stub", session="s")
+    stub.client = httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"ok": True, "result": {"a": 1, "b": 2}})
+    ))
 
-    text, failed = _Stub().call("command_list", {"commands": [{"op": "reload"}]})
+    text, failed = stub.call("command_list", {"commands": [{"op": "reload"}]})
     assert failed is False
     assert "\n" not in text and ", " not in text
     assert text == '{"ok":true,"result":{"a":1,"b":2}}'
@@ -312,3 +308,82 @@ def test_the_bridge_carries_its_session_and_token():
     assert bridge.client.headers["x-abt-session"] == "a"
     assert bridge.client.headers["x-abt-token"] == "t"
     assert "x-abt-session" not in Bridge("http://127.0.0.1:1").client.headers
+
+
+# --- every agent names its own session --------------------------------------------
+
+
+def recording_bridge(replies=None, **kwargs):
+    """A Bridge whose server records each request and answers from `replies`."""
+    import httpx
+
+    seen = []
+
+    def answer(request):
+        body = json.loads(request.content or b"null")
+        seen.append((request.url.path, request.headers.get("x-abt-session"), body))
+        return httpx.Response(200, json=(replies or {}).get(request.url.path, {"ok": True}))
+
+    bridge = Bridge("http://stub", **kwargs)
+    bridge.client = httpx.Client(transport=httpx.MockTransport(answer), headers=bridge.client.headers)
+    return bridge, seen
+
+
+def test_the_browser_tools_require_a_session_name():
+    """Two agents on one server shared `default`: one tab, each navigating the
+    other's page away. A required name makes that impossible to forget."""
+    listed = {t["name"]: t for t in Bridge().tools}
+    for name in ("command_list", "browser_session"):
+        assert "session" in listed[name]["inputSchema"]["required"]
+    assert "session" not in listed["browser_guidelines"]["inputSchema"]["properties"]
+
+
+def test_a_call_without_a_session_is_refused_before_it_is_sent():
+    bridge, seen = recording_bridge()
+    text, failed = bridge.call("command_list", {"commands": [{"op": "reload"}]})
+    assert failed and "session is required" in text
+    assert seen == []
+
+
+def test_the_named_session_is_made_once_and_every_call_carries_it():
+    bridge, seen = recording_bridge(profile="work")
+    for _ in range(2):
+        bridge.call("command_list", {"session": "eBay price research", "commands": [{"op": "reload"}]})
+    made = [s for s in seen if s[0] == "/sessions"]
+    assert made == [("/sessions", None, {"name": "ebay-price-research", "profile": "work",
+                                         "settings": {"title": "eBay price research"}})]
+    sent = [s for s in seen if s[0] == "/command-list"]
+    assert [s[1] for s in sent] == ["ebay-price-research"] * 2
+
+
+def test_an_existing_session_is_picked_back_up():
+    """An agent that restarts keeps its name, and so its tabs."""
+    bridge, seen = recording_bridge(
+        {"/sessions": {"ok": False, "error": {"type": "session_exists"}}}
+    )
+    text, failed = bridge.call("browser_session", {"session": "research", "action": "status"})
+    assert not failed
+    assert seen[-1][1] == "research"
+
+
+def test_a_session_that_cannot_be_made_is_reported():
+    bridge, _ = recording_bridge({"/sessions": {"ok": False, "error": {"type": "invalid_op"}}})
+    text, failed = bridge.call("browser_session", {"session": "x", "action": "status"})
+    assert failed and "invalid_op" in text
+
+
+def test_a_session_fixed_at_launch_is_not_asked_for():
+    bridge, seen = recording_bridge(session="fixed")
+    assert all("session" not in t["inputSchema"]["properties"] for t in bridge.tools)
+    text, failed = bridge.call("command_list", {"commands": [{"op": "reload"}]})
+    assert not failed and seen == [("/command-list", "fixed", seen[0][2])]
+
+
+@pytest.mark.parametrize("text,slug", [
+    ("eBay price research", "ebay-price-research"),
+    ("  Flights: LHR -> JFK!  ", "flights-lhr-jfk"),
+    ("research", "research"),
+    ("!!!", ""),
+])
+def test_session_names_become_valid_slugs(text, slug):
+    assert mcp.session_slug(text) == slug

@@ -984,9 +984,14 @@ def mcp(
         None,
         "--session",
         envvar="ABT_SESSION",
-        help="Bind this connection to a session. Fixed for its life; no tool can change it.",
+        help="Bind this connection to a session. Fixed for its life; no tool can "
+        "change it. Without it, the agent names a session of its own on every "
+        "browser call, so parallel agents never share tabs.",
     ),
     token: Optional[str] = typer.Option(None, "--token", envvar="ABT_TOKEN"),
+    profile: str = typer.Option(
+        "default", "--profile", help="Profile (logins) for the sessions the agent names."
+    ),
 ) -> None:
     """Speak MCP on stdin/stdout, forwarding to a running toolkit server.
 
@@ -997,7 +1002,8 @@ def mcp(
     from . import mcp as mcp_module
 
     mcp_module.serve(
-        api, session=session or _ROUTE["session"], token=token or _ROUTE["token"]
+        api, session=session or _ROUTE["session"], token=token or _ROUTE["token"],
+        profile=profile,
     )
 
 

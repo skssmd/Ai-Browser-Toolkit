@@ -132,8 +132,10 @@ rare outside browser internals.
 
 Every command runs in a **session**: a profile (its logins), its own tabs, its
 own log. Say nothing and you are in `default`, which behaves exactly as this
-server always has. Whoever launches you picks your session (`ABT_SESSION`,
-`abt --session`, `abt mcp --session`) — do not pick one yourself.
+server always has. If whoever launched you picked a session (`ABT_SESSION`,
+`abt --session`, `abt mcp --session`), use that one. Over MCP without one, the
+browser tools require a `session`: name it for your task ("ebay price
+research") and keep that name on every call, so your tabs stay yours.
 
 - `--session` is **not** a security boundary. Any process can name any open
   session; it only keeps cooperating agents out of each other's way.

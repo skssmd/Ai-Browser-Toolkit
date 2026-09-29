@@ -1,4 +1,4 @@
-"""One-tap connect: an agent harness gets its own session and an `abt` MCP entry.
+"""One-tap connect: an agent harness gets an `abt` MCP entry on a profile.
 
 Every test works in a throwaway home folder; nothing here touches real config.
 """
@@ -35,32 +35,47 @@ def test_json_harnesses_connect_and_disconnect(tmp_path, monkeypatch, harness, s
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"theme": "dark", section: {"other": {"command": "x"}}}), encoding="utf-8")
 
-    out = connect.connect(harness, "agent-1", API, home=tmp_path)
+    out = connect.connect(harness, "work", API, home=tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["theme"] == "dark" and "other" in data[section]  # the rest survives
     entry = data[section]["abt"]
     words = entry["command"] if isinstance(entry["command"], list) else [entry["command"], *entry["args"]]
-    assert words[1:] == ["-m", "abt", "mcp", "--session", "agent-1", "--api", API]
-    assert out["session"] == "agent-1"
-    assert rows_by_id(tmp_path)[harness]["session"] == "agent-1"
+    # No fixed session: each of the harness's agents names its own.
+    assert words[1:] == ["-m", "abt", "mcp", "--profile", "work", "--api", API]
+    assert out["profile"] == "work"
+    row = rows_by_id(tmp_path)[harness]
+    assert row["connected"] and row["profile"] == "work" and row["session"] is None
     assert path.with_name(path.name + ".abt-backup").exists()
 
     connect.disconnect(harness, home=tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert "abt" not in data[section] and "other" in data[section]
-    assert rows_by_id(tmp_path)[harness]["session"] is None
+    assert rows_by_id(tmp_path)[harness]["connected"] is False
+
+
+def test_an_entry_with_one_shared_session_is_reported_so_it_can_be_replaced(tmp_path):
+    """Earlier versions fixed `--session opencode`: every agent in one set of tabs."""
+    path = connect.find("opencode").config(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"mcp": {"abt": {"type": "local", "enabled": True, "command": [
+        "py", "-m", "abt", "mcp", "--session", "opencode", "--api", API]}}}), encoding="utf-8")
+    row = rows_by_id(tmp_path)["opencode"]
+    assert row["connected"] and row["session"] == "opencode"
+    connect.connect("opencode", "default", API, home=tmp_path)
+    assert rows_by_id(tmp_path)["opencode"]["session"] is None
 
 
 def test_codex_toml_keeps_other_tables(tmp_path):
     path = tmp_path / ".codex" / "config.toml"
     path.parent.mkdir()
     path.write_text('model = "o3"\n\n[mcp_servers.other]\ncommand = "x"\n', encoding="utf-8")
-    connect.connect("codex", "codex", API, home=tmp_path)
+    connect.connect("codex", "work", API, home=tmp_path)
     text = path.read_text(encoding="utf-8")
     assert 'model = "o3"' in text and "[mcp_servers.other]" in text and "[mcp_servers.abt]" in text
-    assert rows_by_id(tmp_path)["codex"]["session"] == "codex"
+    assert rows_by_id(tmp_path)["codex"]["profile"] == "work"
     # Connecting again replaces the table rather than adding a second one.
-    connect.connect("codex", "codex-2", API, home=tmp_path)
+    connect.connect("codex", "default", API, home=tmp_path)
+    assert rows_by_id(tmp_path)["codex"]["profile"] == "default"
     assert path.read_text(encoding="utf-8").count("[mcp_servers.abt]") == 1
     connect.disconnect("codex", home=tmp_path)
     text = path.read_text(encoding="utf-8")
@@ -102,7 +117,7 @@ def test_an_unknown_harness_is_refused():
         connect.find("notepad")
 
 
-def test_the_app_connects_a_harness_to_a_session_of_its_own(tmp_path, monkeypatch):
+def test_the_app_connects_a_harness_on_a_profile(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from abt.browser import BrowserSession
@@ -121,14 +136,16 @@ def test_the_app_connects_a_harness_to_a_session_of_its_own(tmp_path, monkeypatc
     op = {"X-ABT-Token": "op"}
     with TestClient(create_app(registry=registry)) as client:
         assert client.post("/app/connect/gemini", json={}).json()["error"]["type"] == "session_sealed"
+        refused = client.post("/app/connect/gemini", json={"profile": "nope"}, headers=op).json()
+        assert refused["ok"] is False
         out = client.post("/app/connect/gemini", json={"profile": "default"}, headers=op).json()["result"]
-        assert out["session"] == "gemini"
-        assert registry.info("gemini")["profile"] == "default"
+        assert out["profile"] == "default"
         written = json.loads((home / ".gemini" / "settings.json").read_text(encoding="utf-8"))
-        assert "--session" in written["mcpServers"]["abt"]["args"]
+        args = written["mcpServers"]["abt"]["args"]
+        assert "--session" not in args and args[args.index("--profile") + 1] == "default"
+        assert "gemini" not in {r["name"] for r in registry.list()}  # agents name their own
         rows = {r["id"]: r for r in client.get("/app/connect", headers=op).json()["result"]}
-        assert rows["gemini"]["session"] == "gemini"
+        assert rows["gemini"]["connected"] is True
         client.delete("/app/connect/gemini", headers=op)
         rows = {r["id"]: r for r in client.get("/app/connect", headers=op).json()["result"]}
-        assert rows["gemini"]["session"] is None
-        assert registry.info("gemini")["name"] == "gemini"  # the session and its logs stay
+        assert rows["gemini"]["connected"] is False

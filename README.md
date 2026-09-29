@@ -412,7 +412,13 @@ abt profile new work                      # an empty profile; sign in through a 
 abt session new research --profile work   # a session on it
 ABT_SESSION=research abt command-list '{"op":"browser_start"}'
 abt mcp --session research                # an MCP client bound to it for its whole life
+abt mcp --profile work                    # or: each agent names its own session, per task
 ```
+
+Over MCP without `--session`, the browser tools require a `session` name — a
+few words for the task, same on every call. Each agent gets its own tabs, so
+agents running in parallel in one harness never share a page, and the app's
+Agents view lists each under that name.
 
 - Each profile runs its own hidden Chrome. Sessions on different profiles, and
   on the same profile, run **in parallel**.

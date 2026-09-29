@@ -1685,7 +1685,8 @@ def create_app(
                     "profile": info["profile"],
                     "sealed": info["sealed"],
                     "kind": "chat" if name.startswith("chat-") else "agent",
-                    "title": heading or name,
+                    # An agent's session carries the title it named its work with.
+                    "title": heading or _settings_of(name).get("title") or name,
                     # Read from the record: the public list hides sealed sessions'
                     # settings, and every helper is sealed. Operator only here.
                     "role": _settings_of(name).get("role"),
@@ -1711,7 +1712,7 @@ def create_app(
 
     @app.get("/app/connect")
     async def app_connect_list(request: Request):
-        """The agent harnesses on this machine, and which session each uses."""
+        """The agent harnesses on this machine, and which profile each uses."""
         from . import connect as connect_util
 
         def work():
@@ -1722,11 +1723,10 @@ def create_app(
 
     @app.post("/app/connect/{harness}")
     async def app_connect(harness: str, request: Request):
-        """Give a harness its own session, and write its MCP entry for it.
+        """Write a harness's MCP entry, its agents' sessions on the profile asked for.
 
-        The session is named after the harness and made if missing, on the
-        profile asked for. Its browser follows the server's default, like any
-        agent's, and shows in the Agents view.
+        No session is made here: each agent names its own on its first
+        browser call, and shows in the Agents view under that name.
         """
         from . import connect as connect_util
 
@@ -1738,19 +1738,15 @@ def create_app(
             _operator(request)
             found = connect_util.find(harness)
             profile = str(body.get("profile") or DEFAULT)
-            names = {row["name"] for row in registry.list()}
-            if found.id not in names:
-                registry.create(found.id, profile=profile)
-            elif registry.info(found.id)["profile"] != profile:
-                registry.update(found.id, profile=profile)
+            _profiles().require(profile)
             port = request.url.port or 8765
-            return connect_util.connect(found.id, found.id, f"http://127.0.0.1:{port}")
+            return connect_util.connect(found.id, profile, f"http://127.0.0.1:{port}")
 
         return await _admin(work)
 
     @app.delete("/app/connect/{harness}")
     async def app_disconnect(harness: str, request: Request):
-        """Remove a harness's `abt` entry. Its session, tabs and logs stay."""
+        """Remove a harness's `abt` entry. Its agents' sessions, tabs and logs stay."""
         from . import connect as connect_util
 
         def work():

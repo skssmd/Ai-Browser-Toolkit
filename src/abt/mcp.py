@@ -28,6 +28,7 @@ tools/call. That is cheaper than taking on a dependency for three methods.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -56,9 +57,16 @@ FIRST, BEFORE ANY OTHER CALL:
   difference between driving this well and rediscovering its traps the
   expensive way.
 
+Name your work. command_list and browser_session take a `session`: a short
+name for this task ("ebay price research"). It is your own set of tabs, apart
+from any other agent on this server, and the name the person sees. Use the
+same name on every call; start a new name only for a new, separate task.
+(When the tools do not ask for one, a session was fixed for you at launch.)
+
 Then start a browser:
 
-  browser_session {"action":"start"}   -- the server runs WITHOUT a browser on
+  browser_session {"session":"ebay price research","action":"start"}
+                                       -- the server runs WITHOUT a browser on
   purpose, and nothing starts one for you. Every page command fails with
   browser_dead until you do this. It can take up to two minutes on a profile
   that has logins in it. browser_session {"action":"status"} says what is up.
@@ -68,7 +76,8 @@ takes a LIST, so send every op you already know you need in one call --
 typing and pressing Enter is one call, not two. It is the same name and the
 same shape as `abt command-list` and POST /command-list.
 
-  command_list {"commands":[{"op":"find","css":"input[name=q]"},
+  command_list {"session":"ebay price research",
+                "commands":[{"op":"find","css":"input[name=q]"},
                             {"op":"input","ref":"el_0","value":"hello"},
                             {"op":"press","key":"Enter"}]}
 
@@ -194,6 +203,43 @@ TOOLS: list[dict] = [
     },
 ]
 
+# Every agent works in a session of its own, named by the agent. Two agents on
+# one server used to share `default` -- one browser, one tab, each navigating
+# the other's page away. Required, so the name cannot be forgotten, and it is
+# the name the person sees in the app's Agents grid.
+SESSION_PROPERTY = {
+    "type": "string",
+    "description": (
+        "Name for this piece of work, e.g. \"ebay price research\". Same name "
+        "on every call; a new task gets a new name. Your own browser tabs."
+    ),
+}
+BROWSER_TOOLS = ("command_list", "browser_session")
+
+
+def tools(bound: bool = False) -> list[dict]:
+    """The tool list. With a session bound at launch there is nothing to name."""
+    if bound:
+        return TOOLS
+    out = []
+    for spec in TOOLS:
+        if spec["name"] in BROWSER_TOOLS:
+            schema = spec["inputSchema"]
+            spec = {**spec, "inputSchema": {
+                **schema,
+                "properties": {"session": SESSION_PROPERTY, **schema["properties"]},
+                "required": ["session", *schema["required"]],
+            }}
+        out.append(spec)
+    return out
+
+
+def session_slug(text: str) -> str:
+    """"eBay price research" -> "ebay-price-research": a valid session name."""
+    slug = re.sub(r"[^a-z0-9._-]+", "-", str(text).strip().lower())
+    slug = re.sub(r"-{2,}", "-", slug)[:64].strip("-.")
+    return slug.rstrip("-.")
+
 
 def _version() -> str:
     """The installed version, or a placeholder from a source tree.
@@ -248,19 +294,62 @@ class Bridge:
         timeout: float = 180.0,
         session: str | None = None,
         token: str | None = None,
+        profile: str = "default",
     ) -> None:
         self.api = api.rstrip("/")
-        # Bound here, once, by whoever launched this process -- never by the
-        # model. No tool takes a session, so a model cannot leave its own.
+        self.profile = profile
+        # Bound here, once, by whoever launched this process -- the model then
+        # cannot leave it. Unbound, the model names its own session on every
+        # browser call (see SESSION_PROPERTY), and it is created on first use.
         headers = {}
         if session:
             headers["X-ABT-Session"] = session
         if token:
             headers["X-ABT-Token"] = token
+        self.bound = bool(session)
+        self.tools = tools(self.bound)
+        self._known: set[str] = set()
         self.client = httpx.Client(timeout=timeout, headers=headers)
+
+    def _session(self, args: dict) -> tuple[str | None, str | None]:
+        """(session name, error). Creates the named session the first time."""
+        if self.bound:
+            return None, None
+        title = str(args.get("session") or "").strip()
+        name = session_slug(title)
+        if not name:
+            return None, (
+                "session is required: name this piece of work, e.g. "
+                '"session":"ebay price research", and use the same name on '
+                "every call. A different task gets a different name."
+            )
+        if name in self._known:
+            return name, None
+        try:
+            response = self.client.post(
+                f"{self.api}/sessions",
+                json={"name": name, "profile": self.profile,
+                      "settings": {"title": title[:80]}},
+            )
+            body = response.json()
+        except (httpx.RequestError, ValueError):
+            # Let the call itself report the unreachable server.
+            return name, None
+        error = (body.get("error") or {}) if isinstance(body, dict) else {}
+        if isinstance(body, dict) and body.get("ok") is False and error.get("type") != "session_exists":
+            return None, json.dumps(body, separators=(",", ":"))
+        self._known.add(name)
+        return name, None
 
     def call(self, tool: str, args: dict) -> tuple[str, bool]:
         """Returns (text, is_error). Never raises -- an agent needs a message."""
+        headers = {}
+        if tool in BROWSER_TOOLS:
+            name, problem = self._session(args)
+            if problem:
+                return problem, True
+            if name:
+                headers["X-ABT-Session"] = name
         # Playbooks are reads, not ops: they live behind GET /guidelines, and
         # the server never serves an untrusted one. Routed here rather than in
         # to_op because to_op's whole output shape is "an op".
@@ -290,7 +379,7 @@ class Bridge:
             if method == "GET":
                 response = self.client.get(f"{self.api}{path}", params=body)
             else:
-                response = self.client.post(f"{self.api}{path}", json=body)
+                response = self.client.post(f"{self.api}{path}", json=body, headers=headers)
         except httpx.RequestError as exc:
             return (
                 f"cannot reach the toolkit at {self.api} ({exc}). It is a separate, "
@@ -342,7 +431,7 @@ class Server:
             })
 
         if method == "tools/list":
-            return self._ok(request_id, {"tools": TOOLS})
+            return self._ok(request_id, {"tools": getattr(self.bridge, "tools", TOOLS)})
 
         if method == "tools/call":
             params = message.get("params") or {}
@@ -374,11 +463,12 @@ def serve(
     stdout=None,
     session: str | None = None,
     token: str | None = None,
+    profile: str = "default",
 ) -> None:
     """Read newline-delimited JSON-RPC from stdin, write replies to stdout."""
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
-    server = Server(Bridge(api, session=session, token=token))
+    server = Server(Bridge(api, session=session, token=token, profile=profile))
 
     for line in stdin:
         line = line.strip()

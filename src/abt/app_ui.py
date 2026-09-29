@@ -539,8 +539,8 @@ APP_HTML = r"""<!doctype html>
 
 <dialog id="dlg-connect">
   <h2>Connect an agent</h2>
-  <p class="lead">One tap gives an agent its own session — its own tabs, rules and log — and sets it up to use ABT. It works alongside every other agent and shows up here in Agents.</p>
-  <label class="field"><span>Profile / logins for new connections</span>
+  <p class="lead">One tap sets an agent up to use ABT. Every agent it runs names its own session for its task — its own tabs and log — so agents working in parallel never share a page, and each shows up here in Agents under that name.</p>
+  <label class="field"><span>Profile / logins its agents use</span>
     <select id="connect-profile"></select></label>
   <div id="connect-list"></div>
   <p class="hint" style="margin-top:10px">Restart the agent after connecting so it picks ABT up. Only an entry named <code>abt</code> is added to its settings; a backup of the file is kept beside it.</p>
@@ -1135,10 +1135,15 @@ async function drawConnect() {
   catch (e) { return fail(e); }
   rows.sort((a, b) => (b.installed - a.installed) || a.name.localeCompare(b.name));
   $("#connect-list").innerHTML = rows.map(r => {
-    const state = r.session ? `Connected — session “${esc(r.session)}”` : r.installed ? "Not connected" : "Not found on this computer";
-    const action = r.session ? `<button data-off="${esc(r.id)}">Disconnect</button>` :
-      `<button class="primary" data-on="${esc(r.id)}"${r.installed ? "" : " disabled"}>Connect</button>`;
-    return `<div class="connect-row${r.installed || r.session ? "" : " absent"}"><span class="who"><b>${esc(r.name)}</b>` +
+    // An entry from an earlier version fixed one session for every agent in
+    // the harness; connecting again replaces it.
+    const state = r.session ? `Connected — all its agents share “${esc(r.session)}”. Connect again to give each its own.`
+      : r.connected ? `Connected — profile “${esc(r.profile)}”; each agent names its own session`
+      : r.installed ? "Not connected" : "Not found on this computer";
+    const action = r.session ? `<button class="primary" data-on="${esc(r.id)}">Connect again</button>`
+      : r.connected ? `<button data-off="${esc(r.id)}">Disconnect</button>`
+      : `<button class="primary" data-on="${esc(r.id)}"${r.installed ? "" : " disabled"}>Connect</button>`;
+    return `<div class="connect-row${r.installed || r.connected ? "" : " absent"}"><span class="who"><b>${esc(r.name)}</b>` +
       `<small title="${esc(r.config)}">${state}</small></span>${action}</div>`;
   }).join("");
   document.querySelectorAll("[data-on]").forEach(b => b.onclick = async () => {
