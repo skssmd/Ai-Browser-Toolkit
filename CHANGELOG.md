@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.3 — 2026-09-29
+
+- **No more MCP timeouts on background tabs.** When several agents share one
+  windowed Chrome, only the front tab is drawn, and a screenshot of any other
+  waited for ever -- holding the agent's session until the 60s deadline, so its
+  every call timed out. A tab that is not drawn is now skipped in the log's
+  frames instead.
+- **Reconnecting reuses a session's tabs.** After a dropped connection or a
+  restart, a session takes back its tabs that are still open, instead of
+  opening a fresh tab and reopening its pages beside them -- which doubled its
+  tabs on every reconnect. Remembered pages reopen once each.
+- **Agents in the chat list.** Each agent's session (MCP, CLI or HTTP) is listed
+  in the app as *Agent · <the name of its work>*; open it to watch its browser.
+- **Listing tabs asks no tab.** Every tab is placed from one browser-wide call
+  rather than a CDP session opened to each; the per-tab probe hung on Chrome's
+  own start tab on a loaded runner.
+
 ## 0.7.2 — 2026-09-29
 
 - **Agents view in the app.** The *Agents* button at the left of the browser
