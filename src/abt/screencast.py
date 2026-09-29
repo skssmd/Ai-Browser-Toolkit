@@ -91,6 +91,7 @@ async def relay(
     quality: int = 60,
     max_width: int = 1600,
     upload_root: Path | None = None,
+    view_only: bool = False,
 ) -> None:
     """Pump frames to `client` and its input to Chrome until either side goes.
 
@@ -147,6 +148,8 @@ async def relay(
                     if paths is not None and isinstance(event.get("node"), int):
                         await send("DOM.setFileInputFiles", {"files": paths, "backendNodeId": event["node"]})
                     continue
+                if view_only:
+                    continue  # a Live card watches; it never clicks
                 call = to_cdp(event)
                 if call is not None:
                     await send(*call)

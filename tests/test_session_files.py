@@ -195,3 +195,30 @@ def test_save_file_needs_no_browser(registry):
     assert body["ok"] is True, body
     assert registry.get("work").browser.is_running is False
     assert (registry.get("work").browser.downloads_dir / "summary.md").exists()
+
+
+# --- the Live grid ----------------------------------------------------------------
+
+
+def test_the_live_grid_lists_recent_work_for_the_operator_only(registry):
+    registry.create("work")
+    with TestClient(create_app(registry=registry)) as client:
+        assert client.get("/app/live").json()["error"]["type"] == "session_sealed"
+        for n in range(3):
+            client.post("/command-list", json={"op": "save_file", "name": f"n{n}.md", "content": "x"},
+                        headers={"X-ABT-Session": "work"})
+        live = client.get("/app/live", headers={"X-ABT-Token": "op"}).json()["result"]
+    rows = {r["session"]: r for r in live["sessions"]}
+    assert rows["work"]["op"] == "save_file" and rows["work"]["steps"] == 3
+    assert rows["work"]["kind"] == "agent" and rows["work"]["working"] is False
+    assert "default" not in rows  # nothing ran there and no browser is up
+
+
+def test_a_long_pause_starts_a_new_stretch_of_work(registry):
+    registry.create("work")
+    sess = registry.get("work")
+    registry.note_activity(sess, "goto", True, 1000.0)
+    registry.note_activity(sess, "click", True, 1010.0)
+    assert sess.activity["steps"] == 2 and sess.activity["since"] == 1000.0
+    registry.note_activity(sess, "goto", True, 1010.0 + sess.ACTIVITY_GAP_SECONDS + 1)
+    assert sess.activity["steps"] == 1

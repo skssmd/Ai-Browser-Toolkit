@@ -348,6 +348,16 @@ class BrowserSession:
     # before the start answers.
     RESTORE_LIMIT = 6
 
+    def active_target_hint(self) -> str | None:
+        """Chrome's id for the tab this session is on, without asking Chrome.
+
+        Read from what the driver already knows, so a watcher can find the
+        tab while a command is still running -- no lock, no round trip.
+        """
+        driver = self._driver
+        page = getattr(driver, "_page", None) if driver is not None else None
+        return getattr(page, "_abt_target_id", None) if page is not None else None
+
     def page_snapshot(self) -> dict | None:
         """This session's open web pages, in tab order, and which is active.
 

@@ -280,6 +280,9 @@ def create_app(
                     )
                 else:
                     response = run_one(sess, item, index)
+                note = getattr(registry, "note_activity", None)
+                if note is not None and isinstance(item, dict):
+                    note(sess, str(item.get("op", "")), bool(response.get("ok")), time.time())
                 results.append(response)
                 if response["ok"] and _is_shutdown(item):
                     break
@@ -916,10 +919,20 @@ def create_app(
             await ws.send_json(fail(exc))
             await ws.close(code=1008)
             return
+        # The Live grid asks for small, view-only streams: many at once, so
+        # each is sized down, and nothing it sends reaches the page.
+        view_only = params.get("view") == "1"
+        try:
+            width = max(160, min(1600, int(params.get("w") or 1600)))
+            quality = max(20, min(80, int(params.get("q") or 60)))
+        except ValueError:
+            width, quality = 1600, 60
         registry.profiles.watch(profile, +1)
         try:
             await screencast_util.relay(
-                ws, f"ws://127.0.0.1:{port}/devtools/page/{target}", upload_root=uploads
+                ws, f"ws://127.0.0.1:{port}/devtools/page/{target}",
+                quality=quality, max_width=width,
+                upload_root=None if view_only else uploads, view_only=view_only,
             )
         except Exception:
             pass
@@ -1325,6 +1338,82 @@ def create_app(
                         "title": target.get("title", ""),
                     })
             return sorted(rows, key=lambda r: int(r["tab_id"].split("_")[-1]))
+
+        return await _admin(work)
+
+    @app.get("/app/live")
+    async def app_live(request: Request):
+        """Every session with a browser up or recent work: the app's Live grid.
+
+        Lock-free: `working` is whether a command holds the session's lock
+        right now, or a chat reply is running -- read, never waited on.
+        Operator only, since it spans sealed sessions.
+        """
+
+        def work():
+            _operator(request)
+            now = time.time()
+            profiles = _profiles()
+            replying = {key for key, run in runs.items() if not run.finished}
+            rows = []
+            for info in registry.list():
+                name = info["name"]
+                sess = registry._live.get(name)
+                activity = dict(sess.activity) if sess is not None else {}
+                running = sess is not None and sess.browser.is_running
+                chat_running = [cid for (sname, cid) in replying if sname == name]
+                recent = activity and now - activity.get("at", 0) < 1800
+                if not (running or recent or chat_running):
+                    continue
+                tab = url = title = None
+                target = sess.browser.active_target_hint() if running else None
+                gate_tabs = profiles.tabs(info["profile"])
+                owned = set(gate_tabs.owned_by(name)) if running else set()
+                if running and target not in owned:
+                    target = next(iter(sorted(owned)), None)
+                if target is not None:
+                    tab = gate_tabs.label(target)
+                    for row in profiles.targets(info["profile"]):
+                        if row.get("id") == target:
+                            url, title = row.get("url"), row.get("title")
+                            break
+                chat_list = chats.list(name) if name.startswith("chat-") else []
+                heading = next((c.get("title") for c in chat_list if c.get("title") and c.get("title") != "New chat"), None)
+                rows.append({
+                    "session": name,
+                    "profile": info["profile"],
+                    "sealed": info["sealed"],
+                    "kind": "chat" if name.startswith("chat-") else "agent",
+                    "title": heading or name,
+                    "working": bool(chat_running) or (sess is not None and sess.lock.locked()),
+                    "chat_running": chat_running,
+                    "browser": running,
+                    "tab": tab,
+                    "url": url,
+                    "page_title": title,
+                    "op": activity.get("op"),
+                    "ok": activity.get("ok"),
+                    "at": activity.get("at"),
+                    "since": activity.get("since"),
+                    "steps": activity.get("steps", 0),
+                })
+            rows.sort(key=lambda r: (not r["working"], -(r["at"] or 0)))
+            return {"now": now, "sessions": rows}
+
+        return await _admin(work)
+
+    @app.post("/app/live/{name}/stop")
+    async def app_live_stop(name: str, request: Request):
+        """Stop the chat replies running in a session, from the Live grid."""
+
+        def work():
+            _operator(request)
+            stopped = 0
+            for (sname, _cid), run in list(runs.items()):
+                if sname == name and not run.finished:
+                    run.stop.set()
+                    stopped += 1
+            return {"session": name, "stopped": stopped}
 
         return await _admin(work)
 

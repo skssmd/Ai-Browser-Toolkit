@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Agents view in the app.** The *Agents* button at the left of the browser
+  toolbar shows every agent's page at once -- app chats and agents driving
+  over the CLI or MCP, across profiles -- as live streams in a grid that
+  adapts to how many there are (one, two, 2x2, 3x2, 3x3) and keeps each page's
+  shape. Each tile shows who is driving, the profile, the step in progress,
+  steps and time; click one to open it, or stop a chat's reply from it. The
+  button shows how many are working. Streams run only while the grid is open,
+  sized to their tile and view-only.
+
 ## 0.7.1 — 2026-09-29
 
 - **The AI can save documents.** A new `save_file` op writes a document the AI

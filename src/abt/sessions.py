@@ -136,6 +136,10 @@ class SessionStore:
 class Session:
     """A record plus what it needs to run: a browser, a lock, a log."""
 
+    # A stretch of work: commands closer together than this count as one run
+    # in the app's Live view; a longer gap starts the clock again.
+    ACTIVITY_GAP_SECONDS = 600
+
     def __init__(
         self,
         record: SessionRecord,
@@ -146,6 +150,8 @@ class Session:
         log_root: Path | None = None,
     ) -> None:
         self.record = record
+        # What it did last, for the app's Live view: {op, ok, at, steps, since}.
+        self.activity: dict = {}
         # Replaced when the session moves to another profile. Read it only
         # while holding `lock`.
         self.browser = browser
@@ -465,6 +471,19 @@ class SessionRegistry:
         thread = threading.Thread(target=loop, name="abt-reaper", daemon=True)
         thread.start()
         return thread
+
+    @staticmethod
+    def note_activity(session: Session, op: str, ok: bool, now: float) -> None:
+        """Count one command toward the session's current stretch of work."""
+        last = session.activity
+        fresh = not last or now - last.get("at", 0) > Session.ACTIVITY_GAP_SECONDS
+        session.activity = {
+            "op": op,
+            "ok": ok,
+            "at": now,
+            "steps": 1 if fresh else last.get("steps", 0) + 1,
+            "since": now if fresh else last.get("since", now),
+        }
 
     def remember_pages(self, session: Session) -> None:
         """Note the session's open pages, so a restart can reopen them.

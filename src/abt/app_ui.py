@@ -117,6 +117,41 @@ APP_HTML = r"""<!doctype html>
   #context[hidden] { display: none; }
   #screen:not([src]) { visibility: hidden; }
   #context-btn:hover { color: var(--ink); }
+  #live-btn { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; padding: 4px 9px; }
+  #live-btn.on { background: var(--ink); color: var(--panel); }
+  .live-glyph { font-size: 14px; line-height: 1; }
+  .live-count {
+    min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px; font-size: 11px;
+    display: inline-grid; place-items: center; background: var(--live); color: #fff;
+  }
+  #live { position: absolute; inset: 0; background: var(--bg); padding: 12px; overflow: hidden; }
+  #live[hidden] { display: none; }
+  #live-grid { display: grid; gap: 12px; justify-content: center; align-content: center; height: 100%; }
+  .live-tile {
+    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; cursor: pointer; min-width: 0;
+  }
+  .live-tile:hover { border-color: var(--ink); }
+  .live-tile.working { border-color: var(--live); box-shadow: 0 0 0 1px var(--live); }
+  .live-tile .shot { position: relative; background: var(--raised); overflow: hidden; }
+  .live-tile .shot img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .live-tile .shot img:not([src]) { visibility: hidden; }
+  .live-tile .shot .wait {
+    position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px;
+  }
+  .live-tile .bar { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px 8px; font-size: 12px; min-width: 0; }
+  .live-tile .row1, .live-tile .row2 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .live-tile .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .live-tile .chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+  .live-tile .step { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .live-tile .meta { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .live-tile .stop { font-size: 11px; padding: 1px 8px; }
+  #live-empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 4px;
+    align-items: center; justify-content: center; color: var(--muted); text-align: center;
+  }
+  #live-empty[hidden] { display: none; }
+  #live-empty b { color: var(--ink); font-weight: 600; }
   #nav .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
   .dot.on { background: var(--live); }
@@ -381,6 +416,10 @@ APP_HTML = r"""<!doctype html>
   <section id="browser" aria-label="Browser">
     <div id="tabs"></div>
     <div id="nav">
+      <button class="ghost" id="live-btn" title="Agents: every agent's page, working side by side">
+        <span class="live-glyph" aria-hidden="true">▦</span><span>Agents</span><span class="live-count" id="live-count" hidden></span>
+      </button>
+      <span class="sep" aria-hidden="true"></span>
       <button class="icon ghost" id="back" title="Back">←</button>
       <button class="icon ghost" id="fwd" title="Forward">→</button>
       <button class="icon ghost" id="reload" title="Reload">⟳</button>
@@ -400,6 +439,10 @@ APP_HTML = r"""<!doctype html>
       <img id="screen" tabindex="0" alt="The live browser page. Click and type here to use it yourself." draggable="false">
       <div id="viewmsg">Starting the browser…</div>
       <div id="activity" hidden><span class="dot busy"></span><span class="text" id="activity-text"></span></div>
+      <div id="live" hidden>
+        <div id="live-grid"></div>
+        <div id="live-empty" hidden><b>No agents are working right now.</b><span>Their pages show up here, side by side, while they work.</span></div>
+      </div>
     </div>
   </section>
   <div id="splitter" title="Drag to resize"></div>
@@ -531,6 +574,7 @@ const S = {
   profile: null, chat: null, chatSock: null, screenSock: null, tab: null, tabs: [],
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
   starting: false, lastStart: {}, downloadsSeen: {}, follow: null, draft: false, convs: [], pendingSend: null,
+  live: { on: false, rows: [], socks: {}, timer: null, aspect: 16 / 10 },
   draftSettings: { profile: "default", newProfile: "", rules: "all", runJs: true, strict: false, rulesOpen: false },
 };
 
@@ -780,7 +824,7 @@ function openSessionDialog(edit) {
 // --- the browser pane ------------------------------------------------------------------
 
 async function refreshBrowser() {
-  if (!S.session) return;
+  if (!S.session || S.live.on) return;
   // /browser answers without touching the browser. /status reads every tab,
   // and doing that under an agent's feet switches tabs mid-command.
   let status;
@@ -896,6 +940,156 @@ $("#url").onkeydown = (e) => {
 };
 
 // --- the live view ------------------------------------------------------------------------
+
+// --- Agents: every agent's page, side by side --------------------------------------
+//
+// Cheap by design: the list is read lock-free, streams run only while the grid
+// is open, each is sized to its tile, Chrome sends a frame only when a page
+// changes, and the main view's stream is closed meanwhile.
+
+const LIVE_MAX_STREAMS = 9;
+
+const LIVE_WORDS = {
+  goto: "Opening a page", click: "Clicking", input: "Typing", press: "Pressing a key", select: "Choosing",
+  get_text: "Reading the page", find: "Looking for something", find_full: "Looking for something",
+  scroll: "Scrolling", wait_for: "Waiting for the page", back: "Going back", forward: "Going forward",
+  reload: "Reloading", tab_new: "Opening a tab", tab_switch: "Switching tab", tab_close: "Closing a tab",
+  screenshot: "Taking a screenshot", run_js: "Running a script", hover: "Hovering", save_file: "Saving a document",
+  files: "Checking files", browser_start: "Starting the browser", browser_restart: "Restarting the browser",
+  status: "Checking the browser", tab_list: "Checking tabs",
+};
+
+function liveDuration(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  const m = Math.floor(seconds / 60), s = seconds % 60;
+  return m ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
+}
+
+async function toggleLive(on) {
+  S.live.on = on === undefined ? !S.live.on : on;
+  $("#live-btn").classList.toggle("on", S.live.on);
+  $("#live").hidden = !S.live.on;
+  if (S.live.on) {
+    closeScreen();
+    await loadLive();
+    clearInterval(S.live.timer);
+    S.live.timer = setInterval(() => { if (!document.hidden) loadLive(); }, 2000);
+  } else {
+    clearInterval(S.live.timer); S.live.timer = null;
+    for (const key of Object.keys(S.live.socks)) closeLiveStream(key);
+    refreshBrowser();
+  }
+}
+$("#live-btn").onclick = () => toggleLive();
+
+async function loadLive() {
+  let data;
+  try { data = await api("GET", "/app/live", undefined, { operator: true, session: null }); }
+  catch (e) { return; }
+  const working = data.sessions.filter(r => r.working).length;
+  $("#live-count").hidden = !working; $("#live-count").textContent = working;
+  if (!S.live.on) return;
+  // Working first, then most recent; tiles only for pages there is a tab for.
+  S.live.rows = data.sessions.filter(r => r.browser && r.tab).slice(0, LIVE_MAX_STREAMS);
+  S.live.now = data.now;
+  drawLive();
+}
+
+function liveKey(r) { return `${r.session}|${r.tab}`; }
+
+function layoutLive(n) {
+  // The column count that makes the tiles largest, keeping the page's shape.
+  const box = $("#live"), gap = 12, bar = 50;
+  const W = box.clientWidth - 24, H = box.clientHeight - 24, a = S.live.aspect;
+  let best = { cols: 1, w: 0 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const cellW = (W - gap * (cols - 1)) / cols;
+    const cellH = (H - gap * (rows - 1)) / rows - bar;
+    const w = Math.min(cellW, cellH * a);
+    if (w > best.w) best = { cols, w };
+  }
+  return { cols: best.cols, w: Math.max(120, Math.floor(best.w)), h: Math.max(75, Math.floor(best.w / a)) };
+}
+
+function drawLive() {
+  const rows = S.live.rows, grid = $("#live-grid");
+  $("#live-empty").hidden = rows.length > 0;
+  const keep = new Set(rows.map(liveKey));
+  for (const key of Object.keys(S.live.socks)) if (!keep.has(key)) closeLiveStream(key);
+  if (!rows.length) { grid.innerHTML = ""; return; }
+  const { cols, w, h } = layoutLive(rows.length);
+  grid.style.gridTemplateColumns = `repeat(${cols}, ${w}px)`;
+  // Reuse tiles by key, so a stream's picture never blinks on a refresh.
+  const existing = new Map([...grid.children].map(el => [el.dataset.key, el]));
+  grid.innerHTML = "";
+  for (const r of rows) {
+    const key = liveKey(r);
+    let tile = existing.get(key);
+    if (!tile) {
+      tile = document.createElement("div");
+      tile.className = "live-tile"; tile.dataset.key = key;
+      tile.innerHTML = `<div class="shot"><img alt=""><div class="wait">Connecting…</div></div><div class="bar"></div>`;
+      tile.onclick = (e) => { if (!e.target.closest(".stop")) openFromLive(r.session, r.tab); };
+    }
+    tile.classList.toggle("working", r.working);
+    tile.querySelector(".shot").style.height = h + "px";
+    const step = r.working ? (LIVE_WORDS[r.op] || (r.op || "Working").replace(/_/g, " ")) + "…" :
+      (r.page_title || r.url || "Idle");
+    const time = r.since ? liveDuration((r.working ? S.live.now : r.at) - r.since) : "";
+    tile.querySelector(".bar").innerHTML =
+      `<div class="row1">${r.working ? '<span class="dot busy"></span>' : '<span class="dot on"></span>'}` +
+      `<span class="name" title="${esc(r.title)}">${esc(r.title)}</span>` +
+      `<span class="chip" title="Profile / logins">${esc(r.profile)}</span>` +
+      (r.chat_running && r.chat_running.length ? `<button class="stop ghost" title="Stop this chat's reply">Stop</button>` : "") +
+      `</div><div class="row2"><span class="step" title="${esc(r.url || "")}">${esc(step)}</span>` +
+      `<span class="meta">${r.steps ? r.steps + " steps" : ""}${time ? " · " + time : ""}</span></div>`;
+    const stop = tile.querySelector(".stop");
+    if (stop) stop.onclick = async () => {
+      try { await api("POST", `/app/live/${encodeURIComponent(r.session)}/stop`, undefined, { operator: true, session: null }); toast("Stopping after this step"); }
+      catch (e) { fail(e); }
+    };
+    grid.appendChild(tile);
+    openLiveStream(key, r, tile, w);
+  }
+}
+
+async function openLiveStream(key, r, tile, width) {
+  const have = S.live.socks[key];
+  if (have && have.readyState <= 1) return;
+  const op = await operatorToken();
+  const px = Math.min(960, Math.round(width * (window.devicePixelRatio || 1)));
+  const q = new URLSearchParams({ tab: r.tab, session: r.session, token: op, view: "1", w: String(px), q: "45" });
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/screencast?${q}`);
+  S.live.socks[key] = ws;
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type !== "frame") return;
+    const img = tile.querySelector("img");
+    img.src = "data:image/jpeg;base64," + m.data;
+    tile.querySelector(".wait").hidden = true;
+    const md = m.metadata || {};
+    if (md.deviceWidth && md.deviceHeight) {
+      const a = md.deviceWidth / md.deviceHeight;
+      if (Math.abs(a - S.live.aspect) > 0.05) { S.live.aspect = a; drawLive(); }
+    }
+  };
+  ws.onclose = () => { if (S.live.socks[key] === ws) delete S.live.socks[key]; };
+}
+
+function closeLiveStream(key) {
+  const ws = S.live.socks[key];
+  delete S.live.socks[key];
+  if (ws) { try { ws.close(); } catch (e) {} }
+}
+
+async function openFromLive(session, tab) {
+  await toggleLive(false);
+  if (session !== S.session) await selectSession(session);
+  S.tab = tab; S.follow = null;
+  openScreen(tab);
+}
+window.addEventListener("resize", () => { if (S.live.on && S.live.rows.length) drawLive(); });
 
 function closeScreen() {
   if (S.screenSock) { try { S.screenSock.close(); } catch (e) {} }
@@ -1759,6 +1953,9 @@ document.addEventListener("paste", (e) => {
   setInterval(() => { if (!document.hidden) refreshBrowser(); }, 3000);
   // The chat list's "replying" dots, for chats in other sessions.
   setInterval(() => { if (!document.hidden) loadConversations(); }, 5000);
+  // The Agents button's count: how many are working, even with the grid closed.
+  setInterval(() => { if (!document.hidden && !S.live.on) loadLive(); }, 5000);
+  loadLive();
 })();
 </script>
 </body>
