@@ -658,6 +658,8 @@ class PlaywrightDriver:
     # No single call to the browser takes this long: waits poll in short calls,
     # and page loads and scripts time out on their own well before it.
     CALL_DEADLINE = 60.0
+    # How long a page may take to load, apart from the action timeout.
+    NAVIGATION_TIMEOUT = 30.0
 
     def _call(self, fn, *a, **kw):
         """Run on the owner thread, or inline when already there.
@@ -814,6 +816,12 @@ class PlaywrightDriver:
         # the session's action timeout keeps the failure latency the ops were
         # written against.
         self._context.set_default_timeout(self._action_timeout * 1000)
+        # Page loads get their own, longer budget. Inheriting the 5s action
+        # timeout, a slow page -- a local dev server compiling on first hit --
+        # was abandoned half-way through loading, and that half-loaded tab then
+        # hung every session that listed the browser's tabs. Seen in the trace:
+        # `driver get FAILED 5.0s`, then a cascade across every chat.
+        self._context.set_default_navigation_timeout(self.NAVIGATION_TIMEOUT * 1000)
         if self._gate is not None:
             # A session starts on a page of its own. Adopting every open page,
             # as the harness attach does, would hand it other sessions' tabs.
