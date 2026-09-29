@@ -330,3 +330,37 @@ def test_a_chat_session_asks_for_a_hidden_browser(registry, monkeypatch):
     registry.get("chat-abc", token).browser._attach.connect()
     registry.get("cli-one").browser._attach.connect()
     assert asked == {"chat-abc": False, "cli-one": None}
+
+
+def test_shutting_down_stops_a_reply_that_is_still_running(registry, monkeypatch):
+    """A reply left running kept a stopped server's process alive -- and kept it
+    restarting the browser the next server was using."""
+    import threading
+    import time
+
+    started, release = threading.Event(), threading.Event()
+    calls = []
+
+    def complete(endpoint, key, model, messages, tools, **kw):
+        calls.append(1)
+        started.set()
+        release.wait(10)  # the model is still thinking when the server stops
+        return {"content": "", "tool_calls": [{"id": "t1", "type": "function", "function": {
+            "name": "command_list", "arguments": '{"commands": [{"op": "browser_restart"}]}'}}]}
+
+    monkeypatch.setattr(agent, "complete", complete)
+    app = create_app(registry=registry)
+    with TestClient(app) as c:
+        c.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+        chat = c.post("/app/chats", json={}).json()["result"]
+        with c.websocket_connect("/app/chat") as ws:
+            ws.send_json({"type": "send", "chat_id": chat["id"], "text": "go"})
+            assert started.wait(5)
+    # The server has shut down; now the model answers with an action.
+    release.set()
+    time.sleep(0.5)
+    assert calls == [1]  # no second model call: it stopped
+    with TestClient(app) as c:
+        saved = c.get(f"/app/chats/{chat['id']}").json()["result"]["messages"]
+    tool = [m for m in saved if m["role"] == "tool"]
+    assert tool and tool[0]["content"] == "stopped by the person before this ran"

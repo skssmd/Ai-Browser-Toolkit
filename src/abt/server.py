@@ -21,6 +21,7 @@ from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisco
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from . import __version__
 from . import messenger as messenger_api
 from . import screencast as screencast_util
 from . import shots as shots_util
@@ -169,7 +170,7 @@ def create_app(
         if session is None:
             raise ValueError("create_app needs a BrowserSession or a registry")
         registry = SingleSessionRegistry(session, recorder)
-    app = FastAPI(title="aibrowsertoolkit", version="0.1.0")
+    app = FastAPI(title="aibrowsertoolkit", version=__version__)
     app.state.registry = registry
     # The default session's browser, for callers that predate sessions.
     app.state.session = registry.get(None).browser
@@ -301,6 +302,7 @@ def create_app(
     def teardown() -> None:
         # Let the response flush before the process goes away.
         time.sleep(0.25)
+        stop_all_runs()
         registry.close_all()
         if request_stop is not None:
             request_stop()
@@ -1280,6 +1282,19 @@ def create_app(
 
     runs: dict[tuple[str, str], ChatRun] = {}
     watchers: dict[str, set] = {}  # session -> the queues of pages watching it
+
+    def stop_all_runs() -> None:
+        """Tell every reply still running to stop at its next step.
+
+        A reply runs on a worker thread. Left alone through a shutdown, it kept
+        the process alive after the server stopped listening -- and kept
+        driving its browser, restarting it whenever the next server took the
+        profile, which then lost its own browser in turn.
+        """
+        for run in list(runs.values()):
+            run.stop.set()
+
+    app.router.on_shutdown.append(stop_all_runs)
 
     def publish(run: ChatRun, event: dict) -> None:
         """Called on the event loop. Buffer the event and hand it to watchers."""

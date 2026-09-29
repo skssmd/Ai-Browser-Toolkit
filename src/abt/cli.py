@@ -652,6 +652,13 @@ def serve(
     finally:
         closer()
     typer.echo("stopped")
+    # Everything is closed. End the process now rather than when the last
+    # worker thread returns: one still inside a model call or a browser op
+    # would otherwise keep a server that no longer listens alive, acting on
+    # browsers the next server needs.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 def _require_playwright(engine: str) -> None:
