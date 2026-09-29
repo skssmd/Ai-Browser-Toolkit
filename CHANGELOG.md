@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-09-29
 
 - **The AI can save documents.** A new `save_file` op writes a document the AI
   composed -- notes, a report, what it found -- into the downloads folder. Text
