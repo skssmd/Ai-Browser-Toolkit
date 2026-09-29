@@ -13,6 +13,7 @@ import asyncio
 import json
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from . import __version__
 from . import screencast as screencast_util
 from . import shots as shots_util
+from . import trace as trace_util
 from .browser import NO_BROWSER_MESSAGE, BrowserSession
 from .engine import EngineError
 from .errors import OpError
@@ -184,16 +186,22 @@ def create_app(
         browser = sess.browser
         started = now_ms()
         browser.last_target = None
-        try:
-            cmd = parse_command(data)
-            response = ok(dispatch(browser, cmd))
-        except OpError as exc:
-            response = fail(exc, op_index)
-        except Exception as exc:  # an unmapped driver surprise
-            response = fail(_unmapped(exc), op_index)
+        op = str(data.get("op", "")) if isinstance(data, dict) else ""
+        with trace_util.span("command", op, session=sess.name, op=op) as step:
+            try:
+                cmd = parse_command(data)
+                response = ok(dispatch(browser, cmd))
+            except OpError as exc:
+                response = fail(exc, op_index)
+            except Exception as exc:  # an unmapped driver surprise
+                response = fail(_unmapped(exc), op_index)
+            if not response.get("ok"):
+                step.note(result=(response.get("error") or {}).get("type"))
         if sess.recorder is not None:
-            event = _record(sess, data, response, now_ms() - started)
-            _attach_shot(sess, data, response, event)
+            # Logging takes a screenshot: timed apart, since it can be slow too.
+            with trace_util.span("log", op, session=sess.name):
+                event = _record(sess, data, response, now_ms() - started)
+                _attach_shot(sess, data, response, event)
         return response
 
     def _attach_shot(sess: Session, data: Any, response: dict, event: dict | None) -> None:
@@ -256,8 +264,19 @@ def create_app(
         except Exception:
             return None
 
+    @contextmanager
+    def _locked(sess: Session):
+        """The session's lock, with the wait for it timed on its own: a command
+        queued behind another shows as waiting, not as slow."""
+        with trace_util.span("lock.wait", sess.name, session=sess.name):
+            sess.lock.acquire()
+        try:
+            yield
+        finally:
+            sess.lock.release()
+
     def execute(sess: Session, items: list[Any], continue_on_error: bool) -> list[dict]:
-        with sess.lock:
+        with _locked(sess):
             if sess.closed:
                 return [fail(OpError("unknown_session", f"session {sess.name!r} was removed"))]
             registry.touch(sess)
@@ -292,7 +311,8 @@ def create_app(
             remember = getattr(registry, "remember_pages", None)
             if remember is not None:
                 try:
-                    remember(sess)
+                    with trace_util.span("remember.pages", sess.name, session=sess.name):
+                        remember(sess)
                 except Exception:
                     pass
             return results
@@ -1240,35 +1260,59 @@ def create_app(
         agentic = bool(sess.record.settings.get("agentic")) and not role
 
         def tool_call(name: str, args: dict) -> tuple[str, bool]:
-            if agentic and name in agent_util.ORCHESTRATION_NAMES:
-                return orchestrate(sess, run, chat, loop, name, args)
-            text, failed = call_tool(sess, name, args)
-            if '"saved"' in text:
-                run.reports.extend(_saved_paths(text))
-            return text, failed
+            ops = [c.get("op") for c in (args.get("commands") or []) if isinstance(c, dict)]
+            with trace_util.span("tool", name, session=sess.name, chat=chat_id,
+                                 ops=",".join(str(o) for o in ops) or None) as step:
+                if agentic and name in agent_util.ORCHESTRATION_NAMES:
+                    text, failed = orchestrate(sess, run, chat, loop, name, args)
+                else:
+                    text, failed = call_tool(sess, name, args)
+                    if '"saved"' in text:
+                        run.reports.extend(_saved_paths(text))
+                if failed:
+                    step.note(result="failed")
+                return text, failed
+
+        def complete(model: str, msgs: list[dict]) -> dict:
+            # The model call, timed: how long until the first word, and in all.
+            with trace_util.span("model", model, session=sess.name, chat=chat_id,
+                                 messages=len(msgs)) as step:
+                first: list[float] = []
+
+                def on_text(piece: str) -> None:
+                    if not first:
+                        first.append(step.elapsed_ms())
+                        step.note(first_token_ms=first[0])
+                    emit({"type": "delta", "text": piece})
+
+                reply = agent_util.complete(
+                    settings["endpoint"], settings["api_key"], model, msgs, tool_list,
+                    on_text=on_text, should_stop=run.stop.is_set,
+                )
+                step.note(tool_calls=len(reply.get("tool_calls") or []))
+                return reply
+
+        tool_list: list[dict] = []
 
         def work() -> None:
-            tool_list = agent_util.tools() + (agent_util.ORCHESTRATION_TOOLS if agentic else [])
+            tool_list.extend(agent_util.tools() + (agent_util.ORCHESTRATION_TOOLS if agentic else []))
             system = agent_util.system_prompt(
                 sess.record.settings.get("rules"), sess.browser.run_js_enabled,
                 bool(sess.record.settings.get("only_listed")),
                 agentic=agentic, role=role, lead=sess.record.settings.get("lead"),
             )
             try:
-                used = agent_util.run_turn(
-                    chat["messages"],
-                    models=models,
-                    complete_fn=lambda model, msgs: agent_util.complete(
-                        settings["endpoint"], settings["api_key"], model, msgs, tool_list,
-                        on_text=lambda piece: emit({"type": "delta", "text": piece}),
+                with trace_util.span("chat.reply", chat.get("title") or "", session=sess.name, chat=chat_id):
+                    used = agent_util.run_turn(
+                        chat["messages"],
+                        models=models,
+                        complete_fn=complete,
+                        call_tool=tool_call,
+                        emit=emit,
                         should_stop=run.stop.is_set,
-                    ),
-                    call_tool=tool_call,
-                    emit=emit,
-                    should_stop=run.stop.is_set,
-                    take_steering=run.take_steering,
-                    system=system,
-                )
+                        take_steering=run.take_steering,
+                        system=system,
+                    )
                 if used:
                     chat["model"] = used
             except Exception as exc:  # the chat must say so, not go quiet
@@ -1583,6 +1627,17 @@ def create_app(
     def _settings_of(name: str) -> dict:
         record = getattr(registry, "_records", {}).get(name)
         return dict(record.settings) if record is not None else {}
+
+    @app.get("/debug/trace")
+    async def debug_trace(request: Request, limit: int = 100):
+        """What is running right now, step by step, and the latest finished steps.
+
+        A hang shows as an active step that keeps ageing, with the chain of
+        steps it is part of. Operator only: steps name sessions and chats.
+        """
+        if not registry.is_operator(_token(request)):
+            return _refused(OpError("session_sealed", "the trace needs the operator token"))
+        return ok({"active": trace_util.active(), "recent": trace_util.recent(max(1, min(500, limit)))})
 
     @app.get("/app/live")
     async def app_live(request: Request):

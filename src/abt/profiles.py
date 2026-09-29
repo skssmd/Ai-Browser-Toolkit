@@ -29,6 +29,7 @@ from typing import Any, Callable
 import httpx
 
 from . import holders
+from . import trace as trace_util
 from .errors import OpError
 from .tabs import TabRegistry
 
@@ -304,9 +305,12 @@ class ProfileRegistry:
         One Chrome serves every session on a profile, so whoever starts it
         decides whether it has a window.
         """
-        with self._launch_lock(name):
+        with trace_util.span("profile.attach", name, session=session) as step, self._launch_lock(name):
             with self._lock:
                 running = self._live(name)
+                # Traced: a session on a profile whose Chrome is up only
+                # connects to it; it never starts a second one.
+                step.note(reused=running is not None)
                 if running is None:
                     live = [n for n in list(self._running) if self._live(n) is not None]
                     if len(live) + len(self._launching) >= self.max_running:
@@ -319,7 +323,8 @@ class ProfileRegistry:
                     self._launching.add(name)
             if running is None:
                 try:
-                    running = self._launch(name, headed)
+                    with trace_util.span("profile.launch", name, session=session):
+                        running = self._launch(name, headed)
                 finally:
                     with self._lock:
                         self._launching.discard(name)
@@ -342,16 +347,18 @@ class ProfileRegistry:
         another session waits for it to be gone and launches a fresh one,
         rather than connecting to a browser on its way out.
         """
-        with self._launch_lock(name):
+        with trace_util.span("profile.detach", name, session=session) as step, self._launch_lock(name):
             with self._lock:
                 running = self._running.get(name)
                 if running is None:
                     return
                 running.sessions.discard(session)
                 if running.sessions or running.watchers:
+                    step.note(closed_chrome=False, still_using=len(running.sessions))
                     return
                 del self._running[name]
                 self._tabs_of(name).clear()
+            step.note(closed_chrome=True)
             self._close(running)
 
     def touch(self, name: str) -> None:

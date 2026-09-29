@@ -63,6 +63,7 @@ from .engine import (
     StaleElement,
     Timeout,
 )
+from . import trace as trace_util
 from .errors import OpError
 
 # `execute_script` takes a statement body using `arguments[0..n]` with a
@@ -675,26 +676,30 @@ class PlaywrightDriver:
             return fn(*a, **kw)
         if self._hung:
             raise DeadSession("the browser connection stopped answering; restart the browser")
-        future = self._pool.submit(self._run, fn, *a, **kw)
-        deadline = time.monotonic() + self.CALL_DEADLINE
-        while True:
-            try:
-                return future.result(timeout=0.5)
-            except _FutureTimeout:
-                code = self._driver_exit_code()
-                if code is not None:
-                    reason = f"Playwright's driver process exited (code {code})"
-                elif time.monotonic() > deadline:
-                    reason = f"the browser connection stopped answering (nothing in {self.CALL_DEADLINE:g}s)"
-                else:
-                    continue
-            self._hung = True
-            self._pool.shutdown(wait=False, cancel_futures=True)
-            # Kept in server.err, so the next time this happens there is a
-            # record of how the driver went: a kill, a crash and a system
-            # fault leave different exit codes.
-            print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} {reason}", file=sys.stderr, flush=True)
-            raise DeadSession(f"{reason}; restart the browser")
+        # Traced: the step a hang would be stuck in. `get.<locals>.work` -> "get".
+        parts = getattr(fn, "__qualname__", "call").split(".")
+        name = parts[1] if len(parts) > 1 and parts[0] == type(self).__name__ else parts[0]
+        with trace_util.span("driver", name):
+            future = self._pool.submit(self._run, fn, *a, **kw)
+            deadline = time.monotonic() + self.CALL_DEADLINE
+            while True:
+                try:
+                    return future.result(timeout=0.5)
+                except _FutureTimeout:
+                    code = self._driver_exit_code()
+                    if code is not None:
+                        reason = f"Playwright's driver process exited (code {code})"
+                    elif time.monotonic() > deadline:
+                        reason = f"the browser connection stopped answering (nothing in {self.CALL_DEADLINE:g}s)"
+                    else:
+                        continue
+                self._hung = True
+                self._pool.shutdown(wait=False, cancel_futures=True)
+                # Kept in server.err, so the next time this happens there is a
+                # record of how the driver went: a kill, a crash and a system
+                # fault leave different exit codes.
+                print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} {reason}", file=sys.stderr, flush=True)
+                raise DeadSession(f"{reason}; restart the browser")
 
     def _driver_exit_code(self) -> int | None:
         """The exit code of Playwright's Node.js driver, or None while it runs."""

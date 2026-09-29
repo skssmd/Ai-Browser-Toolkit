@@ -14,6 +14,7 @@ fake model and no network or browser.
 from __future__ import annotations
 
 import json
+import contextvars
 import threading
 from typing import Any, Callable
 
@@ -401,7 +402,9 @@ def _until_stopped(call_tool, name: str, args: dict, should_stop) -> tuple[str, 
         except Exception as exc:  # reported like any failed tool call
             box["out"] = (f"{type(exc).__name__}: {exc}", True)
 
-    worker = threading.Thread(target=run, daemon=True, name=f"abt-tool-{name}")
+    # Carries the trace context over, so the tool's steps nest under this reply.
+    context = contextvars.copy_context()
+    worker = threading.Thread(target=context.run, args=(run,), daemon=True, name=f"abt-tool-{name}")
     worker.start()
     while worker.is_alive():
         worker.join(0.2)

@@ -27,6 +27,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -633,6 +634,13 @@ def serve(
         )
         closer = session.quit
 
+    # Every step, timed: `abt trace` shows what is running now and what finished.
+    from . import trace as trace_util
+
+    trace_util.configure(None if no_log else Path(log_dir) / "trace")
+    if not no_log:
+        typer.echo(f"step trace -> {Path(log_dir) / 'trace'} (`abt trace`)")
+
     config = uvicorn.Config(
         application, host=HOST, port=port, log_level="warning", access_log=False
     )
@@ -997,6 +1005,77 @@ def mcp(
 def shutdown(port: int = _port_option()) -> None:
     """Close the browser and stop the server."""
     _call(port, "/command-list", {"op": "shutdown"})
+
+
+def _trace_line(row: dict) -> str:
+    when = time.strftime("%H:%M:%S", time.localtime(row.get("started", 0)))
+    ms = row.get("ms")
+    took = f"{ms / 1000:.1f}s" if ms is not None and ms >= 1000 else f"{ms:.0f}ms" if ms is not None else ""
+    what = f"{row.get('kind', '')} {row.get('name', '')}".strip()
+    extra = " ".join(
+        f"{k}={row[k]}" for k in ("session", "ops", "op", "model", "first_token_ms", "reused",
+                                  "closed_chrome", "tool_calls", "result")
+        if row.get(k) not in (None, "", [])
+    )
+    mark = "" if row.get("ok", True) else "  FAILED " + str(row.get("error", ""))
+    return f"{when}  {took:>7}  {what:<34} {extra}{mark}"
+
+
+@app.command()
+def trace(
+    port: int = _port_option(),
+    limit: int = typer.Option(40, "--limit", "-n", help="How many finished steps to show."),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Keep printing steps as they finish."),
+) -> None:
+    """Every step, timed: what is running right now, and the latest finished steps.
+
+    A hang shows under "running now" as a step whose age keeps growing, with
+    the chain of steps it belongs to -- e.g. chat.reply > tool > command goto >
+    driver get. Needs the operator token, read from this machine's sessions folder.
+    """
+    import httpx
+
+    token_file = paths.sessions_dir() / "operator.token"
+    try:
+        token = token_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        typer.echo(f"no operator token at {token_file}; is the server running from here?")
+        raise typer.Exit(1)
+
+    def fetch() -> dict:
+        body = httpx.get(f"http://{HOST}:{port}/debug/trace", params={"limit": 500},
+                         headers={"X-ABT-Token": token}, timeout=10).json()
+        if not body.get("ok"):
+            typer.echo(f"error: {body.get('error', {}).get('message')}")
+            raise typer.Exit(1)
+        return body["result"]
+
+    def show_active(active: list[dict]) -> None:
+        typer.echo("running now:" if active else "running now: nothing")
+        for row in active:
+            typer.echo(f"  {row['age_s']:>7.1f}s  {row['chain']}")
+
+    data = fetch()
+    show_active(data["active"])
+    typer.echo("\nlatest finished steps:")
+    for row in data["recent"][-limit:]:
+        typer.echo("  " + _trace_line(row))
+    if not follow:
+        return
+    seen = {row["id"] for row in data["recent"]}
+    try:
+        while True:
+            time.sleep(1.0)
+            data = fetch()
+            for row in data["recent"]:
+                if row["id"] not in seen:
+                    seen.add(row["id"])
+                    typer.echo("  " + _trace_line(row))
+            slow = [r for r in data["active"] if r["age_s"] >= 10]
+            for row in slow:
+                typer.echo(f"  ... still running {row['age_s']:.0f}s: {row['chain']}")
+    except KeyboardInterrupt:
+        pass
 
 
 @app.command("command-list")
