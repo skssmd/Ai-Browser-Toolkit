@@ -1261,6 +1261,7 @@ def create_app(
                     complete_fn=lambda model, msgs: agent_util.complete(
                         settings["endpoint"], settings["api_key"], model, msgs, tool_list,
                         on_text=lambda piece: emit({"type": "delta", "text": piece}),
+                        should_stop=run.stop.is_set,
                     ),
                     call_tool=tool_call,
                     emit=emit,

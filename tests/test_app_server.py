@@ -187,7 +187,7 @@ def test_replies_keep_running_when_the_page_leaves_and_run_side_by_side(client, 
 def test_the_reply_streams_to_the_page(client, monkeypatch):
     client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
 
-    def complete(endpoint, key, model, messages, tools, on_text=None):
+    def complete(endpoint, key, model, messages, tools, on_text=None, **kw):
         for piece in ("Wor", "king", " on it."):
             on_text(piece)
         return {"content": "Working on it."}

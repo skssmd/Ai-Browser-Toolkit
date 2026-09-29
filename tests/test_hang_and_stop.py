@@ -1,0 +1,85 @@
+"""Nothing waits forever, and Stop stops now.
+
+Seen live: Playwright's Node.js driver died under two parallel chats, every
+call to it waited forever, and Stop only took effect "after this step" -- a
+step that never ended. No browser or network here: the hangs are simulated.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+from abt import agent
+from abt.engine import DeadSession
+from abt.pwdriver import PlaywrightDriver
+
+
+def bare_driver(deadline: float) -> PlaywrightDriver:
+    driver = object.__new__(PlaywrightDriver)
+    driver._owner = None
+    driver._pool = ThreadPoolExecutor(max_workers=1)
+    driver._hung = False
+    driver.CALL_DEADLINE = deadline
+    return driver
+
+
+def test_a_call_that_never_answers_fails_as_a_dead_session():
+    driver = bare_driver(0.3)
+    forever = threading.Event()
+    started = time.monotonic()
+    with pytest.raises(DeadSession):
+        driver._call(lambda: forever.wait(30))
+    assert time.monotonic() - started < 2
+    # Every later call fails at once instead of queuing behind the stuck one.
+    started = time.monotonic()
+    with pytest.raises(DeadSession):
+        driver._call(lambda: "never runs")
+    assert time.monotonic() - started < 0.2
+    forever.set()
+
+
+def test_a_normal_call_still_returns():
+    assert bare_driver(5)._call(lambda: 42) == 42
+
+
+def test_stop_ends_a_turn_waiting_on_the_model():
+    stop = threading.Event()
+
+    def complete(model, messages):
+        # A provider that never answers -- until Stop closes the stream.
+        while not stop.is_set():
+            time.sleep(0.05)
+        raise agent.Stopped()
+
+    events = []
+    threading.Timer(0.3, stop.set).start()
+    started = time.monotonic()
+    agent.run_turn([{"role": "user", "content": "go"}], models=["m"], complete_fn=complete,
+                   call_tool=None, emit=events.append, should_stop=stop.is_set)
+    assert time.monotonic() - started < 2
+    assert {"type": "notice", "text": "Stopped."} in events
+
+
+def test_stop_does_not_wait_for_a_hung_browser_command():
+    stop = threading.Event()
+    replies = iter([{"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+        "name": "command_list", "arguments": '{"commands": [{"op": "goto", "url": "https://x.test"}]}'}}]}])
+    hang = threading.Event()
+
+    def call_tool(name, args):
+        hang.wait(30)  # a goto whose browser connection is gone
+        return "{}", False
+
+    events, messages = [], [{"role": "user", "content": "go"}]
+    threading.Timer(0.3, stop.set).start()
+    started = time.monotonic()
+    agent.run_turn(messages, models=["m"], complete_fn=lambda m, msgs: next(replies),
+                   call_tool=call_tool, emit=events.append, should_stop=stop.is_set)
+    assert time.monotonic() - started < 2
+    assert any(e.get("type") == "tool_result" and "stopped by the person" in e.get("text", "") for e in events)
+    assert {"type": "notice", "text": "Stopped."} in events
+    hang.set()

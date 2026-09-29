@@ -14,6 +14,7 @@ fake model and no network or browser.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any, Callable
 
 import httpx
@@ -175,6 +176,10 @@ ORCHESTRATION_NAMES = frozenset(t["function"]["name"] for t in ORCHESTRATION_TOO
 APP_EXCLUDED_TOOLS = frozenset({"browser_session"})
 
 
+class Stopped(Exception):
+    """The person pressed Stop: whatever was in progress gives way at once."""
+
+
 class ModelError(Exception):
     """The endpoint refused or failed. `retry_elsewhere` means another model
     in the list may well succeed (no tool support, rate limit, overload)."""
@@ -239,6 +244,7 @@ def complete(
     messages: list[dict],
     tool_list: list[dict],
     on_text: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     """One call to `/chat/completions`. Returns the assistant message.
 
@@ -273,12 +279,29 @@ def complete(
             content=body.encode("ascii"),
             timeout=180,
         ) as response:
-            kind = response.headers.get("content-type", "")
-            if response.status_code >= 400 or "text/event-stream" not in kind:
-                response.read()
-                return _whole_reply(response, model)
-            return _streamed_reply(response, model, on_text)
-    except httpx.HTTPError as exc:
+            # Stop closes the stream from outside: a reply waiting on the
+            # provider has no next line to check a flag on.
+            finished = threading.Event()
+            if should_stop is not None:
+                def watch() -> None:
+                    while not finished.wait(0.2):
+                        if should_stop():
+                            response.close()
+                            return
+                threading.Thread(target=watch, daemon=True, name="abt-stop-watch").start()
+            try:
+                kind = response.headers.get("content-type", "")
+                if response.status_code >= 400 or "text/event-stream" not in kind:
+                    response.read()
+                    return _whole_reply(response, model)
+                return _streamed_reply(response, model, on_text)
+            finally:
+                finished.set()
+    except (httpx.HTTPError, httpx.StreamError, RuntimeError) as exc:
+        if should_stop is not None and should_stop():
+            raise Stopped() from None
+        if isinstance(exc, (httpx.StreamError, RuntimeError)):
+            raise
         raise ModelError(f"could not reach {endpoint}: {exc}") from exc
 
 
@@ -364,6 +387,29 @@ def trimmed(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _until_stopped(call_tool, name: str, args: dict, should_stop) -> tuple[str, bool]:
+    """Run one tool call, but stop waiting for it the moment Stop is pressed.
+
+    The call itself cannot be interrupted safely mid-way; it finishes (or times
+    out) on its own thread and its result is dropped. The chat does not wait.
+    """
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["out"] = call_tool(name, args)
+        except Exception as exc:  # reported like any failed tool call
+            box["out"] = (f"{type(exc).__name__}: {exc}", True)
+
+    worker = threading.Thread(target=run, daemon=True, name=f"abt-tool-{name}")
+    worker.start()
+    while worker.is_alive():
+        worker.join(0.2)
+        if worker.is_alive() and should_stop():
+            return "stopped by the person while this was running", True
+    return box["out"]
+
+
 def run_turn(
     messages: list[dict],
     *,
@@ -417,7 +463,13 @@ def run_turn(
         while message is None:
             try:
                 message = complete_fn(active, request)
+            except Stopped:
+                emit({"type": "notice", "text": "Stopped."})
+                return active
             except ModelError as exc:
+                if should_stop():
+                    emit({"type": "notice", "text": "Stopped."})
+                    return active
                 rest = candidates[candidates.index(active) + 1 :]
                 if not exc.retry_elsewhere or not rest:
                     emit({"type": "error", "text": str(exc)})
@@ -452,10 +504,14 @@ def run_turn(
                 if should_stop():
                     text, failed = "stopped by the person before this ran", True
                 else:
-                    text, failed = call_tool(name, args)
+                    text, failed = _until_stopped(call_tool, name, args, should_stop)
             if len(text) > RESULT_CHARS:
                 text = text[:RESULT_CHARS] + f" … [{len(text) - RESULT_CHARS} more chars]"
             emit({"type": "tool_result", "name": name, "text": text, "error": failed})
+            if should_stop():
+                messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": text})
+                emit({"type": "notice", "text": "Stopped."})
+                return active
             messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": text})
     emit({"type": "notice", "text": f"Stopped after {max_steps} steps."})
     return active

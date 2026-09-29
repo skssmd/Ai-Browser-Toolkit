@@ -42,6 +42,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FutureTimeout
 from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
@@ -604,6 +605,8 @@ class PlaywrightDriver:
         downloads=None,
     ) -> None:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="abt-pw")
+        # Set when a call got no answer in CALL_DEADLINE: see `_call`.
+        self._hung = False
         self._owner: int | None = None
         self._frame = None
         self._console_source = console_source
@@ -649,16 +652,38 @@ class PlaywrightDriver:
         self._call(self._boot, config)
 
     # -- thread affinity ---------------------------------------------------
+    # No single call to the browser takes this long: waits poll in short calls,
+    # and page loads and scripts time out on their own well before it.
+    CALL_DEADLINE = 120.0
+
     def _call(self, fn, *a, **kw):
         """Run on the owner thread, or inline when already there.
 
         The inline branch is what makes nesting safe: a single worker cannot
         service a call submitted from inside itself, so without this any facade
         method that used another would deadlock rather than fail.
+
+        Never waits forever. Playwright's own timeouts run in its Node.js
+        driver process; when that process dies, a call simply never returns --
+        seen live, it froze every chat on the profile with nothing on screen.
+        After CALL_DEADLINE the connection is declared dead: this call and every
+        later one fail at once as a dead session, which the chat recovers from
+        by restarting the browser. The stuck worker thread is abandoned.
         """
         if self._owner is not None and threading.get_ident() == self._owner:
             return fn(*a, **kw)
-        return self._pool.submit(self._run, fn, *a, **kw).result()
+        if self._hung:
+            raise DeadSession("the browser connection stopped answering; restart the browser")
+        future = self._pool.submit(self._run, fn, *a, **kw)
+        try:
+            return future.result(timeout=self.CALL_DEADLINE)
+        except _FutureTimeout:
+            self._hung = True
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            raise DeadSession(
+                f"the browser connection stopped answering (nothing in {self.CALL_DEADLINE:g}s); "
+                "restart the browser"
+            ) from None
 
     def _run(self, fn, *a, **kw):
         self._owner = threading.get_ident()

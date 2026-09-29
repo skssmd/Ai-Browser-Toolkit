@@ -1078,7 +1078,7 @@ function drawLive() {
       `<span class="meta">${r.steps ? r.steps + " steps" : ""}${time ? " · " + time : ""}</span></div>`;
     const stop = tile.querySelector(".stop");
     if (stop) stop.onclick = async () => {
-      try { await api("POST", `/app/live/${encodeURIComponent(r.session)}/stop`, undefined, { operator: true, session: null }); toast("Stopping after this step"); }
+      try { await api("POST", `/app/live/${encodeURIComponent(r.session)}/stop`, undefined, { operator: true, session: null }); toast("Stopped"); }
       catch (e) { fail(e); }
     };
     grid.appendChild(tile);
@@ -1843,7 +1843,7 @@ async function send() {
   S.chatSock.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
 }
 $("#send").onclick = send;
-$("#stop").onclick = () => { if (S.chatSock && S.chat) { S.chatSock.send(JSON.stringify({ type: "stop", chat_id: S.chat.id })); toast("Stopping after this step"); } };
+$("#stop").onclick = () => { if (S.chatSock && S.chat) { S.chatSock.send(JSON.stringify({ type: "stop", chat_id: S.chat.id })); toast("Stopped"); } };
 $("#prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
 // Markdown for the model's replies. Small and self-contained -- the page
