@@ -83,3 +83,20 @@ def test_stop_does_not_wait_for_a_hung_browser_command():
     assert any(e.get("type") == "tool_result" and "stopped by the person" in e.get("text", "") for e in events)
     assert {"type": "notice", "text": "Stopped."} in events
     hang.set()
+
+
+def test_a_dead_driver_process_is_noticed_at_once_and_logged(capsys):
+    from types import SimpleNamespace
+
+    driver = bare_driver(60)
+    proc = SimpleNamespace(returncode=None)
+    driver._pw = SimpleNamespace(_impl_obj=SimpleNamespace(_connection=SimpleNamespace(
+        _transport=SimpleNamespace(_proc=proc))))
+    forever = threading.Event()
+    threading.Timer(0.3, lambda: setattr(proc, "returncode", 3221225477)).start()  # it dies
+    started = time.monotonic()
+    with pytest.raises(DeadSession, match="exited"):
+        driver._call(lambda: forever.wait(30))
+    assert time.monotonic() - started < 3  # noticed at once, not at the 60s deadline
+    assert "exited (code 3221225477)" in capsys.readouterr().err
+    forever.set()

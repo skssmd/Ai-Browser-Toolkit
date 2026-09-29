@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -675,15 +676,32 @@ class PlaywrightDriver:
         if self._hung:
             raise DeadSession("the browser connection stopped answering; restart the browser")
         future = self._pool.submit(self._run, fn, *a, **kw)
-        try:
-            return future.result(timeout=self.CALL_DEADLINE)
-        except _FutureTimeout:
+        deadline = time.monotonic() + self.CALL_DEADLINE
+        while True:
+            try:
+                return future.result(timeout=0.5)
+            except _FutureTimeout:
+                code = self._driver_exit_code()
+                if code is not None:
+                    reason = f"Playwright's driver process exited (code {code})"
+                elif time.monotonic() > deadline:
+                    reason = f"the browser connection stopped answering (nothing in {self.CALL_DEADLINE:g}s)"
+                else:
+                    continue
             self._hung = True
             self._pool.shutdown(wait=False, cancel_futures=True)
-            raise DeadSession(
-                f"the browser connection stopped answering (nothing in {self.CALL_DEADLINE:g}s); "
-                "restart the browser"
-            ) from None
+            # Kept in server.err, so the next time this happens there is a
+            # record of how the driver went: a kill, a crash and a system
+            # fault leave different exit codes.
+            print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} {reason}", file=sys.stderr, flush=True)
+            raise DeadSession(f"{reason}; restart the browser")
+
+    def _driver_exit_code(self) -> int | None:
+        """The exit code of Playwright's Node.js driver, or None while it runs."""
+        try:
+            return self._pw._impl_obj._connection._transport._proc.returncode
+        except AttributeError:
+            return None
 
     def _run(self, fn, *a, **kw):
         self._owner = threading.get_ident()
