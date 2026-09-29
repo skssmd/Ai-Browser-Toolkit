@@ -271,8 +271,6 @@ ops, they are what you reach for when a browser is broken.
 `GET /status` and `GET /browser` take `?profile=`. `/health` is unchanged — it
 answers about the server and must stay free of all this.
 
-**Messenger endpoints** take `profile` too, defaulting as everything else does.
-They resolve through the pool exactly like `/command`.
 
 **CLI:** `abt profiles`, `abt profile create|delete`, and `--profile-name` /
 `--agent` on the command-sending subcommands. `abt up` is unchanged.

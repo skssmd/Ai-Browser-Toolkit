@@ -341,7 +341,7 @@ session and is the single highest-value addition on this list.
 
 ### 5.11 No LinkedIn playbook
 
-`guidelines/` has entries for Messenger, Google Docs/Sheets and two media
+`guidelines/` has entries for Google Docs/Sheets and two media
 sites. Nothing for LinkedIn, and **nothing anywhere in the repo mentions
 "typeahead", "combobox" or "autocomplete"** — the pattern that ate 45% of this
 session. `toolkit-workflow.md` is the right home for the generic version.

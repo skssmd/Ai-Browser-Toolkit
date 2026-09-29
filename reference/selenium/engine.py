@@ -1,7 +1,7 @@
 """The engine seam: everything the page layer needs from a browser driver.
 
 Nothing above this module names Selenium. `ops/`, `targeting`, `frames`,
-`shadow`, `refs` and `messenger` import their exceptions, locator strategies and
+`shadow` and `refs` import their exceptions, locator strategies and
 key names from here, so swapping the driver underneath is a change to this file
 and `browser.py` rather than to thirty call sites.
 
@@ -193,12 +193,12 @@ def Select(element):
 # analogue, and re-exporting them here is not pretending otherwise -- it is so
 # that this file is the complete inventory of what the port has to replace,
 # rather than that inventory being spread across `interact`, `targeting` and
-# `messenger` where it is easy to miss one.
+# `interact` where it is easy to miss one.
 #
 #   ActionChains   -> Playwright drives modifiers through `page.keyboard.down`
 #                     / `up` and per-action `modifiers=[...]`. The chord builder
 #                     in `ops.interact` is the only caller that needs the
-#                     sequencing; `messenger` uses it for select-all-and-delete.
+#                     sequencing.
 #   Select         -> `locator.select_option()`, which takes label/value/index
 #                     directly and needs no wrapper object.
 #   WebDriverWait  -> mostly *deleted*: Playwright locators auto-wait, which is

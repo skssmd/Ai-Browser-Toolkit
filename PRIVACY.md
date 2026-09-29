@@ -83,8 +83,7 @@ It does **not** cover:
 | Session logs: what the agent saw, ran, and got back — every command, its parameters, its result, URL, tab, timing | Appended to a JSONL file as commands run | Yes, `events.jsonl` | To your model provider if your agent sends it there |
 | Browser network activity: request URLs, method, status, timing, content length | Read on request (`read_network`), and into the session log | Yes, as part of the recorded result | No |
 | Browser console output | Read on request (`read_console`) | Yes, as part of the recorded result | No |
-| Messenger thread names, previews, message bodies, senders, timestamps | Held in memory, and written into the session log | Yes, in `events.jsonl` | To Messenger itself when an agent sends; to your model provider if your agent sends it there |
-| Local file paths handed to `input` (uploads) or attached to a message | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the session's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
+| Local file paths handed to `input` (uploads) | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the session's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
 | Files you put in a session's uploads folder, and files the browser downloads | Listed by name, size and path (the `files` op); never read into a response | Yes, in `Documents/AI Browser Toolkit/<session>/uploads` and `/downloads` | Uploads only to the site you or the agent upload them to |
 | Desktop app settings: model endpoint, **API key**, model list | Read when the chat calls the model | Yes, `app.json` in the sessions folder, readable only by your user account | The key goes to the endpoint you configured, with every request |
 | Desktop app chats: your messages, the model's replies, every tool call and its result | Sent to your model provider on each turn, and shown in the app | Yes, one JSON file per chat in the sessions folder | To your model provider, on every turn |
@@ -193,7 +192,6 @@ the browser:
   (`token`, `code`, `password`, `sig`, and 14 more) are replaced with
   `REDACTED` before the row is returned or logged.
 - **`read_console`** returns page console output.
-- **`messenger_*`** lists threads, reads messages and sends messages.
 - **`input`** types into forms, including sign-in forms.
 
 MCP is a thin shim: `abt mcp` speaks JSON-RPC over stdio and forwards
@@ -388,7 +386,7 @@ holds are the three things you would want to check afterwards:
 | --- | --- |
 | **What the agent saw** — the page text that appeared and disappeared, plus a screenshot of the window after every command | Did it look at what it should have looked at? |
 | **What it ran** — the operations in order, with their targets, typed values, URLs, tab and timings | Did it do what you asked, in the order it should have? |
-| **What came back** — every result and every error, including `read_network` rows and Messenger threads and messages | Did the result match the intent, or did it fail quietly? |
+| **What came back** — every result and every error, including `read_network` rows | Did the result match the intent, or did it fail quietly? |
 
 Structurally, each line is: timestamp, session id, tab id, site, full URL,
 operation, success flag, error type, duration, **the complete request** and
@@ -458,7 +456,6 @@ directory — which is why uninstalling does not take them with it.
 | `Documents/AI Browser Toolkit/<session>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, and files the browser downloaded. Nothing is deleted automatically. |
 | `guidelines/local/`, `guidelines/trusted/`, `guidelines/pending/` | data root | Playbooks read, trusted, or pulled but not yet trusted. An agent's own `guidelines_note` is written locally and is not shared until you run `abt guidelines submit`. |
 | `server.log` | next to the source checkout | The launcher's stdout, including the resolved profile path, log directory and listening address. |
-| `abt-attach-*` | system temp directory | Remote Messenger attachments downloaded at your or your agent's request. **Not deleted automatically.** |
 | `.first-run-shown` | state root | An empty marker file. |
 | A logon task or launch agent | Task Scheduler / launchd / systemd user unit | Only if you opt in with `abt autostart install` or tick the installer task. It starts the server at logon, so a browser that an agent can drive opens every time you sign in. |
 
@@ -468,9 +465,7 @@ The desktop app's live view frames are streamed and never written to disk; a
 reply that is still running is held in memory and saved to the chat when it
 finishes. The network ring buffer (500 entries per page, cleared on main-frame navigation)
 and the page console buffer (500 messages, 2,000 characters each) are held in
-memory and never written to disk. Messenger cursors and job state are in memory
-for the life of the process — but every Messenger route is recorded, so the
-session log is the durable copy.
+memory and never written to disk.
 
 ## 7. Controls
 
@@ -557,7 +552,6 @@ Deletion is manual, and the paths are:
 | Named profiles | `abt profile rm NAME`, or *Logins from → delete* in the app. |
 | Logins, cookies, history, site storage | Sign out inside the browser window and use Chrome's own "Clear browsing data" on that profile, or delete the profile directory. `abt doctor` prints the path. There is no ABT command for this. |
 | Playbooks, config, first-run marker | Delete the data root (and the state root on Linux, where they differ). Local notes go with it; a submitted playbook is a separate Git history. |
-| Downloaded Messenger attachments | Delete `abt-attach-*` directories in your system temp folder. |
 | Logon task / launch agent | `abt autostart uninstall`. |
 | ABT itself | The WinGet/Inno uninstaller removes the program files and the logon task. **It does not remove the data root** — `%LOCALAPPDATA%\AIBrowserToolkit` (or the `~/Library/…`, `~/.local/…` equivalent) holding the profile, the logs, the config and the playbooks stays on disk. Delete it yourself. |
 

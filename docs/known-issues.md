@@ -36,7 +36,7 @@ Resource Timing API — nothing to patch, no overhead, and it is what found the 
 
 *Caught during review:* the first version registered the init script once at
 startup. CDP registers against one **target**, so every tab opened afterwards —
-`tab_new`, a `new_tab` click, every background Messenger send — had no console
+`tab_new`, a `new_tab` click — had no console
 at all. It passed in isolation and failed in the full suite, because the tab
 tests leave a different tab active. Capture is now armed per tab, once each
 (`BrowserSession._captured`), on open, on switch, and after a close hands
@@ -188,10 +188,9 @@ one element it refused to touch.
 Two changes. The actionable track exempts file inputs from "must be rendered" —
 the sole exception, since nothing else is both invisible and unreachable by
 other means. And `input` falls back to a `present` lookup when the visible one
-fails, confirms the target really is a file input, then borrows the unhide trick
-`messenger.py` already used (`UNHIDE_FILE_INPUT_JS`, now shared rather than
-duplicated) — and restores the original style afterwards, which the Messenger
-version does not, so the next diff does not report a phantom change.
+fails, confirms the target really is a file input, then unhides it
+(`UNHIDE_FILE_INPUT_JS`) — and restores the original style afterwards, so the
+next diff does not report a phantom change.
 
 An ordinary missing or hidden field still reports its real error; the exemption
 checks the type before it applies.

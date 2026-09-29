@@ -206,14 +206,3 @@ def test_a_removed_session_is_marked_closed(registry):
     held = registry.get("a")
     registry.remove("a")
     assert held.closed is True
-
-
-def test_messenger_is_not_exposed(client):
-    """Taken out for now (Meta's terms); its code is kept in reference/messenger."""
-    from typer.main import get_command
-
-    from abt import cli, guidelines
-
-    assert not [r.path for r in client.app.routes if getattr(r, "path", "").startswith("/messenger")]
-    assert "messenger" not in get_command(cli.app).commands
-    assert "messenger.com" not in guidelines.installed()

@@ -123,7 +123,7 @@ WinGet repository policy
 asks any package that touches personal data to publish a product-specific
 privacy policy and point `PrivacyUrl` at it. ABT does: it drives a persistent
 browser profile, so it can reach cookies, authenticated sessions, page text,
-screenshots, session logs and Messenger threads. The moderation nudge on
+screenshots and session logs. The moderation nudge on
 [microsoft/winget-pkgs#428651](https://github.com/microsoft/winget-pkgs/pull/428651)
 is the check-in policy asking for exactly that.
 

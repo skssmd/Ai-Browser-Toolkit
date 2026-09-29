@@ -1,7 +1,7 @@
 """The engine seam: everything the page layer needs from a browser driver.
 
 Nothing above this module names a driver library. `ops/`, `targeting`,
-`frames`, `shadow`, `refs` and `messenger` import their exceptions, locator
+`frames`, `shadow` and `refs` import their exceptions, locator
 strategies, key names and waits from here; `pwdriver` raises these exceptions
 and speaks this vocabulary.
 

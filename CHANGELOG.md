@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- **Messenger removed from the product for now.** The `/messenger/*` routes,
-  the `abt messenger` commands and the messenger.com playbook are gone;
-  automating a Meta account this way is against Messenger's terms. The code is
-  kept, unused and unshipped, in `reference/messenger/`.
 - **A stopped server really stops.** A chat reply still running at shutdown
   kept the old process alive for up to five minutes, still driving its browser
   -- restarting it whenever the new server took the profile, which then lost

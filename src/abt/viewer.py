@@ -310,9 +310,6 @@ function describe(e) {
     case "select": return `select ${JSON.stringify(r.value ?? r.label ?? r.option ?? "")} in ${target}`;
     case "scroll": return `scroll ${r.to || (r.by != null ? `by ${r.by}` : "") || target}`;
     case "click_at": return `click at ${r.x},${r.y}`;
-    case "messenger_send": return `messenger send → ${r.thread_url || r.to || r.query || ""}`;
-    case "messenger_threads": return "messenger: list threads";
-    case "messenger_messages": return `messenger: read ${r.thread_url || ""}`;
     default: return target ? `${op} ${target}${nth}` : op;
   }
 }

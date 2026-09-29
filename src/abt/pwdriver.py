@@ -2,7 +2,7 @@
 
 The page layer asks a driver for twelve things and an element for eight. This
 implements exactly those, backed by Playwright, so `ops/`, `targeting`,
-`frames`, `shadow`, `refs` and `messenger` run unchanged and the existing suite
+`frames`, `shadow` and `refs` run unchanged and the existing suite
 is the proof. Nothing above `browser.py` learns which engine is underneath --
 that is the whole constraint this file exists to satisfy.
 
@@ -132,7 +132,7 @@ _RENDERED_TEXT_JS = """(root) => {
 
 # Focus an element and put the caret after any existing content, which is
 # where Selenium's send_keys starts from. Covers form controls and
-# contenteditable, since the composer in `messenger` is the latter.
+# contenteditable, since rich-text composers are the latter.
 _CARET_TO_END_JS = """(e) => {
   e.focus();
   if (typeof e.setSelectionRange === 'function' && typeof e.value === 'string') {
@@ -460,7 +460,7 @@ class PlaywrightElement:
     def find_elements(self, by: str, selector: str) -> list:
         """Search within this element, as Selenium's element-scoped find does.
 
-        `messenger` narrows to one thread row and then searches inside it, so
+        A caller narrows to one row and then searches inside it, so
         the driver-level search is not a substitute -- it would match rows the
         caller has already excluded.
         """
@@ -507,7 +507,7 @@ class PlaywrightElement:
     def send_keys(self, *values) -> None:
         """Type into the element, or hand a file input its paths.
 
-        Selenium overloads send_keys for uploads -- `messenger._attach` and the
+        Selenium overloads send_keys for uploads -- the
         file-input branch of `input` both rely on it -- so the overload has to
         survive here or those paths break in a way no type checker sees.
         """
@@ -1357,7 +1357,7 @@ def _handle_of(page) -> str:
 # the suite said so plainly: "move_to requires a WebElement". These are the
 # Playwright-native equivalents. `engine.ActionChains` and `engine.Select`
 # dispatch to them on type, which is why not one call site in `ops.interact` or
-# `messenger` had to change.
+# a caller had to change.
 # --------------------------------------------------------------------------- #
 
 

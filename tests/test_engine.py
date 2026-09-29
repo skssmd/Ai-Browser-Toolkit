@@ -185,7 +185,7 @@ def test_keys_reach_playwright_under_names_it_accepts():
     """Several names share a key; the one Playwright is sent must be its own.
 
     Reordering the key table once sent "BackSpace" (from `back_space`), which
-    Playwright rejects, and every send in messenger failed with it.
+    Playwright rejects, and every chord that used it failed.
     """
     from abt.pwdriver import _playwright_key
 

@@ -531,7 +531,7 @@ class BrowserSession:
 
         CDP registers the init script against one *target*, so a tab opened
         later gets nothing -- and `tab_new`, a click with `new_tab`, and every
-        background Messenger send all open one. Install per tab, once each:
+        background job all open one. Install per tab, once each:
         registering twice on the same target stacks duplicate scripts.
 
         Best effort throughout: a browser without CDP still works, just without

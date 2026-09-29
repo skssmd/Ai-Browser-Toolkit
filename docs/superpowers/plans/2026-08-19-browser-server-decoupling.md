@@ -4,7 +4,7 @@
 
 **Goal:** Make the browser a resource the server manages rather than a precondition it requires — the server boots in ~1s with no browser, and gains explicit `browser_start`/`stop`/`restart`/`status` lifecycle control plus a launcher that spawns it outside the caller's job object.
 
-**Architecture:** One `BrowserSession` lives for the server's lifetime with a *swappable* driver underneath it, so the nine closures in `create_app` and the twenty-seven `session` parameters in `messenger.py` stay valid across a restart. Launch parameters move into a frozen `LaunchConfig` that supports per-start overrides layered over serve-time defaults. Recovery is explicit-only: a dead browser returns `browser_dead` until someone asks for a new one.
+**Architecture:** One `BrowserSession` lives for the server's lifetime with a *swappable* driver underneath it, so the nine closures in `create_app` stay valid across a restart. Launch parameters move into a frozen `LaunchConfig` that supports per-start overrides layered over serve-time defaults. Recovery is explicit-only: a dead browser returns `browser_dead` until someone asks for a new one.
 
 **Tech Stack:** Python 3.11+, Selenium 4, FastAPI, uvicorn, Pydantic v2, Typer, httpx, pytest.
 
@@ -607,8 +607,7 @@ git commit -m "Make the browser lifecycle re-entrant
 
 start/stop/restart replace a one-shot start. One BrowserSession still lives for
 the server's lifetime, with the driver swapped underneath it, so the closures
-in create_app and the session parameters threaded through messenger.py stay
-valid across a restart.
+in create_app stay valid across a restart.
 
 start is not idempotent on purpose: a start naming a different profile is a
 different identity, and no-oping it would hand back the wrong logins silently.

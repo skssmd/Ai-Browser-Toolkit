@@ -84,8 +84,7 @@ server/cli        when to launch it       lifecycle routes, ops, and abt up
 The alternative considered was a `SessionManager` handing out a fresh
 `BrowserSession` per launch, which separates lifecycle from page-driving more
 cleanly. It was rejected on a concrete ground, not on diff size: `create_app`
-closes over `session` in nine places and `messenger.py` takes it as a parameter
-in twenty-seven more. Under a manager, every one of those references would hold
+closes over `session` in nine places. Under a manager, every one of those references would hold
 a **stale** session object after a restart, so correctness would require routing
 each one through a `manager.current()` indirection.
 

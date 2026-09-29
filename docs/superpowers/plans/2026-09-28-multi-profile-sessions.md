@@ -3040,10 +3040,6 @@ def create_app(
     # The default session's browser, for callers that predate sessions.
     app.state.session = registry.get(None).browser
     app.state.recorder = recorder
-    jobs = messenger_api.JobRegistry()
-    cursors = messenger_api.MessageCursors()
-    app.state.messenger_jobs = jobs
-    app.state.messenger_cursors = cursors
 
     def _session_for(request: Request) -> Session:
         name = request.headers.get("x-abt-session") or request.query_params.get("session")
@@ -3117,7 +3113,6 @@ In `_command_list`, right after the `isinstance(body, JSONResponse)` check:
 
 and pass `sess` as the first argument of both `run_in_threadpool(execute, ...)` calls.
 
-Messenger: `run_locked(sess, work, request)` uses `with sess.lock:` and `sess.browser.health_check()`, and records through `_record(sess, ...)`. `send_job(sess, request, job_id)` becomes `lambda: messenger_api.send_in_new_tab(sess.browser, request)`. Each messenger route resolves `sess = _session_for(request)` (add `request: Request` where missing; wrap it in `try/except OpError as exc: return _refused(exc)`). The work lambdas read `sess.browser` inside the lock (`lambda: messenger_api.send(sess.browser, parsed)`; in `messenger_threads`/`messenger_messages`, `work()` uses `sess.browser`). `run_locked_async(sess, work, request)`.
 
 `/status`: resolve `sess = _session_for(request)` (refuse on `OpError`), use `sess.browser` in place of `session`, and add the name to the answer:
 
