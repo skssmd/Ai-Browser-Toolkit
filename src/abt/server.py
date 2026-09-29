@@ -976,7 +976,16 @@ def create_app(
 
     def _chat_session(request: Request) -> Session:
         _app_ready()
-        return _session_for(request)
+        sess = _session_for(request)
+        # The app shows a chat's page itself, so its browser needs no window:
+        # a visible one only invited closing it, which took the chat's tabs
+        # with it. Chats made before sessions carried `headless` get it the
+        # first time the app touches them. `default` is shared with the CLI,
+        # which keeps its window.
+        if sess.name != DEFAULT and "headless" not in sess.record.settings:
+            sess.record.settings = {**sess.record.settings, "headless": True}
+            registry.store.save(sess.record)
+        return sess
 
     @app.get("/app/chats")
     async def app_chats(request: Request):

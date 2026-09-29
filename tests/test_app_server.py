@@ -364,3 +364,13 @@ def test_shutting_down_stops_a_reply_that_is_still_running(registry, monkeypatch
         saved = c.get(f"/app/chats/{chat['id']}").json()["result"]["messages"]
     tool = [m for m in saved if m["role"] == "tool"]
     assert tool and tool[0]["content"] == "stopped by the person before this ran"
+
+
+def test_the_app_makes_older_chats_headless_but_not_default(client, registry):
+    """A chat made before `headless` existed opened a window; closing it killed the chat's tabs."""
+    registry.create("chat-old", sealed=True)
+    token = registry.store.directory.joinpath("chat-old.token").read_text(encoding="utf-8")
+    client.get("/app/chats", headers={"X-ABT-Session": "chat-old", "X-ABT-Token": token})
+    assert registry.get("chat-old", token).record.settings["headless"] is True
+    client.get("/app/chats")
+    assert "headless" not in registry.get(None).record.settings
