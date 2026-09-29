@@ -1022,8 +1022,16 @@ async function loadLive() {
   const working = data.sessions.filter(r => r.working).length;
   $("#live-count").hidden = !working; $("#live-count").textContent = working;
   if (!S.live.on) return;
-  // Working first, then most recent; tiles only for pages there is a tab for.
-  S.live.rows = data.sessions.filter(r => r.browser && r.tab).slice(0, LIVE_MAX_STREAMS);
+  // Tiles stay where they are: one already on screen keeps its place, a new
+  // one joins at the end, one that goes away just leaves its gap closed.
+  // Re-sorting on every refresh made the tiles jump around under the eye.
+  // Keyed by the agent (its session), so switching tabs changes the picture,
+  // not the tile's place.
+  const found = data.sessions.filter(r => r.browser && r.tab);
+  const bySession = new Map(found.map(r => [r.session, r]));
+  S.live.order = (S.live.order || []).filter(s => bySession.has(s));
+  for (const r of found) if (!S.live.order.includes(r.session)) S.live.order.push(r.session);
+  S.live.rows = S.live.order.slice(0, LIVE_MAX_STREAMS).map(s => bySession.get(s));
   S.live.now = data.now;
   drawLive();
 }

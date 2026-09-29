@@ -219,6 +219,31 @@ def test_the_chat_list_says_which_chats_are_empty(client, monkeypatch):
     assert sorted(rows.values()) == [0, 2]
 
 
+def test_a_chat_is_named_as_soon_as_it_starts_not_when_the_reply_ends(client, monkeypatch):
+    import threading
+
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+    release = threading.Event()
+
+    def complete(*a, **kw):
+        release.wait(10)  # the first reply is still being written
+        return {"content": "done"}
+
+    monkeypatch.setattr(agent, "complete", complete)
+    chat = client.post("/app/chats", json={}).json()["result"]
+    with client.websocket_connect("/app/chat") as ws:
+        ws.send_json({"type": "send", "chat_id": chat["id"], "text": "Audit example.com for SEO"})
+        assert ws.receive_json()["type"] == "user"
+        titles = {r["id"]: r["title"] for r in client.get("/app/chats").json()["result"]}
+        assert titles[chat["id"]] == "Audit example.com for SEO"  # while the reply still runs
+        # And the app's chat list shows it already: it lists chats with a message.
+        listed = {r["chat_id"]: r for r in client.get("/app/overview", headers=OP).json()["result"]}
+        assert listed[chat["id"]]["messages"] >= 1 and listed[chat["id"]]["title"] == "Audit example.com for SEO"
+        release.set()
+        while ws.receive_json()["type"] != "done":
+            pass
+
+
 def test_a_chat_error_is_saved_with_the_chat(client, monkeypatch):
     """It used to exist only on screen, and was gone after a reload."""
     client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)

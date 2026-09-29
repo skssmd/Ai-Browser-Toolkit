@@ -1244,10 +1244,13 @@ def create_app(
         chat["messages"].append({"role": "user", "content": text})
         if chat.get("title") in (None, "", "New chat"):
             chat["title"] = text[:60] or "New chat"
+        # Saved now, not when the reply ends: the chat list reads the saved
+        # chat, and showed "New chat" for as long as the first reply ran.
+        await run_in_threadpool(chats.save, sess.name, chat)
         run = ChatRun(sess.name, chat_id)
         runs[key] = run
         loop = asyncio.get_running_loop()
-        publish(run, {"type": "user", "text": text})
+        publish(run, {"type": "user", "text": text, "title": chat["title"]})
 
         def emit(event: dict) -> None:
             # Errors and notices are kept in the chat, so they are still
