@@ -1267,6 +1267,16 @@ def create_app(
             self.events: list[dict] = []
             self.stop = threading.Event()
             self.finished = False
+            # What the person sent while this runs, not yet read by the model.
+            # Appended on the event loop, taken on the worker thread.
+            self.steering: list[dict] = []
+            self.steering_lock = threading.Lock()
+            self.steer_count = 0
+
+        def take_steering(self) -> list[dict]:
+            with self.steering_lock:
+                taken, self.steering = self.steering, []
+            return taken
 
     runs: dict[tuple[str, str], ChatRun] = {}
     watchers: dict[str, set] = {}  # session -> the queues of pages watching it
@@ -1286,9 +1296,17 @@ def create_app(
         chat_id = str(message.get("chat_id"))
         key = (sess.name, chat_id)
         current = runs.get(key)
-        if current is not None and not current.finished:
-            return "this chat is still working on the last message"
         text = str(message.get("text") or "").strip()
+        if current is not None and not current.finished:
+            # Sent while it works: it steers the run, read at the next step.
+            if not text:
+                return None
+            with current.steering_lock:
+                current.steer_count += 1
+                item = {"id": f"s{current.steer_count}", "text": text}
+                current.steering.append(item)
+            publish(current, {"type": "steer", **item})
+            return None
         try:
             chat = await run_in_threadpool(chats.get, sess.name, chat_id)
         except OpError as exc:
@@ -1327,6 +1345,7 @@ def create_app(
                     call_tool=lambda name, args: call_tool(sess, name, args),
                     emit=emit,
                     should_stop=run.stop.is_set,
+                    take_steering=run.take_steering,
                     system=system,
                 )
                 if used:
@@ -1334,6 +1353,10 @@ def create_app(
             except Exception as exc:  # the chat must say so, not go quiet
                 emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
             finally:
+                # Sent too late for this run -- it stopped or failed first.
+                # Kept in the chat, so the next message carries it along.
+                for item in run.take_steering():
+                    chat["messages"].append({"role": "user", "content": item["text"]})
                 chats.save(sess.name, chat)
 
                 def finish() -> None:

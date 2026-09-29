@@ -284,6 +284,8 @@ APP_HTML = r"""<!doctype html>
   .msg.user { background: var(--user); color: var(--user-ink); align-self: flex-end; border-bottom-right-radius: 4px; }
   .msg.assistant { background: var(--raised); border-bottom-left-radius: 4px; }
   .msg.notice { color: var(--muted); font-size: 12px; background: none; padding: 0 2px; }
+  .msg.steer .steer-note { display: block; margin-top: 3px; font-size: 11px; opacity: .7; }
+  .msg.steer.queued { opacity: .75; border: 1px dashed currentColor; }
   .msg.error { color: var(--bad); background: var(--bad-soft); font-size: 12.5px; }
   .step { font-size: 12.5px; color: var(--muted); max-width: 100%; }
   .step summary { cursor: pointer; list-style: none; display: flex; gap: 7px; align-items: baseline; padding: 1px 2px; }
@@ -1454,6 +1456,13 @@ function renderEvent(e) {
     else if (switched) S.follow = switched.tab_id;
     if (S.follow) refreshBrowser();
   }
+  else if (e.type === "steer") {
+    add(`<div class="msg user steer queued" data-steer="${esc(e.id)}">${esc(e.text)}<span class="steer-note">Read at the next step</span></div>`);
+  }
+  else if (e.type === "steer_read") {
+    const el = document.querySelector(`.msg.steer[data-steer="${CSS.escape(e.id)}"]`);
+    if (el) { el.classList.remove("queued"); const n = el.querySelector(".steer-note"); if (n) n.textContent = "Read"; }
+  }
   else if (e.type === "notice") bubble("notice", e.text);
   else if (e.type === "error") bubble("error", e.text);
 }
@@ -1487,8 +1496,11 @@ async function onChatEvent(e) {
 }
 
 function setBusy(busy) {
-  S.busy = busy; $("#send").hidden = busy; $("#stop").hidden = !busy;
-  $("#prompt").placeholder = busy ? "Working… you can type your next message" : "Tell the browser what to do…";
+  // Send stays: a message sent while it works steers it at the next step.
+  S.busy = busy; $("#stop").hidden = !busy;
+  $("#send").textContent = busy ? "Steer" : "Send";
+  $("#send").title = busy ? "Send now — the AI reads it at its next step and adjusts" : "Send (Enter)";
+  $("#prompt").placeholder = busy ? "Working… type to steer it — read at the next step" : "Tell the browser what to do…";
 }
 
 function grow() { const p = $("#prompt"); p.style.height = "auto"; p.style.height = Math.min(p.scrollHeight, window.innerHeight * 0.4) + "px"; }
@@ -1496,7 +1508,8 @@ $("#prompt").addEventListener("input", grow);
 
 async function send() {
   const text = $("#prompt").value.trim();
-  if (!text || S.busy) return;
+  if (!text) return;
+  if (S.busy && S.draft) return;
   if (!ready()) return drawSetup();
   if (S.draft) {
     // The first message makes the chat: its session, its browser, then this.
@@ -1510,7 +1523,9 @@ async function send() {
   }
   if (!S.chat) return;
   if (!S.chatSock || S.chatSock.readyState !== 1) { openChatSocket(); return toast("Reconnecting — send again in a moment", true); }
-  $("#prompt").value = ""; grow(); setBusy(true);
+  const steering = S.busy;
+  $("#prompt").value = ""; grow();
+  if (!steering) setBusy(true);
   if (!(S.chat.messages || []).length && document.querySelector(".empty")) $("#messages").innerHTML = "";
   S.chatSock.send(JSON.stringify({ type: "send", chat_id: S.chat.id, text, model: $("#model").value || null }));
 }

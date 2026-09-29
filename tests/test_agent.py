@@ -236,3 +236,39 @@ def test_saved_errors_and_notices_are_not_sent_to_the_model():
     agent.run_turn(messages, models=["m"], complete_fn=complete, call_tool=None, emit=lambda e: None)
     sent_roles = [m["role"] for m in seen[0][1]]
     assert sent_roles == ["user", "user"]
+
+
+def test_a_message_sent_while_working_steers_the_next_step():
+    """It joins after the step's tool results, never between a call and its result."""
+    complete, seen = script(
+        {"content": "", "tool_calls": [call("command_list", {"commands": [{"op": "status"}]})]},
+        {"content": "Went to the pricing page instead."},
+    )
+    pending = []
+
+    def call_tool(name, args):
+        pending.append({"id": "s1", "text": "actually, check the pricing page"})  # sent mid-step
+        return '{"ok":true}', False
+
+    def take():
+        taken = list(pending)
+        pending.clear()
+        return taken
+
+    events, messages = [], [{"role": "user", "content": "open the homepage"}]
+    agent.run_turn(messages, models=["m1"], complete_fn=complete, call_tool=call_tool,
+                   emit=events.append, take_steering=take)
+    assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user", "assistant"]
+    assert messages[3]["content"] == "actually, check the pricing page"
+    assert seen[1][1][-1] == {"role": "user", "content": "actually, check the pricing page"}
+    assert {"type": "steer_read", "id": "s1", "text": "actually, check the pricing page"} in events
+
+
+def test_a_turn_about_to_end_answers_what_was_sent_meanwhile():
+    complete, seen = script({"content": "Done."}, {"content": "And the footer too, done."})
+    pending = [[], [{"id": "s1", "text": "the footer too"}], []]
+    messages = [{"role": "user", "content": "fix the header"}]
+    agent.run_turn(messages, models=["m1"], complete_fn=complete, call_tool=None,
+                   emit=lambda e: None, take_steering=lambda: pending.pop(0) if pending else [])
+    assert [m["content"] for m in messages] == ["fix the header", "Done.", "the footer too", "And the footer too, done."]
+    assert len(seen) == 2

@@ -233,6 +233,7 @@ def run_turn(
     call_tool: Callable[[str, dict], tuple[str, bool]],
     emit: Callable[[dict], None],
     should_stop: Callable[[], bool] = lambda: False,
+    take_steering: Callable[[], list[dict]] = lambda: [],
     system: str = "",
     max_steps: int = MAX_STEPS,
 ) -> str | None:
@@ -241,7 +242,21 @@ def run_turn(
     Appends every assistant and tool message to `messages` in place, so the
     caller saves the conversation as it now stands. Returns the model that
     answered, or None if none could.
+
+    `take_steering` hands over what the person sent while this was running,
+    as `{"id", "text"}` items. They join the conversation between steps --
+    after a step's tool results, never between a tool call and its result --
+    so the model reads them before it decides what to do next. A turn about to
+    end carries on when some arrived, so nothing sent is left unanswered.
     """
+
+    def steer() -> bool:
+        taken = take_steering()
+        for item in taken:
+            messages.append({"role": "user", "content": item["text"]})
+            emit({"type": "steer_read", "id": item["id"], "text": item["text"]})
+        return bool(taken)
+
     if not models:
         emit({"type": "error", "text": "No model is set. Add one in Settings."})
         return None
@@ -251,6 +266,7 @@ def run_turn(
         if should_stop():
             emit({"type": "notice", "text": "Stopped."})
             return active
+        steer()
         # Errors and notices are saved in the chat for the person; they are
         # not part of the conversation the model sees.
         conversation = [m for m in messages if m.get("role") in ("user", "assistant", "tool")]
@@ -274,6 +290,10 @@ def run_turn(
         if entry["content"]:
             emit({"type": "assistant", "text": entry["content"], "model": active})
         if not calls:
+            # Something was sent while this answer was being written: answer
+            # that too, rather than ending with it unread.
+            if steer():
+                continue
             return active
         for call in calls:
             function = call.get("function") or {}
