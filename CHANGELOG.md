@@ -10,6 +10,12 @@
   steps and time; click one to open it, or stop a chat's reply from it. The
   button shows how many are working. Streams run only while the grid is open,
   sized to their tile and view-only.
+- **Connect an agent in one tap.** From the Agents view, *Connect an agent*
+  finds Claude Code, Codex, Cursor, VS Code, Gemini CLI, OpenCode and Windsurf
+  on this computer. Connecting gives the agent its own session on the profile
+  you pick and adds an `abt` MCP entry to its settings (`claude mcp` for Claude
+  Code); disconnecting removes only that entry. The file is backed up first,
+  and one that is not plain JSON is left alone.
 
 ## 0.7.1 — 2026-09-29
 

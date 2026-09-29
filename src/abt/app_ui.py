@@ -146,6 +146,17 @@ APP_HTML = r"""<!doctype html>
   .live-tile .step { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .live-tile .meta { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .live-tile .stop { font-size: 11px; padding: 1px 8px; }
+  #connect-btn { position: absolute; top: 12px; right: 14px; z-index: 2; font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); }
+  #connect-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .connect-row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  }
+  .connect-row .who { flex: 1; min-width: 0; }
+  .connect-row .who b { display: block; }
+  .connect-row .who small { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .connect-row.absent { opacity: .55; }
+  .connect-row button { font-size: 12px; }
   #live-empty {
     position: absolute; inset: 0; display: flex; flex-direction: column; gap: 4px;
     align-items: center; justify-content: center; color: var(--muted); text-align: center;
@@ -440,8 +451,9 @@ APP_HTML = r"""<!doctype html>
       <div id="viewmsg">Starting the browser…</div>
       <div id="activity" hidden><span class="dot busy"></span><span class="text" id="activity-text"></span></div>
       <div id="live" hidden>
+        <button class="ghost" id="connect-btn" title="Let Claude Code, Codex, Cursor and others use ABT, each in a session of its own">＋ Connect an agent</button>
         <div id="live-grid"></div>
-        <div id="live-empty" hidden><b>No agents are working right now.</b><span>Their pages show up here, side by side, while they work.</span></div>
+        <div id="live-empty" hidden><b>No agents are working right now.</b><span>Their pages show up here, side by side, while they work. Connect Claude Code, Codex or another agent with the button above.</span></div>
       </div>
     </div>
   </section>
@@ -516,6 +528,16 @@ APP_HTML = r"""<!doctype html>
     <button data-close>Cancel</button>
     <button id="set-save" class="primary">Save</button>
   </div>
+</dialog>
+
+<dialog id="dlg-connect">
+  <h2>Connect an agent</h2>
+  <p class="lead">One tap gives an agent its own session — its own tabs, rules and log — and sets it up to use ABT. It works alongside every other agent and shows up here in Agents.</p>
+  <label class="field"><span>Profile / logins for new connections</span>
+    <select id="connect-profile"></select></label>
+  <div id="connect-list"></div>
+  <p class="hint" style="margin-top:10px">Restart the agent after connecting so it picks ABT up. Only an entry named <code>abt</code> is added to its settings; a backup of the file is kept beside it.</p>
+  <div class="actions"><span class="spacer"></span><button data-close>Done</button></div>
 </dialog>
 
 <dialog id="dlg-session">
@@ -1082,6 +1104,42 @@ function closeLiveStream(key) {
   delete S.live.socks[key];
   if (ws) { try { ws.close(); } catch (e) {} }
 }
+
+async function openConnect() {
+  const dlg = $("#dlg-connect");
+  $("#connect-profile").innerHTML = S.profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+  await drawConnect();
+  dlg.showModal();
+}
+async function drawConnect() {
+  let rows;
+  try { rows = await api("GET", "/app/connect", undefined, { operator: true, session: null }); }
+  catch (e) { return fail(e); }
+  rows.sort((a, b) => (b.installed - a.installed) || a.name.localeCompare(b.name));
+  $("#connect-list").innerHTML = rows.map(r => {
+    const state = r.session ? `Connected — session “${esc(r.session)}”` : r.installed ? "Not connected" : "Not found on this computer";
+    const action = r.session ? `<button data-off="${esc(r.id)}">Disconnect</button>` :
+      `<button class="primary" data-on="${esc(r.id)}"${r.installed ? "" : " disabled"}>Connect</button>`;
+    return `<div class="connect-row${r.installed || r.session ? "" : " absent"}"><span class="who"><b>${esc(r.name)}</b>` +
+      `<small title="${esc(r.config)}">${state}</small></span>${action}</div>`;
+  }).join("");
+  document.querySelectorAll("[data-on]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const out = await api("POST", `/app/connect/${encodeURIComponent(b.dataset.on)}`, { profile: $("#connect-profile").value }, { operator: true, session: null });
+      toast(`${out.name} connected. Restart it to start using ABT.`);
+      await loadAll();
+    } catch (e) { fail(e); }
+    drawConnect();
+  });
+  document.querySelectorAll("[data-off]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const out = await api("DELETE", `/app/connect/${encodeURIComponent(b.dataset.off)}`, undefined, { operator: true, session: null }); toast(`${out.name} disconnected`); }
+    catch (e) { fail(e); }
+    drawConnect();
+  });
+}
+$("#connect-btn").onclick = openConnect;
 
 async function openFromLive(session, tab) {
   await toggleLive(false);
