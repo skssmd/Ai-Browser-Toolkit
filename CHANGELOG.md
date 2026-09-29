@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.4 — 2026-09-29
 
 - **Token usage in every chat.** Beside the model picker, the tokens the chat
   has used so far (in and out, over how many model calls, and what OpenRouter
