@@ -392,9 +392,16 @@ class BrowserSession:
         source = getattr(self, "pages_to_restore", None)
         if self._attach is None or source is None:
             return
+        # Its tabs were still open, and it took them back: nothing to reopen.
+        if getattr(self._driver, "reused_tabs", False):
+            return
         pages = source() or {}
         urls = [u for u in pages.get("urls") or [] if str(u).startswith(("http://", "https://"))]
-        urls = urls[: self.RESTORE_LIMIT]
+        active = pages.get("active")
+        active_url = urls[active] if isinstance(active, int) and 0 <= active < len(urls) else None
+        # Once each: a page open twice was a duplicate, not a choice.
+        urls = list(dict.fromkeys(urls))[: self.RESTORE_LIMIT]
+        pages = {"active": urls.index(active_url) if active_url in urls else len(urls) - 1}
         if not urls:
             return
         tabs: list[str | None] = []

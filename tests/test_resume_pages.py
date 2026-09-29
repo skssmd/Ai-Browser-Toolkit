@@ -59,6 +59,37 @@ def test_restoring_reopens_each_page_and_returns_to_the_active_one(tmp_path, mon
     assert done == [("goto", "https://a.example/"), ("tab", "https://c.example/"), ("switch", "tab_2")]
 
 
+def restoring(tmp_path, monkeypatch, pages, driver=None):
+    browser = BrowserSession(profile=tmp_path, headless=True, attach=Attach(
+        connect=lambda: "", disconnect=lambda: None, list_targets=lambda: [],
+        gate=TabGate(TabRegistry("default"), "a")))
+    browser._driver = driver
+    browser.pages_to_restore = lambda: pages
+    done = []
+    monkeypatch.setattr(browser, "goto", lambda url: done.append(("goto", url)))
+    monkeypatch.setattr(browser, "new_tab", lambda url, activate: done.append(("tab", url)) or url)
+    monkeypatch.setattr(BrowserSession, "active_tab", property(lambda self: "first"))
+    monkeypatch.setattr(browser, "switch_tab", lambda tab: done.append(("switch", tab)))
+    browser._restore_pages()
+    return done
+
+
+def test_a_page_open_several_times_is_reopened_once(tmp_path, monkeypatch):
+    """Seen live: one store page remembered four times, and reopened four times."""
+    done = restoring(tmp_path, monkeypatch, {"urls": [
+        "https://s.example/", "https://s.example/", "https://g.example/", "https://s.example/"],
+        "active": 2})
+    assert done == [("goto", "https://s.example/"), ("tab", "https://g.example/"),
+                    ("switch", "https://g.example/")]
+
+
+def test_nothing_is_reopened_when_its_tabs_were_taken_back(tmp_path, monkeypatch):
+    """Reconnecting to a browser that still has the session's tabs: they are the pages."""
+    done = restoring(tmp_path, monkeypatch, {"urls": ["https://s.example/"], "active": 0},
+                     driver=SimpleNamespace(reused_tabs=True))
+    assert done == []
+
+
 def test_nothing_to_restore_is_a_no_op(tmp_path, monkeypatch):
     browser = BrowserSession(profile=tmp_path, headless=True, attach=Attach(
         connect=lambda: "", disconnect=lambda: None, list_targets=lambda: [],

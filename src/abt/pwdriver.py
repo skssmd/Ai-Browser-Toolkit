@@ -822,14 +822,26 @@ class PlaywrightDriver:
         # hung every session that listed the browser's tabs. Seen in the trace:
         # `driver get FAILED 5.0s`, then a cascade across every chat.
         self._context.set_default_navigation_timeout(self.NAVIGATION_TIMEOUT * 1000)
+        self.reused_tabs = False
         if self._gate is not None:
-            # A session starts on a page of its own. Adopting every open page,
-            # as the harness attach does, would hand it other sessions' tabs.
-            page = self._context.new_page()
-            self._gate.opened(self._tid(page))
-            self._pages = [page]
+            # A session's own tabs, still open from a connection that died or
+            # was restarted, are taken back rather than left behind: opening a
+            # fresh tab (and reopening remembered pages) beside them doubled
+            # every page on each reconnect -- 13 tabs, one page open 4 times.
+            owned = set(self._gate.owned())
+            mine = [p for p in self._context.pages
+                    if owned and not p.is_closed() and self._tid(p) in owned]
+            if mine:
+                self._pages = mine
+                self.reused_tabs = True
+            else:
+                # Otherwise a page of its own. Adopting every open page, as the
+                # harness attach does, would hand it other sessions' tabs.
+                page = self._context.new_page()
+                self._gate.opened(self._tid(page))
+                self._pages = [page]
             for other in self._context.pages:
-                if other is not page:
+                if other not in self._pages:
                     other.on("dialog", _ignore)
         else:
             self._pages = list(self._context.pages) or [self._context.new_page()]

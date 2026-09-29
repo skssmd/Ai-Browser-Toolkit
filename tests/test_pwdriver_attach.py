@@ -94,3 +94,19 @@ def test_other_sessions_pages_hold_no_cdp_session_here(pair):
     drivers["a"].window_handles
     own = {id(p) for p in drivers["a"]._pages}
     assert set(drivers["a"]._cdp) <= own
+
+
+def test_a_new_connection_takes_its_sessions_open_tabs_back(pair, reg, tmp_path):
+    """A connection that died leaves its tabs open. The session's next one used
+    to open a fresh tab beside them, doubling its pages on every reconnect."""
+    drivers, tabs = pair
+    drivers["a"].switch_to.new_window("tab")
+    before = sorted(handles_until(drivers["a"], 2))
+    config = LaunchConfig(profile=tmp_path / "profiles" / DEFAULT)
+    again = PlaywrightDriver(config, cdp_url=reg.attach(DEFAULT, "a"), gate=TabGate(tabs, "a"))
+    try:
+        assert again.reused_tabs is True
+        assert sorted(again.window_handles) == before
+        assert len(drivers["b"].window_handles) == 1
+    finally:
+        again.quit()
