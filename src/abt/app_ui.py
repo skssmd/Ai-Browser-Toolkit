@@ -1446,10 +1446,13 @@ async function loadConversations() {
   const current = S.session && S.chat ? `${S.session}|${S.chat.id}` : "__draft__";
   const key = c => `${c.session}|${c.chat_id}`;
   const shown = S.convs
-    .filter(c => c.messages > 0 || key(c) === current)
+    .filter(c => c.messages > 0 || c.agent || key(c) === current)
     .sort((a, b) => convAge(a) - convAge(b));
-  const option = c => `<option value="${esc(key(c))}"${key(c) === current ? " selected" : ""}>` +
-    `${c.lead ? "↳ " : ""}${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`;
+  // Opening an agent's row gives its session an empty chat; the row stands for it.
+  const agentOf = new Set(shown.filter(c => c.agent).map(c => c.session));
+  shown.splice(0, shown.length, ...shown.filter(c => c.agent || !agentOf.has(c.session) || c.messages > 0));
+  const option = c => `<option value="${esc(key(c))}"${key(c) === current || (c.agent && c.session === S.session) ? " selected" : ""}>` +
+    `${c.lead ? "↳ " : ""}${c.running ? "● " : ""}${c.agent ? "Agent · " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`;
   // A helper sits right under its lead, whatever its own last activity.
   const leads = new Map(shown.filter(c => !c.lead).map(c => [c.session, c]));
   const grouped = [];

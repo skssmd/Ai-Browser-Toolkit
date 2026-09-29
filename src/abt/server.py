@@ -13,6 +13,7 @@ import asyncio
 import json
 import threading
 import time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -1783,7 +1784,30 @@ def create_app(
             replying = {key for key, run in runs.items() if not run.finished}
             rows = []
             for session in registry.list():
-                for chat in chats.list(session["name"]):
+                listed = chats.list(session["name"])
+                if not session["name"].startswith("chat-") and not any(c.get("messages") for c in listed):
+                    # An agent's session, driven over MCP, the CLI or HTTP: no
+                    # conversation here, but it is listed so its browser can be
+                    # watched -- under the name the agent gave its work.
+                    live = registry._live.get(session["name"])
+                    at = (live.activity or {}).get("at") if live is not None else None
+                    rows.append({
+                        "session": session["name"],
+                        "profile": session["profile"],
+                        "sealed": session["sealed"],
+                        "role": None,
+                        "lead": None,
+                        "agent": True,
+                        "chat_id": listed[0]["id"] if listed else "",
+                        "title": _settings_of(session["name"]).get("title") or session["name"],
+                        "updated": (datetime.fromtimestamp(at, timezone.utc).isoformat()
+                                    if at else session.get("created")),
+                        "messages": 0,
+                        "running": bool(live is not None and live.browser.is_running and at
+                                        and time.time() - at < 60),
+                    })
+                    continue
+                for chat in listed:
                     rows.append({
                         "session": session["name"],
                         "profile": session["profile"],

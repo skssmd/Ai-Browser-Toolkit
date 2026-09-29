@@ -295,6 +295,15 @@ def test_the_overview_lists_every_chat_for_the_operator_only(client, registry):
     assert all(r["running"] is False and r["messages"] == 0 for r in rows)
 
 
+def test_an_agents_session_is_listed_under_the_name_of_its_work(client, registry):
+    """An MCP agent's session has no chat, and was missing from the app's list."""
+    registry.create("ebay-price-research", settings={"title": "eBay price research"})
+    rows = client.get("/app/overview", headers=OP).json()["result"]
+    row = next(r for r in rows if r["session"] == "ebay-price-research")
+    assert row["agent"] is True and row["title"] == "eBay price research"
+    assert row["chat_id"] == "" and row["updated"]
+
+
 def test_closing_the_app_closes_its_browsers_but_not_the_server(client, registry, monkeypatch):
     stopped = []
     monkeypatch.setattr(registry.profiles, "sweep", lambda: stopped.append(True) or [])

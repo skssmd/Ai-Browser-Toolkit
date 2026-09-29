@@ -851,6 +851,24 @@ class PlaywrightDriver:
         # rejection `_watch` exists to prevent. The owner's connection answers.
         page.on("dialog", _ignore)
 
+    def _place_targets(self) -> None:
+        """Record every tab in the profile's registry, with its opener.
+
+        One call on a browser-level CDP session, which no tab has to answer.
+        A popup follows its opener's owner, so openers are placed first.
+        """
+        if getattr(self, "_browser_cdp", None) is None:
+            self._browser_cdp = self._browser.new_browser_cdp_session()
+        infos = self._browser_cdp.send("Target.getTargets")["targetInfos"]
+        pending = [t for t in infos if t.get("type") == "page" and not self._gate.placed(t["targetId"])]
+        while pending:
+            ready = [t for t in pending
+                     if not t.get("openerId") or self._gate.placed(t["openerId"])
+                     or not any(o["targetId"] == t["openerId"] for o in pending)]
+            for info in ready or pending:
+                self._gate.sees(info["targetId"], info.get("openerId"))
+            pending = [t for t in pending if t not in (ready or pending)]
+
     def _tid(self, page) -> str:
         """Chrome's target id for a page: the same on every connection.
 
@@ -1111,12 +1129,24 @@ class PlaywrightDriver:
             )
             live = [p for p in self._pages if not p.is_closed()]
             if self._gate is not None:
-                for page in self._context.pages:
-                    if page in live or page.is_closed():
-                        continue
-                    opener = page.opener()
-                    opener_id = self._tid(opener) if opener is not None else None
-                    if self._gate.sees(self._tid(page), opener_id):
+                # Every tab placed from one browser-wide call, then only tabs
+                # that could be ours asked for their id. Asking opens a CDP
+                # session to the tab, and doing it for every tab hung the 60s
+                # deadline on Chrome's own blank start tab (macOS CI, a
+                # loaded runner, a fresh profile).
+                self._place_targets()
+                missing = set(self._gate.owned()) - {
+                    getattr(p, "_abt_target_id", None) for p in live
+                }
+                others = [p for p in self._context.pages if p not in live and not p.is_closed()]
+                # Popups of our own tabs first: they are the usual newcomers.
+                others.sort(key=lambda p: p.opener() not in live)
+                for page in others:
+                    if not missing:
+                        break
+                    target = self._tid(page)
+                    if target in missing:
+                        missing.discard(target)
                         self._watch(page)
                         live.append(page)
                 # A tab released, or reassigned by the operator, leaves this

@@ -146,3 +146,29 @@ def test_shot_path_refuses_a_session_id_with_separators(root):
 def test_a_missing_frame_is_none_not_an_error(root):
     rec = SessionRecorder(root)
     assert shot_path(root, rec.session_id, "00042.jpg") is None
+
+
+def test_a_tab_behind_another_is_not_photographed():
+    """Chrome draws no frames for a background tab, and a screenshot of one
+    waits forever: seen live, it held an agent's session for 60s and every MCP
+    call after it timed out. The frame is skipped instead."""
+    from types import SimpleNamespace
+
+    from abt import shots
+
+    calls = []
+
+    class Driver:
+        def execute_script(self, script, *args):
+            return [1280, 800, "hidden"]
+
+        def execute_cdp_cmd(self, *a):
+            calls.append("cdp")
+            raise AssertionError("would wait forever")
+
+        def get_screenshot_as_png(self):
+            calls.append("png")
+            raise AssertionError("would wait forever")
+
+    assert shots.capture(SimpleNamespace(driver=Driver())) is None
+    assert calls == []

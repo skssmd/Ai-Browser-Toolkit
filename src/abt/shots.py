@@ -59,7 +59,11 @@ const r = arguments[0].getBoundingClientRect();
 return [r.x, r.y, r.width, r.height, window.innerWidth, window.innerHeight];
 """
 
-_VIEWPORT_JS = "return [window.innerWidth, window.innerHeight];"
+_VIEWPORT_JS = "return [window.innerWidth, window.innerHeight, document.visibilityState];"
+
+
+class NotDrawn(Exception):
+    """The tab is behind another in a browser window, so Chrome draws no frames."""
 
 
 def wanted(op: str | None, ok: bool) -> bool:
@@ -76,6 +80,9 @@ def capture(session, quality: int = DEFAULT_QUALITY, width: int = DEFAULT_WIDTH)
         return None
     try:
         return _capture_cdp(driver, quality, width)
+    except NotDrawn:
+        # Both captures wait for a frame that never comes: skip it.
+        return None
     except Exception:
         pass
     try:
@@ -88,7 +95,13 @@ def capture(session, quality: int = DEFAULT_QUALITY, width: int = DEFAULT_WIDTH)
 def _capture_cdp(driver, quality: int, width: int) -> bytes:
     import base64
 
-    view_w, view_h = driver.execute_script(_VIEWPORT_JS)
+    view_w, view_h, *state = driver.execute_script(_VIEWPORT_JS)
+    # Several sessions share one windowed Chrome, one tab in front. A tab
+    # behind it gets no frames, and Page.captureScreenshot waits for one for
+    # ever: seen live, an agent's `goto` held its session for the full 60s
+    # deadline on the frame for its log, and every MCP call after it timed out.
+    if state and state[0] == "hidden":
+        raise NotDrawn()
     scale = 1.0 if not view_w else min(1.0, width / float(view_w))
     result = driver.execute_cdp_cmd(
         "Page.captureScreenshot",

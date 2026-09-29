@@ -179,6 +179,9 @@ class TabGate:
     def owns(self, target: str) -> bool:
         return self.registry.owner_of(target) == self.session
 
+    def owned(self) -> list[str]:
+        return self.registry.owned_by(self.session)
+
     def owner(self, target: str) -> str | None:
         return self.registry.owner_of(target)
 
