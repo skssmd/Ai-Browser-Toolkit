@@ -1168,6 +1168,8 @@ def create_app(
             self.reports: list[str] = []
             self.summary: str | None = None
             self.outcome: str | None = None
+            # The chat's token totals so far, for the Agents grid while it runs.
+            self.usage: dict | None = None
 
         def steer(self, text: str, update: bool = False) -> dict:
             with self.steering_lock:
@@ -1294,6 +1296,12 @@ def create_app(
                     on_text=on_text, should_stop=run.stop.is_set,
                 )
                 step.note(tool_calls=len(reply.get("tool_calls") or []))
+                used = reply.pop("usage", None)
+                if used:
+                    # Kept on the chat, so its total survives a reload.
+                    chat["usage"] = run.usage = agent_util.add_usage(chat.get("usage"), used)
+                    step.note(tokens=int(used.get("total_tokens") or 0) or None)
+                    emit({"type": "usage", "usage": chat["usage"]})
                 return reply
 
         tool_list: list[dict] = []
@@ -1643,6 +1651,16 @@ def create_app(
             return _refused(OpError("session_sealed", "the trace needs the operator token"))
         return ok({"active": trace_util.active(), "recent": trace_util.recent(max(1, min(500, limit)))})
 
+    def _session_tokens(name: str, chat_list: list[dict]) -> int | None:
+        """Tokens a session's chats have used: a running one's live total, else
+        what was saved."""
+        total = 0
+        for chat in chat_list:
+            run = runs.get((name, chat["id"]))
+            usage = (run.usage if run is not None and run.usage else chat.get("usage")) or {}
+            total += usage.get("prompt", 0) + usage.get("completion", 0)
+        return total or None
+
     @app.get("/app/live")
     async def app_live(request: Request):
         """Every session with a browser up or recent work: the app's Live grid.
@@ -1703,6 +1721,9 @@ def create_app(
                     "at": activity.get("at"),
                     "since": activity.get("since"),
                     "steps": activity.get("steps", 0),
+                    # The app's own model calls only: an MCP agent's model is
+                    # its harness's, and ABT never sees those tokens.
+                    "tokens": _session_tokens(name, chat_list),
                 })
             rows.sort(key=lambda r: (not r["working"], -(r["at"] or 0)))
             return {"now": now, "sessions": rows}

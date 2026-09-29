@@ -17,3 +17,20 @@ def test_the_wheel_ships_the_icon():
 
     pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
     assert '"assets/logo-white.ico" = "abt/assets/logo-white.ico"' in pyproject
+
+
+def test_the_app_starts_a_server_whose_browsers_are_hidden(monkeypatch):
+    """The app shows every session's pages, so a server it starts runs every
+    browser hidden -- CLI and MCP agents too. `abt up` keeps windows."""
+    from typer.testing import CliRunner
+
+    from abt import cli
+
+    started = []
+    monkeypatch.setattr(cli, "_healthy", lambda base: False)
+    monkeypatch.setattr(cli, "up", lambda **kw: started.append(kw["headless"]))
+    monkeypatch.setattr(desktop, "open_window", lambda base: "window")
+    runner = CliRunner()
+    assert runner.invoke(cli.app, ["app"]).exit_code == 0
+    assert runner.invoke(cli.app, ["app", "--headed"]).exit_code == 0
+    assert started == [True, False]

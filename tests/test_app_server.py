@@ -279,6 +279,25 @@ def test_a_habitual_browser_start_is_answered_not_refused(client, monkeypatch):
     assert result["error"] is False and "manages the browser" in result["text"]
 
 
+def test_a_chat_counts_the_tokens_it_uses(client, monkeypatch):
+    client.put("/app/settings", json={"models": ["fake/model"]}, headers=OP)
+    monkeypatch.setattr(agent, "complete", lambda *a, **kw: {
+        "content": "done", "usage": {"prompt_tokens": 900, "completion_tokens": 40}})
+    chat = client.post("/app/chats", json={}).json()["result"]
+    for _ in range(2):
+        with client.websocket_connect("/app/chat") as ws:
+            ws.send_json({"type": "send", "chat_id": chat["id"], "text": "go"})
+            events = []
+            while (event := ws.receive_json())["type"] != "done":
+                events.append(event)
+    shown = [e["usage"] for e in events if e["type"] == "usage"]
+    assert shown == [{"prompt": 1800, "completion": 80, "calls": 2}]  # the running total
+    saved = client.get(f"/app/chats/{chat['id']}").json()["result"]
+    assert saved["usage"] == {"prompt": 1800, "completion": 80, "calls": 2}
+    listed = client.get("/app/chats").json()["result"]
+    assert next(c for c in listed if c["id"] == chat["id"])["usage"]["prompt"] == 1800
+
+
 def test_the_overview_lists_every_chat_for_the_operator_only(client, registry):
     """Each chat is its own session; the app's chat list spans all of them."""
     registry.create("chat-a", sealed=True)

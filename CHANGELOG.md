@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Token usage in every chat.** Beside the model picker, the tokens the chat
+  has used so far (in and out, over how many model calls, and what OpenRouter
+  charged when it says); each Agents tile shows its session's total. Counted
+  from the app's own model calls -- an MCP agent's tokens are its harness's,
+  and ABT never sees them.
+- **The app's server hides every browser.** A server the app starts (`abt app`,
+  the desktop starter) now runs CLI and MCP agents' browsers hidden too: the
+  app shows their pages. `abt up` keeps windows; `abt app --headed` opts back
+  in.
+
 ## 0.7.3 — 2026-09-29
 
 - **No more MCP timeouts on background tabs.** When several agents share one

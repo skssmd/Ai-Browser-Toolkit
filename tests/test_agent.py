@@ -191,6 +191,28 @@ def test_text_streams_piece_by_piece(monkeypatch):
     assert message["content"] == "Hello." and "tool_calls" not in message
 
 
+def test_token_usage_comes_back_with_the_reply(monkeypatch):
+    """The chat shows what it has used; the counts arrive in the last chunk."""
+    sent = {}
+    serve(monkeypatch, FakeStream(sse(
+        {"choices": [{"delta": {"content": "ok"}}]},
+        {"choices": [], "usage": {"prompt_tokens": 1200, "completion_tokens": 30,
+                                  "total_tokens": 1230, "cost": 0.0012}},
+    )), sent)
+    message = agent.complete("https://x.test/v1", "k", "m", [], [])
+    assert json.loads(sent["body"])["stream_options"] == {"include_usage": True}
+    assert message["usage"]["prompt_tokens"] == 1200
+    totals = agent.add_usage(None, message["usage"])
+    totals = agent.add_usage(totals, {"prompt_tokens": 800, "completion_tokens": 20})
+    assert totals == {"prompt": 2000, "completion": 50, "calls": 2, "cost": 0.0012}
+
+
+def test_a_whole_reply_carries_its_usage_too(monkeypatch):
+    serve(monkeypatch, FakeStream(body={"choices": [{"message": {"content": "ok"}}],
+                                        "usage": {"prompt_tokens": 5, "completion_tokens": 1}}))
+    assert agent.complete("https://x.test/v1", "k", "m", [], [])["usage"]["prompt_tokens"] == 5
+
+
 def test_a_tool_call_split_across_chunks_is_joined(monkeypatch):
     serve(monkeypatch, FakeStream(sse(
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "command_", "arguments": '{"comm'}}]}}]},

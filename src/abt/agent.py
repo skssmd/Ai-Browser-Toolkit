@@ -269,6 +269,8 @@ def complete(
             "tools": tool_list,
             "tool_choice": "auto",
             "stream": True,
+            # The token counts, in the stream's last chunk. The chat shows them.
+            "stream_options": {"include_usage": True},
         },
         ensure_ascii=True,
     )
@@ -319,9 +321,12 @@ def _whole_reply(response, model: str) -> dict:
         retry = response.status_code not in (401, 403)
         raise ModelError(f"{model}: HTTP {response.status_code}: {message}", retry)
     try:
-        return body["choices"][0]["message"]
+        message = dict(body["choices"][0]["message"])
     except (KeyError, IndexError, TypeError):
         raise ModelError(f"{model}: no message in the reply")
+    if isinstance(body.get("usage"), dict):
+        message["usage"] = body["usage"]
+    return message
 
 
 def _streamed_reply(response, model: str, on_text: Callable[[str], None] | None) -> dict:
@@ -332,6 +337,7 @@ def _streamed_reply(response, model: str, on_text: Callable[[str], None] | None)
     """
     text: list[str] = []
     calls: dict[int, dict] = {}
+    usage = None
     for line in response.iter_lines():
         if not line.startswith("data:"):
             continue  # blank keep-alives and ": comment" lines
@@ -346,6 +352,8 @@ def _streamed_reply(response, model: str, on_text: Callable[[str], None] | None)
             error = chunk["error"]
             message = error.get("message") if isinstance(error, dict) else str(error)
             raise ModelError(f"{model}: {message}")
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
             piece = delta.get("content")
@@ -370,7 +378,21 @@ def _streamed_reply(response, model: str, on_text: Callable[[str], None] | None)
         message["tool_calls"] = [calls[i] for i in sorted(calls)]
     if not message["content"] and not calls:
         raise ModelError(f"{model}: the reply was empty")
+    if usage is not None:
+        message["usage"] = usage
     return message
+
+
+def add_usage(totals: dict | None, usage: dict | None) -> dict:
+    """Add one model call's token counts to a chat's running totals."""
+    totals = dict(totals or {"prompt": 0, "completion": 0, "calls": 0})
+    if usage:
+        totals["prompt"] += int(usage.get("prompt_tokens") or 0)
+        totals["completion"] += int(usage.get("completion_tokens") or 0)
+        totals["calls"] += 1
+        if usage.get("cost") is not None:  # OpenRouter reports what it charged
+            totals["cost"] = round(float(totals.get("cost") or 0) + float(usage["cost"]), 6)
+    return totals
 
 
 def trimmed(messages: list[dict]) -> list[dict]:

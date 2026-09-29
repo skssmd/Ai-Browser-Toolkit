@@ -828,15 +828,15 @@ def app_window(
     headed: bool = typer.Option(
         False,
         "--headed",
-        help="Start a new server with windowed browsers for everyone, the "
-        "app's chats included. Without it the app's chats stay hidden (the app "
-        "shows their pages) and CLI sessions get a window as usual.",
+        help="Start a new server with windowed browsers for CLI and MCP "
+        "agents. Without it every browser is hidden and the app shows their "
+        "pages. The app's own chats stay hidden either way.",
     ),
 ) -> None:
     """Open the desktop app: the browser and a chat with your model, side by side.
 
-    Starts the server first if none is running, with the default profile's
-    browser hidden -- the app shows its pages. Needs the optional extra for a
+    Starts the server first if none is running, with every browser hidden --
+    the app shows their pages. A server started with `abt up` has windows. Needs the optional extra for a
     real window (`pip install "ai-browser-toolkit[app]"`); without it the app
     opens in your default browser instead.
     """
@@ -846,9 +846,10 @@ def app_window(
     if not _healthy(base):
         typer.echo(f"[abt] starting the server on {HOST}:{port}")
         try:
-            # Never --headless: that would hide CLI sessions' browsers too.
-            # The app's own chats ask for hidden browsers themselves.
-            up(port=port, browser=browser, profile=None, headless=False, wait=60.0)
+            # Hidden for everyone, CLI and MCP agents included: the app shows
+            # every session's pages, so a window would only get in the way. A
+            # server started with `abt up` keeps windows. --headed opts back in.
+            up(port=port, browser=browser, profile=None, headless=not headed, wait=60.0)
         except typer.Exit as done:
             if done.exit_code:
                 raise

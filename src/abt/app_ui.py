@@ -87,6 +87,7 @@ APP_HTML = r"""<!doctype html>
   }
   :focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
   .muted { color: var(--muted); }
+  .usage { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .spacer { flex: 1; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
@@ -496,6 +497,7 @@ APP_HTML = r"""<!doctype html>
       <div class="row">
         <select id="model" title="Model for this message"></select>
         <button class="icon ghost" id="model-btn" title="Model settings: your API key, the endpoint and the model list">⚙</button>
+        <span id="usage" class="usage" hidden></span>
         <button id="stop" hidden>Stop</button>
         <button id="send" class="primary">Send</button>
       </div>
@@ -1083,7 +1085,7 @@ function drawLive() {
       `<span class="chip" title="Profile / logins">${esc(r.profile)}</span>` +
       (r.chat_running && r.chat_running.length ? `<button class="stop ghost" title="Stop this chat's reply">Stop</button>` : "") +
       `</div><div class="row2"><span class="step" title="${esc(r.url || "")}">${esc(step)}</span>` +
-      `<span class="meta">${r.steps ? r.steps + " steps" : ""}${time ? " · " + time : ""}</span></div>`;
+      `<span class="meta">${[r.steps ? r.steps + " steps" : "", time, r.tokens ? tokenCount(r.tokens) + " tokens" : ""].filter(Boolean).join(" · ")}</span></div>`;
     const stop = tile.querySelector(".stop");
     if (stop) stop.onclick = async () => {
       try { await api("POST", `/app/live/${encodeURIComponent(r.session)}/stop`, undefined, { operator: true, session: null }); toast("Stopped"); }
@@ -1414,7 +1416,7 @@ async function loadChats(pick) {
 async function openChat(id) {
   try { S.chat = await api("GET", "/app/chats/" + encodeURIComponent(id)); } catch (e) { return fail(e); }
   store.set("chat." + S.session, id);
-  drawModels(); drawHistory();
+  drawModels(); drawHistory(); drawUsage(S.chat.usage);
   for (const e of S.buffers[id] || []) renderEvent(e);
   setBusy(S.runningChats.has(id));
 }
@@ -1516,7 +1518,7 @@ function enterDraft() {
   S.draft = true; S.session = null; S.chat = null; S.tabs = []; S.tab = null;
   if (S.chatSock) { try { S.chatSock.close(); } catch (e) {} }
   S.chatSock = null; S.runningChats = new Set(); S.buffers = {};
-  setBusy(false); closeScreen(); hideActivity(); drawTabs(); drawSessionButton();
+  setBusy(false); closeScreen(); hideActivity(); drawTabs(); drawSessionButton(); drawUsage(null);
   $("#url").value = "";
   viewMessage("This chat's browser opens here when you send the first message.");
   drawHistory(); loadConversations();
@@ -1765,7 +1767,22 @@ function planCard(args) {
   card.querySelector('[data-plan="edit"]').onclick = () => { $("#prompt").value = "Change the plan: "; grow(); $("#prompt").focus(); };
 }
 
+// Tokens this chat has used, all its model calls together.
+function tokenCount(n) {
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+}
+function drawUsage(u) {
+  const el = $("#usage");
+  const total = u ? (u.prompt || 0) + (u.completion || 0) : 0;
+  el.hidden = !total;
+  if (!total) return;
+  el.textContent = `${tokenCount(total)} tokens` + (u.cost ? ` · $${u.cost.toFixed(4)}` : "");
+  el.title = `This chat so far: ${(u.prompt || 0).toLocaleString()} in, ${(u.completion || 0).toLocaleString()} out, ` +
+    `over ${u.calls || 0} model call${u.calls === 1 ? "" : "s"}` + (u.cost ? `; $${u.cost} charged` : "");
+}
+
 function renderEvent(e) {
+  if (e.type === "usage") { if (S.chat) S.chat.usage = e.usage; return drawUsage(e.usage); }
   if (e.type === "delta") return liveText(e.text);
   if (e.type !== "delta") endLive();
   if (e.type === "user") bubble("user", e.text);

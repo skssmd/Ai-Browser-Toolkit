@@ -125,7 +125,7 @@ class ChatStore:
                 chat = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            row = {k: chat.get(k) for k in ("id", "title", "created", "updated", "model")}
+            row = {k: chat.get(k) for k in ("id", "title", "created", "updated", "model", "usage")}
             # Lets the app skip empty chats when choosing which one to open.
             row["messages"] = len(chat.get("messages") or [])
             rows.append(row)
