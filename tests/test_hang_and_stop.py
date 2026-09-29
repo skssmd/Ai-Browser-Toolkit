@@ -42,6 +42,24 @@ def test_a_call_that_never_answers_fails_as_a_dead_session():
     forever.set()
 
 
+def test_a_stuck_driver_is_ended_not_left_connected(monkeypatch):
+    """Left connected, a stuck driver kept a tab paused and hung every session."""
+    from types import SimpleNamespace
+
+    from abt import pwdriver
+
+    driver = bare_driver(0.3)
+    driver._pw = SimpleNamespace(_impl_obj=SimpleNamespace(_connection=SimpleNamespace(
+        _transport=SimpleNamespace(_proc=SimpleNamespace(returncode=None, pid=4242)))))
+    ended = []
+    monkeypatch.setattr(pwdriver.os, "kill", lambda pid, sig: ended.append(pid))
+    forever = threading.Event()
+    with pytest.raises(DeadSession):
+        driver._call(lambda: forever.wait(30))
+    assert ended == [4242]
+    forever.set()
+
+
 def test_a_normal_call_still_returns():
     assert bare_driver(5)._call(lambda: 42) == 42
 

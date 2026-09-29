@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import os
+import signal
 import sys
 import threading
 import time
@@ -656,7 +657,7 @@ class PlaywrightDriver:
     # -- thread affinity ---------------------------------------------------
     # No single call to the browser takes this long: waits poll in short calls,
     # and page loads and scripts time out on their own well before it.
-    CALL_DEADLINE = 120.0
+    CALL_DEADLINE = 60.0
 
     def _call(self, fn, *a, **kw):
         """Run on the owner thread, or inline when already there.
@@ -695,6 +696,13 @@ class PlaywrightDriver:
                         continue
                 self._hung = True
                 self._pool.shutdown(wait=False, cancel_futures=True)
+                # End the driver, don't just walk away from it. Every Playwright
+                # connection asks Chrome to hold new tabs until it lets them go;
+                # a stuck one left connected never does, so a tab stays paused
+                # and every other session touching it hangs too. Seen live: 22
+                # abandoned drivers, one frozen tab, every chat on the profile
+                # stuck -- and all of it cleared the moment they were ended.
+                self._end_driver()
                 # Kept in server.err, so the next time this happens there is a
                 # record of how the driver went: a kill, a crash and a system
                 # fault leave different exit codes.
@@ -707,6 +715,21 @@ class PlaywrightDriver:
             return self._pw._impl_obj._connection._transport._proc.returncode
         except AttributeError:
             return None
+
+    def _end_driver(self) -> None:
+        """End Playwright's Node.js driver process, closing its browser connection."""
+        try:
+            proc = self._pw._impl_obj._connection._transport._proc
+        except AttributeError:
+            return
+        if proc.returncode is not None or not getattr(proc, "pid", None):
+            return
+        try:
+            os.kill(proc.pid, signal.SIGTERM)  # TerminateProcess on Windows
+            print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} ended stuck Playwright driver "
+                  f"(pid {proc.pid}) so it stops holding the browser's tabs", file=sys.stderr, flush=True)
+        except OSError:
+            pass
 
     def _run(self, fn, *a, **kw):
         self._owner = threading.get_ident()
