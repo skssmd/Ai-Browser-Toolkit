@@ -7,6 +7,9 @@
   charged when it says); each Agents tile shows its session's total. Counted
   from the app's own model calls -- an MCP agent's tokens are its harness's,
   and ABT never sees them.
+- **The app opens on the Agents grid.** Every agent's page at a glance; picking
+  a chat from the list switches to its browser, and *Agents* brings the grid
+  back.
 - **The app's server hides every browser.** A server the app starts (`abt app`,
   the desktop starter) now runs CLI and MCP agents' browsers hidden too: the
   app shows their pages. `abt up` keeps windows; `abt app --headed` opts back

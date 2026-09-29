@@ -1496,17 +1496,20 @@ $("#archive-btn").onclick = () => {
   if (menu.hidden) drawArchive();
   menu.hidden = !menu.hidden;
 };
-$("#archive-menu").onclick = (e) => {
+$("#archive-menu").onclick = async (e) => {
   const row = e.target.closest("[data-conv]"); if (!row) return;
   $("#archive-menu").hidden = true;
+  if (S.live.on) await toggleLive(false);
   const [session, chatId] = row.dataset.conv.split("|");
   if (session === S.session) openChat(chatId).then(loadConversations);
   else selectSession(session, chatId);
 };
 document.addEventListener("click", (e) => { if (!e.target.closest("#archive-menu, #archive-btn")) $("#archive-menu").hidden = true; });
-$("#convpick").onchange = (e) => {
+$("#convpick").onchange = async (e) => {
   const value = e.target.value;
   if (value === "__draft__") return;
+  // Picking a chat means looking at its browser, not the grid.
+  if (S.live.on) await toggleLive(false);
   const [session, chatId] = value.split("|");
   if (session === S.session) openChat(chatId).then(loadConversations);
   else selectSession(session, chatId);
@@ -2094,7 +2097,8 @@ document.addEventListener("paste", (e) => {
   setInterval(() => { if (!document.hidden) loadConversations(); }, 5000);
   // The Agents button's count: how many are working, even with the grid closed.
   setInterval(() => { if (!document.hidden && !S.live.on) loadLive(); }, 5000);
-  loadLive();
+  // The app opens on the Agents grid: every agent's page at a glance.
+  toggleLive(true);
 })();
 </script>
 </body>
