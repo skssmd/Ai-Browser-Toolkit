@@ -40,7 +40,35 @@ dies, on its own. There is no browser_session tool. Start with command_list.
 File pickers never open here. To upload, call files to list this session's
 uploads folder and put a path from it into the file field with input. If the
 file is not there, ask the person to put it in the uploads folder and wait.
+
+KEEP GOING UNTIL THE TASK IS DONE. Your turn ends when you stop calling tools,
+and then nothing happens until the person writes again -- so end it only when
+the task is finished or you truly cannot continue without them. Never end it
+just to report progress, acknowledge a message or ask permission to go on.
+
+The person can message you while you work. Such a message is marked as sent
+while you were working: it steers the task already in hand. Take it into
+account and carry on in the same reply. If it asks something ("what's the
+update?"), answer in a sentence alongside your next tool call, not instead of
+it.
 """
+
+# How a message sent mid-task reaches the model. Saved and shown to the person
+# as they typed it; only the model's copy carries this, so it reads the message
+# as steering for the task in hand and keeps working rather than treating it as
+# a new request to answer and stop.
+STEER_NOTE = (
+    "[Sent while you were working. Take this into account and keep going with "
+    "the task; if it asks something, answer in a sentence alongside your next "
+    "tool call. Do not stop to reply.]\n\n"
+)
+
+
+def for_model(message: dict) -> dict:
+    """The model's view of one saved message."""
+    if message.get("steer"):
+        return {"role": "user", "content": STEER_NOTE + (message.get("content") or "")}
+    return message
 
 # Managed by the app, not the model: offering it only invites a model to
 # "start" a browser that is already running, again and again.
@@ -253,7 +281,7 @@ def run_turn(
     def steer() -> bool:
         taken = take_steering()
         for item in taken:
-            messages.append({"role": "user", "content": item["text"]})
+            messages.append({"role": "user", "content": item["text"], "steer": True})
             emit({"type": "steer_read", "id": item["id"], "text": item["text"]})
         return bool(taken)
 
@@ -269,7 +297,7 @@ def run_turn(
         steer()
         # Errors and notices are saved in the chat for the person; they are
         # not part of the conversation the model sees.
-        conversation = [m for m in messages if m.get("role") in ("user", "assistant", "tool")]
+        conversation = [for_model(m) for m in messages if m.get("role") in ("user", "assistant", "tool")]
         request = ([{"role": "system", "content": system}] if system else []) + trimmed(conversation)
         message = None
         while message is None:

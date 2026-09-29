@@ -259,8 +259,13 @@ def test_a_message_sent_while_working_steers_the_next_step():
     agent.run_turn(messages, models=["m1"], complete_fn=complete, call_tool=call_tool,
                    emit=events.append, take_steering=take)
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user", "assistant"]
-    assert messages[3]["content"] == "actually, check the pricing page"
-    assert seen[1][1][-1] == {"role": "user", "content": "actually, check the pricing page"}
+    # Saved as the person typed it, and marked, so the chat shows it plainly...
+    assert messages[3] == {"role": "user", "content": "actually, check the pricing page", "steer": True}
+    # ...while the model reads it as steering for the task in hand.
+    sent = seen[1][1][-1]
+    assert sent["role"] == "user" and "steer" not in sent
+    assert sent["content"] == agent.STEER_NOTE + "actually, check the pricing page"
+    assert "keep going" in sent["content"]
     assert {"type": "steer_read", "id": "s1", "text": "actually, check the pricing page"} in events
 
 
@@ -271,4 +276,20 @@ def test_a_turn_about_to_end_answers_what_was_sent_meanwhile():
     agent.run_turn(messages, models=["m1"], complete_fn=complete, call_tool=None,
                    emit=lambda e: None, take_steering=lambda: pending.pop(0) if pending else [])
     assert [m["content"] for m in messages] == ["fix the header", "Done.", "the footer too", "And the footer too, done."]
+    assert seen[1][1][-1]["content"].startswith(agent.STEER_NOTE)
     assert len(seen) == 2
+
+
+def test_the_prompt_says_to_keep_going_and_how_steering_works():
+    prompt = " ".join(agent.system_prompt([], True).split())
+    assert "KEEP GOING UNTIL THE TASK IS DONE" in prompt
+    assert "sent while you were working" in prompt
+
+
+def test_the_model_never_sees_the_steer_marker_key():
+    """Some endpoints reject unknown keys on a message."""
+    complete, seen = script({"content": "ok"})
+    messages = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "going"},
+                {"role": "user", "content": "faster", "steer": True}]
+    agent.run_turn(messages, models=["m1"], complete_fn=complete, call_tool=None, emit=lambda e: None)
+    assert all("steer" not in m for m in seen[0][1])

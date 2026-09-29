@@ -1356,7 +1356,7 @@ def create_app(
                 # Sent too late for this run -- it stopped or failed first.
                 # Kept in the chat, so the next message carries it along.
                 for item in run.take_steering():
-                    chat["messages"].append({"role": "user", "content": item["text"]})
+                    chat["messages"].append({"role": "user", "content": item["text"], "steer": True})
                 chats.save(sess.name, chat)
 
                 def finish() -> None:
