@@ -69,11 +69,106 @@ STEER_NOTE = (
 )
 
 
+UPDATE_NOTE = "[Update from ABT, not from the person.]\n\n"
+
+
 def for_model(message: dict) -> dict:
     """The model's view of one saved message."""
+    if message.get("update"):
+        return {"role": "user", "content": UPDATE_NOTE + (message.get("content") or "")}
     if message.get("steer"):
         return {"role": "user", "content": STEER_NOTE + (message.get("content") or "")}
     return message
+
+
+# --- agentic chats: a lead that plans, starts helpers, and gathers reports -----------
+
+MAX_WORKERS = 5
+
+ORCHESTRATION_PROMPT = f"""
+YOU CAN START HELPER AGENTS. For work that splits into independent parts --
+different angles on the same site, several sites to compare -- you may run up
+to {MAX_WORKERS} helpers in parallel, each an AI agent with its own browser tabs,
+working on one role you give it. Helpers see the same sites you may, write a
+report with save_file when they finish, and cannot start helpers of their own.
+
+How to run it:
+1. PLAN FIRST. Call propose_plan with each helper's role and task. Then END YOUR
+   TURN and wait: the person approves, changes or declines the plan. You cannot
+   start helpers before they reply.
+2. After they approve, start each helper with start_worker, using the roles and
+   tasks from the plan (as the person amended them).
+3. Call wait_for_workers to wait for them; check workers any time for status.
+   You are told when each one finishes.
+4. Read each report with read_report, then write one combined report with
+   save_file and summarise it for the person.
+
+Only use helpers when the task really has parts that can run at once. For a
+simple task, just do it yourself.
+"""
+
+
+def worker_prompt(role: str, lead: str) -> str:
+    slug = "".join(c if c.isalnum() else "-" for c in role.lower()).strip("-") or "helper"
+    return f"""
+YOU ARE A HELPER AGENT, in the role of: {role}.
+A lead agent ({lead}) started you and will read your report; the person may watch.
+Work only on your task, from your role's point of view. You cannot start helpers.
+When you are done, write your findings as a Markdown report with save_file,
+named "{slug}-report.md", then reply with a short summary and end your turn.
+"""
+
+
+def _function(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": properties, "required": required},
+    }}
+
+
+_ROLE_TASK = {
+    "type": "object",
+    "properties": {
+        "role": {"type": "string", "description": "The helper's role, e.g. 'SEO expert'"},
+        "task": {"type": "string", "description": "What this helper should do and report on"},
+    },
+    "required": ["role", "task"],
+}
+
+ORCHESTRATION_TOOLS: list[dict] = [
+    _function("propose_plan",
+              f"Show the person your plan -- up to {MAX_WORKERS} helpers, each a role and a task -- "
+              "and end your turn to wait for their go-ahead. Required before start_worker.",
+              {"summary": {"type": "string", "description": "One or two sentences on the approach"},
+               "workers": {"type": "array", "items": _ROLE_TASK}},
+              ["workers"]),
+    _function("start_worker",
+              "Start one helper from the approved plan. Returns its id. It runs in parallel.",
+              {"role": {"type": "string"}, "task": {"type": "string"},
+               "sites": {"type": "array", "items": {"type": "string"},
+                         "description": "Optional: narrower allowed sites for this helper, "
+                                        "e.g. ['example.com']. Defaults to yours."}},
+              ["role", "task"]),
+    _function("workers",
+              "Status of your helpers: working or finished, steps taken, current page, "
+              "report files, and a short summary once finished. Never their conversation.",
+              {}, []),
+    _function("wait_for_workers",
+              "Wait until a helper finishes (or the time runs out), then return their status.",
+              {"timeout_s": {"type": "number", "description": "Seconds to wait, at most 600. Default 180."}},
+              []),
+    _function("read_report",
+              "Read a finished helper's report file.",
+              {"worker": {"type": "string", "description": "The helper's id from start_worker"},
+               "file": {"type": "string", "description": "Optional: which of its files"}},
+              ["worker"]),
+    _function("stop_worker",
+              "Stop a helper that is still working.",
+              {"worker": {"type": "string"}},
+              ["worker"]),
+]
+
+ORCHESTRATION_NAMES = frozenset(t["function"]["name"] for t in ORCHESTRATION_TOOLS)
 
 # Managed by the app, not the model: offering it only invites a model to
 # "start" a browser that is already running, again and again.
@@ -108,8 +203,19 @@ def tools(exclude: frozenset[str] = APP_EXCLUDED_TOOLS) -> list[dict]:
     ]
 
 
-def system_prompt(rules: list[str] | None, run_js: bool, only_listed: bool = False) -> str:
+def system_prompt(
+    rules: list[str] | None,
+    run_js: bool,
+    only_listed: bool = False,
+    agentic: bool = False,
+    role: str | None = None,
+    lead: str | None = None,
+) -> str:
     text = mcp.INSTRUCTIONS + EXTRA
+    if role:
+        text += worker_prompt(role, lead or "the lead")
+    elif agentic:
+        text += ORCHESTRATION_PROMPT
     if only_listed and not [r for r in rules or [] if not r.strip().startswith("!")]:
         text += (
             "\nThis session's allowed-sites list is empty: it may not open any site. "
@@ -286,7 +392,10 @@ def run_turn(
     def steer() -> bool:
         taken = take_steering()
         for item in taken:
-            messages.append({"role": "user", "content": item["text"], "steer": True})
+            entry = {"role": "user", "content": item["text"], "steer": True}
+            if item.get("update"):
+                entry["update"] = True
+            messages.append(entry)
             emit({"type": "steer_read", "id": item["id"], "text": item["text"]})
         return bool(taken)
 

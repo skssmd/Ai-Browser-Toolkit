@@ -1143,6 +1143,19 @@ def create_app(
             self.steering: list[dict] = []
             self.steering_lock = threading.Lock()
             self.steer_count = 0
+            # For a helper's run: the files it saved, and how it ended.
+            self.reports: list[str] = []
+            self.summary: str | None = None
+            self.outcome: str | None = None
+
+        def steer(self, text: str, update: bool = False) -> dict:
+            with self.steering_lock:
+                self.steer_count += 1
+                item = {"id": f"s{self.steer_count}", "text": text}
+                if update:
+                    item["update"] = True
+                self.steering.append(item)
+            return item
 
         def take_steering(self) -> list[dict]:
             with self.steering_lock:
@@ -1151,6 +1164,13 @@ def create_app(
 
     runs: dict[tuple[str, str], ChatRun] = {}
     watchers: dict[str, set] = {}  # session -> the queues of pages watching it
+    # Agentic chats. A lead's plan, and whether the person has answered it:
+    # helpers start only after they have. Keyed by the lead's session.
+    plans: dict[str, dict] = {}
+    # The helpers each lead started: [{id, role, task, chat_id, started}].
+    helpers: dict[str, list[dict]] = {}
+    # What reached a lead while it was not running: told on its next turn.
+    pending_updates: dict[str, list[str]] = {}
 
     def stop_all_runs() -> None:
         """Tell every reply still running to stop at its next step.
@@ -1181,14 +1201,15 @@ def create_app(
         key = (sess.name, chat_id)
         current = runs.get(key)
         text = str(message.get("text") or "").strip()
+        if text and sess.name in plans:
+            # The person answered the plan: yes, a change, or a no -- the
+            # lead reads which. Helpers may start from here on.
+            plans[sess.name]["approved"] = True
         if current is not None and not current.finished:
             # Sent while it works: it steers the run, read at the next step.
             if not text:
                 return None
-            with current.steering_lock:
-                current.steer_count += 1
-                item = {"id": f"s{current.steer_count}", "text": text}
-                current.steering.append(item)
+            item = current.steer(text)
             publish(current, {"type": "steer", **item})
             return None
         try:
@@ -1197,6 +1218,9 @@ def create_app(
             return exc.message
         settings = app_settings.load()
         models = [m for m in [message.get("model"), chat.get("model"), *settings["models"]] if m]
+        # Helpers that finished while this lead was not running.
+        for note in pending_updates.pop(sess.name, []):
+            chat["messages"].append({"role": "user", "content": note, "steer": True, "update": True})
         chat["messages"].append({"role": "user", "content": text})
         if chat.get("title") in (None, "", "New chat"):
             chat["title"] = text[:60] or "New chat"
@@ -1212,11 +1236,23 @@ def create_app(
                 chat["messages"].append({"role": event["type"], "content": event.get("text", "")})
             loop.call_soon_threadsafe(publish, run, event)
 
+        role = sess.record.settings.get("role")
+        agentic = bool(sess.record.settings.get("agentic")) and not role
+
+        def tool_call(name: str, args: dict) -> tuple[str, bool]:
+            if agentic and name in agent_util.ORCHESTRATION_NAMES:
+                return orchestrate(sess, run, chat, loop, name, args)
+            text, failed = call_tool(sess, name, args)
+            if '"saved"' in text:
+                run.reports.extend(_saved_paths(text))
+            return text, failed
+
         def work() -> None:
-            tool_list = agent_util.tools()
+            tool_list = agent_util.tools() + (agent_util.ORCHESTRATION_TOOLS if agentic else [])
             system = agent_util.system_prompt(
                 sess.record.settings.get("rules"), sess.browser.run_js_enabled,
                 bool(sess.record.settings.get("only_listed")),
+                agentic=agentic, role=role, lead=sess.record.settings.get("lead"),
             )
             try:
                 used = agent_util.run_turn(
@@ -1226,7 +1262,7 @@ def create_app(
                         settings["endpoint"], settings["api_key"], model, msgs, tool_list,
                         on_text=lambda piece: emit({"type": "delta", "text": piece}),
                     ),
-                    call_tool=lambda name, args: call_tool(sess, name, args),
+                    call_tool=tool_call,
                     emit=emit,
                     should_stop=run.stop.is_set,
                     take_steering=run.take_steering,
@@ -1243,14 +1279,216 @@ def create_app(
                     chat["messages"].append({"role": "user", "content": item["text"], "steer": True})
                 chats.save(sess.name, chat)
 
+                last = next((m.get("content") for m in reversed(chat["messages"])
+                             if m.get("role") == "assistant" and m.get("content")), None)
+                run.summary = (last or "")[:2000] or None
+                failed = any(m.get("role") == "error" for m in chat["messages"][-3:])
+                run.outcome = "stopped" if run.stop.is_set() else "failed" if failed else "done"
+
                 def finish() -> None:
                     run.finished = True
                     publish(run, {"type": "done", "title": chat["title"]})
+                    if role:
+                        tell_lead(sess, run)
 
                 loop.call_soon_threadsafe(finish)
 
         loop.run_in_executor(None, work)
         return None
+
+    # --- agentic chats: helpers a lead starts, watches and reads ---------------------
+
+    def _saved_paths(text: str) -> list[str]:
+        """Paths a tool result says save_file wrote."""
+        try:
+            body = json.loads(text)
+        except ValueError:
+            return []
+        found: list[str] = []
+
+        def walk(node) -> None:
+            if isinstance(node, dict):
+                if "saved" in node and isinstance(node.get("path"), str):
+                    found.append(node["path"])
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(body)
+        return found
+
+    def _helper_run(helper: dict) -> "ChatRun | None":
+        return runs.get((helper["id"], helper["chat_id"]))
+
+    def _helper_status(helper: dict) -> dict:
+        run = _helper_run(helper)
+        live = registry._live.get(helper["id"])
+        activity = dict(live.activity) if live is not None else {}
+        page = None
+        if live is not None and live.browser.is_running:
+            snap = live.browser.page_snapshot() or {}
+            urls = snap.get("urls") or []
+            page = urls[snap.get("active", 0)] if urls else None
+        finished = run is None or run.finished
+        row = {
+            "worker": helper["id"],
+            "role": helper["role"],
+            "status": (run.outcome or "done") if finished and run is not None else "working",
+            "steps": activity.get("steps", 0),
+            "page": page,
+            "reports": [Path(p).name for p in (run.reports if run else [])],
+        }
+        if finished and run is not None:
+            row["summary"] = run.summary
+        return row
+
+    def tell_lead(helper_sess: Session, helper_run: "ChatRun") -> None:
+        """A helper finished: tell its lead, now if it is running, else next turn."""
+        lead = helper_sess.record.settings.get("lead")
+        if not lead:
+            return
+        role = helper_sess.record.settings.get("role") or "helper"
+        files = ", ".join(Path(p).name for p in helper_run.reports) or "no report file"
+        ended = {"done": "finished", "stopped": "was stopped", "failed": "failed"}.get(
+            helper_run.outcome or "done", "finished")
+        note = (f"Helper {helper_sess.name} ({role}) {ended}. "
+                f"Reports: {files}. Read them with read_report.")
+        for (name, _cid), run in list(runs.items()):
+            if name == lead and not run.finished:
+                item = run.steer(note, update=True)
+                publish(run, {"type": "steer", **item})
+                return
+        pending_updates.setdefault(lead, []).append(note)
+
+    def orchestrate(lead: Session, lead_run: "ChatRun", lead_chat: dict, loop, name: str, args: dict) -> tuple[str, bool]:
+        """The lead's own tools. Runs on the lead's worker thread."""
+
+        def answer(result) -> tuple[str, bool]:
+            return json.dumps({"ok": True, "result": result}), False
+
+        def refuse(message: str) -> tuple[str, bool]:
+            return json.dumps({"ok": False, "error": {"type": "invalid_op", "message": message}}), True
+
+        mine = helpers.setdefault(lead.name, [])
+        cap = agent_util.MAX_WORKERS
+
+        if name == "propose_plan":
+            workers = args.get("workers")
+            if not isinstance(workers, list) or not workers:
+                return refuse("propose_plan needs a list of workers, each a role and a task")
+            if len(workers) > cap:
+                return refuse(f"at most {cap} helpers")
+            clean = []
+            for w in workers:
+                if not isinstance(w, dict) or not str(w.get("role", "")).strip() or not str(w.get("task", "")).strip():
+                    return refuse("each worker needs a role and a task")
+                clean.append({"role": str(w["role"]).strip()[:80], "task": str(w["task"]).strip()[:2000]})
+            plans[lead.name] = {"workers": clean, "approved": False, "started": 0,
+                                "summary": str(args.get("summary") or "")[:1000]}
+            return answer({"shown": True, "helpers": len(clean),
+                           "next": "End your turn now. The person will approve, change or decline the plan."})
+
+        if name == "start_worker":
+            plan = plans.get(lead.name)
+            if plan is None:
+                return refuse("propose a plan first with propose_plan, then wait for the person's go-ahead")
+            if not plan["approved"]:
+                return refuse("the person has not answered the plan yet: end your turn and wait")
+            if plan["started"] >= max(len(plan["workers"]), 1) + 1 or len(mine) >= cap:
+                return refuse(f"the plan's helpers are already started (at most {cap})")
+            working = [h for h in mine if (r := _helper_run(h)) is not None and not r.finished]
+            if len(working) >= cap:
+                return refuse(f"{cap} helpers are already working; wait for one to finish")
+            role = str(args.get("role") or "").strip()[:80]
+            task = str(args.get("task") or "").strip()[:4000]
+            if not role or not task:
+                return refuse("start_worker needs a role and a task")
+            st = lead.record.settings
+            lead_rules = list(st.get("rules") or []) or ["all"]
+            sites = [str(s).strip() for s in (args.get("sites") or []) if str(s).strip()]
+            if sites:
+                from .policy import Policy
+                lead_policy = Policy(st.get("rules") or [], only_listed=bool(st.get("only_listed")))
+                wider = [s for s in sites if not s.startswith("!") and not lead_policy.allows(
+                    "https://" + s.split("/", 1)[0] + "/" + (s.split("/", 1)[1] if "/" in s else ""))]
+                if wider:
+                    return refuse(f"a helper may not go where you may not: {', '.join(wider)}")
+                rules = sites + [r for r in lead_rules if r.startswith("!")]
+            else:
+                rules = lead_rules
+            n = len(mine) + 1
+            names = {row["name"] for row in registry.list()}
+            while f"{lead.name}-w{n}" in names:
+                n += 1
+            helper_name = f"{lead.name}-w{n}"
+            settings = {
+                "headless": True, "only_listed": True, "rules": rules,
+                "run_js": st.get("run_js", True), "strict": bool(st.get("strict")),
+                "role": role, "lead": lead.name, "agentic": False,
+            }
+            try:
+                made = registry.create(helper_name, profile=lead.record.profile, sealed=True, settings=settings)
+                helper_sess = registry.get(helper_name, made.get("token"))
+                helper_chat = chats.create(helper_name, lead_chat.get("model"))
+                helper_chat["title"] = f"{role}: {task[:50]}"
+                chats.save(helper_name, helper_chat)
+                error = asyncio.run_coroutine_threadsafe(
+                    start_run(helper_sess, {"chat_id": helper_chat["id"], "text": task,
+                                            "model": lead_chat.get("model")}),
+                    loop,
+                ).result(timeout=30)
+            except OpError as exc:
+                return refuse(exc.message)
+            if error:
+                return refuse(error)
+            mine.append({"id": helper_name, "role": role, "task": task,
+                         "chat_id": helper_chat["id"], "started": time.time()})
+            plan["started"] += 1
+            return answer({"worker": helper_name, "role": role, "status": "working"})
+
+        if name == "workers":
+            return answer([_helper_status(h) for h in mine])
+
+        if name == "wait_for_workers":
+            try:
+                limit = max(1.0, min(600.0, float(args.get("timeout_s") or 180)))
+            except (TypeError, ValueError):
+                limit = 180.0
+            waiting = [h for h in mine if (r := _helper_run(h)) is not None and not r.finished]
+            deadline = time.time() + limit
+            while waiting and time.time() < deadline and not lead_run.stop.is_set():
+                if any(_helper_run(h).finished for h in waiting):
+                    break
+                with lead_run.steering_lock:
+                    if lead_run.steering:  # the person said something: let the lead read it
+                        break
+                time.sleep(1.0)
+            return answer([_helper_status(h) for h in mine])
+
+        helper = next((h for h in mine if h["id"] == str(args.get("worker") or "")), None)
+        if helper is None:
+            return refuse(f"no helper {args.get('worker')!r}; yours: {', '.join(h['id'] for h in mine) or 'none'}")
+
+        if name == "read_report":
+            run = _helper_run(helper)
+            files = list(run.reports if run else [])
+            want = str(args.get("file") or "").strip()
+            path = next((p for p in files if Path(p).name == want), None) if want else (files[-1] if files else None)
+            if path is None:
+                return refuse(f"{helper['id']} has saved no report{' named ' + want if want else ''} yet")
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            return answer({"worker": helper["id"], "file": Path(path).name, "text": text[:30000],
+                           "truncated": len(text) > 30000})
+
+        if name == "stop_worker":
+            run = _helper_run(helper)
+            if run is not None and not run.finished:
+                run.stop.set()
+            return answer({"worker": helper["id"], "status": "stopping"})
+
+        return refuse(f"unknown tool {name}")
 
     # --- files: the profile's uploads and downloads folders ------------------------
 
@@ -1341,6 +1579,10 @@ def create_app(
 
         return await _admin(work)
 
+    def _settings_of(name: str) -> dict:
+        record = getattr(registry, "_records", {}).get(name)
+        return dict(record.settings) if record is not None else {}
+
     @app.get("/app/live")
     async def app_live(request: Request):
         """Every session with a browser up or recent work: the app's Live grid.
@@ -1385,6 +1627,10 @@ def create_app(
                     "sealed": info["sealed"],
                     "kind": "chat" if name.startswith("chat-") else "agent",
                     "title": heading or name,
+                    # Read from the record: the public list hides sealed sessions'
+                    # settings, and every helper is sealed. Operator only here.
+                    "role": _settings_of(name).get("role"),
+                    "lead": _settings_of(name).get("lead"),
                     "working": bool(chat_running) or (sess is not None and sess.lock.locked()),
                     "chat_running": chat_running,
                     "browser": running,
@@ -1487,6 +1733,8 @@ def create_app(
                         "session": session["name"],
                         "profile": session["profile"],
                         "sealed": session["sealed"],
+                        "role": _settings_of(session["name"]).get("role"),
+                        "lead": _settings_of(session["name"]).get("lead"),
                         "chat_id": chat["id"],
                         "title": chat.get("title") or "New chat",
                         "updated": chat.get("updated"),

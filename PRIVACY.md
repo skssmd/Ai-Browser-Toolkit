@@ -486,6 +486,15 @@ directory — which is why uninstalling does not take them with it.
 | `.first-run-shown` | state root | An empty marker file. |
 | A logon task or launch agent | Task Scheduler / launchd / systemd user unit | Only if you opt in with `abt autostart install` or tick the installer task. It starts the server at logon, so a browser that an agent can drive opens every time you sign in. |
 
+### Helper agents
+
+A chat with *Helpers* on can, after you approve its plan, start up to five
+helper chats. Each is a sealed session of its own on the same profile — same
+logins, same uploads and downloads folders — with the chat's allowed sites or
+narrower ones, and its own session log and chat file. Each helper is another
+conversation with your model provider, with your key, so a team of five costs
+roughly five times the model traffic. Delete a helper like any chat.
+
 ### In-memory only
 
 The desktop app's live view frames are streamed and never written to disk; a

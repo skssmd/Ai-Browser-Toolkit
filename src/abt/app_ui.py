@@ -330,6 +330,13 @@ APP_HTML = r"""<!doctype html>
   .msg.user { background: var(--user); color: var(--user-ink); align-self: flex-end; border-bottom-right-radius: 4px; }
   .msg.assistant { background: var(--raised); border-bottom-left-radius: 4px; }
   .msg.notice { color: var(--muted); font-size: 12px; background: none; padding: 0 2px; }
+  .plan-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+  .plan-card .plan-head { font-weight: 600; }
+  .plan-card .plan-summary { margin: 0; color: var(--muted); }
+  .plan-card ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; }
+  .plan-card li span { display: block; color: var(--muted); font-size: 12.5px; }
+  .plan-card .plan-actions { display: flex; gap: 6px; }
+  .plan-card.answered .plan-actions { display: none; }
   .msg.steer .steer-note { display: block; margin-top: 3px; font-size: 11px; opacity: .7; }
   .msg.steer.queued { opacity: .75; border: 1px dashed currentColor; }
   .msg.error { color: var(--bad); background: var(--bad-soft); font-size: 12.5px; }
@@ -560,6 +567,7 @@ APP_HTML = r"""<!doctype html>
   <details class="more"><summary>More</summary>
     <label class="check"><input type="checkbox" id="ses-runjs" checked><span>Let the AI run scripts on the page<small>Scripts still cannot reach blocked sites.</small></span></label>
     <label class="check"><input type="checkbox" id="ses-strict"><span>Also check images, styles and scripts against the site list<small>Stricter, but pages that load from other sites may break.</small></span></label>
+    <label class="check"><input type="checkbox" id="ses-agentic"><span>Can start helper agents<small>Plans the work, asks you first, then runs up to 5 helpers in parallel and gathers their reports.</small></span></label>
     <label class="check" id="ses-sealed-row"><input type="checkbox" id="ses-sealed" checked><span>Only this app can use it<small>Other programs and agents on this computer cannot drive it.</small></span></label>
   </details>
   <div class="actions">
@@ -597,7 +605,7 @@ const S = {
   meta: null, running: false, busy: false, settings: { models: [] }, runningChats: new Set(), buffers: {},
   starting: false, lastStart: {}, downloadsSeen: {}, follow: null, draft: false, convs: [], pendingSend: null,
   live: { on: false, rows: [], socks: {}, timer: null, aspect: 16 / 10 },
-  draftSettings: { profile: "default", newProfile: "", rules: "all", runJs: true, strict: false, rulesOpen: false },
+  draftSettings: { profile: "default", newProfile: "", rules: "all", runJs: true, strict: false, agentic: false, rulesOpen: false },
 };
 
 // --- theme ------------------------------------------------------------------------
@@ -776,7 +784,7 @@ function openSessionDialog(edit) {
   };
   drawProfiles(edit ? S.profile : "__new__");
   $("#ses-newprofile").value = ""; $("#ses-name").value = "";
-  $("#ses-rules").value = ""; $("#ses-strict").checked = false; $("#ses-runjs").checked = true;
+  $("#ses-rules").value = ""; $("#ses-strict").checked = false; $("#ses-runjs").checked = true; $("#ses-agentic").checked = false;
   $("#ses-profile").onchange = () => {
     const isNew = $("#ses-profile").value === "__new__";
     $("#ses-newprofile-row").hidden = !isNew;
@@ -802,6 +810,9 @@ function openSessionDialog(edit) {
       const rules = st.rules || [];
       $("#ses-rules").value = (st.only_listed || rules.some(r => !r.startsWith("!")) ? rules : ["all", ...rules]).join("\n");
       $("#ses-strict").checked = !!st.strict;
+      $("#ses-agentic").checked = !!st.agentic;
+      // A helper cannot start helpers of its own.
+      $("#ses-agentic").closest("label").hidden = !!st.role;
       $("#ses-runjs").checked = st.run_js !== false;
     }).catch(fail);
   }
@@ -814,7 +825,7 @@ function openSessionDialog(edit) {
     const settings = {
       rules: $("#ses-rules").value.split("\n").map(s => s.trim()).filter(Boolean),
       only_listed: true,
-      strict: $("#ses-strict").checked, run_js: $("#ses-runjs").checked,
+      strict: $("#ses-strict").checked, run_js: $("#ses-runjs").checked, agentic: $("#ses-agentic").checked,
     };
     const name = edit ? S.session : $("#ses-name").value.trim().toLowerCase();
     if (!edit && !name) return toast("Give the session a name", true);
@@ -1060,7 +1071,7 @@ function drawLive() {
     const time = r.since ? liveDuration((r.working ? S.live.now : r.at) - r.since) : "";
     tile.querySelector(".bar").innerHTML =
       `<div class="row1">${r.working ? '<span class="dot busy"></span>' : '<span class="dot on"></span>'}` +
-      `<span class="name" title="${esc(r.title)}">${esc(r.title)}</span>` +
+      `<span class="name" title="${esc(r.title)}">${r.role ? "<i>" + esc(r.role) + "</i> · " : ""}${esc(r.title)}</span>` +
       `<span class="chip" title="Profile / logins">${esc(r.profile)}</span>` +
       (r.chat_running && r.chat_running.length ? `<button class="stop ghost" title="Stop this chat's reply">Stop</button>` : "") +
       `</div><div class="row2"><span class="step" title="${esc(r.url || "")}">${esc(step)}</span>` +
@@ -1425,7 +1436,16 @@ async function loadConversations() {
     .filter(c => c.messages > 0 || key(c) === current)
     .sort((a, b) => convAge(a) - convAge(b));
   const option = c => `<option value="${esc(key(c))}"${key(c) === current ? " selected" : ""}>` +
-    `${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`;
+    `${c.lead ? "↳ " : ""}${c.running ? "● " : ""}${esc(c.title || "New chat")}${c.profile !== "default" ? " — " + esc(c.profile) : ""}</option>`;
+  // A helper sits right under its lead, whatever its own last activity.
+  const leads = new Map(shown.filter(c => !c.lead).map(c => [c.session, c]));
+  const grouped = [];
+  for (const c of shown.filter(c => !c.lead)) {
+    grouped.push(c);
+    grouped.push(...shown.filter(h => h.lead === c.session));
+  }
+  grouped.push(...shown.filter(h => h.lead && !leads.has(h.lead)));
+  shown.splice(0, shown.length, ...grouped);
   const recent = shown.filter(c => convAge(c) <= RECENT_MS);
   const earlier = shown.filter(c => convAge(c) > RECENT_MS && convAge(c) <= ARCHIVE_MS);
   // The chat that is open stays in the list even once it is old.
@@ -1530,6 +1550,7 @@ function drawCreator() {
         <span class="v toggles">
           <label class="tgl" title="Let the AI run its own JavaScript on pages. Off keeps it to clicks, typing and reading."><input type="checkbox" id="new-runjs"${d.runJs ? " checked" : ""}>Scripts</label>
           <label class="tgl" title="Also check images, styles and scripts the page loads against the site list, not just pages."><input type="checkbox" id="new-strict"${d.strict ? " checked" : ""}>Strict sites</label>
+          <label class="tgl" title="Let this chat plan a task, then — after you approve — run up to 5 helper agents in parallel, each in its own role, and gather their reports."><input type="checkbox" id="new-agentic"${d.agentic ? " checked" : ""}>Helpers</label>
         </span>
       </div>
     </div>
@@ -1538,10 +1559,11 @@ function drawCreator() {
   const keep = () => {
     d.profile = $("#new-profile").value; d.newProfile = $("#new-profile-name").value;
     d.rules = $("#new-rules").value; d.runJs = $("#new-runjs").checked; d.strict = $("#new-strict").checked;
+    d.agentic = $("#new-agentic").checked;
     $("#new-profile-name").hidden = d.profile !== "__new__";
     $("#rules-what").textContent = rulesSummary(d.rules);
   };
-  ["#new-profile", "#new-profile-name", "#new-rules", "#new-runjs", "#new-strict"].forEach(sel => {
+  ["#new-profile", "#new-profile-name", "#new-rules", "#new-runjs", "#new-strict", "#new-agentic"].forEach(sel => {
     $(sel).addEventListener("input", keep); $(sel).addEventListener("change", keep);
   });
   $("#new-profile").addEventListener("change", () => { if (d.profile === "__new__") $("#new-profile-name").focus(); });
@@ -1562,7 +1584,7 @@ async function createChatSession() {
   }
   const settings = {
     rules: (d.rules || "").split("\n").map(r => r.trim()).filter(Boolean),
-    only_listed: true, run_js: !!d.runJs, strict: !!d.strict,
+    only_listed: true, run_js: !!d.runJs, strict: !!d.strict, agentic: !!d.agentic,
     // The app shows the page itself; its browsers need no window of their own.
     headless: true,
   };
@@ -1597,6 +1619,12 @@ function bubble(role, text) {
 
 // A tool call in words a person would use.
 function describe(name, args) {
+  if (name === "propose_plan") return `Proposed a plan: ${(args.workers || []).length} helpers`;
+  if (name === "start_worker") return `Started a helper: ${args.role || ""}`;
+  if (name === "workers") return "Checked on the helpers";
+  if (name === "wait_for_workers") return "Waiting for the helpers";
+  if (name === "read_report") return `Read ${args.worker || "a helper"}'s report`;
+  if (name === "stop_worker") return `Stopped ${args.worker || "a helper"}`;
   if (name === "browser_guidelines") return args.domain ? `Checked site notes for ${args.domain}` : "Read the toolkit's notes";
   if (name === "browser_session") return ({ start: "Started the browser", stop: "Stopped the browser", restart: "Restarted the browser", status: "Checked the browser" })[args.action] || "Checked the browser";
   const cmds = (args.commands || []);
@@ -1655,6 +1683,7 @@ function drawHistory() {
   msgs.filter(m => m.role === "tool").forEach(m => results[m.tool_call_id] = m.content);
   for (const m of msgs) {
     if (m.role === "error" || m.role === "notice") bubble(m.role, m.content);
+    else if (m.role === "user" && m.update) bubble("notice", m.content);  // from ABT, not the person
     else if (m.role === "user") bubble("user", m.content);
     else if (m.role === "assistant") {
       for (const call of m.tool_calls || []) {
@@ -1706,11 +1735,26 @@ function liveText(piece) {
   const m = $("#messages"); m.scrollTop = m.scrollHeight;
 }
 function endLive() { const el = $("#reply-live"); if (el) el.remove(); }
+// The lead's plan, for the person to approve before any helper starts.
+function planCard(args) {
+  const workers = Array.isArray(args.workers) ? args.workers : [];
+  const rows = workers.map((w, i) =>
+    `<li><b>${esc(w.role || "Helper " + (i + 1))}</b><span>${esc(w.task || "")}</span></li>`).join("");
+  add(`<div class="plan-card"><div class="plan-head">Plan — ${workers.length} helper${workers.length === 1 ? "" : "s"} in parallel</div>` +
+    (args.summary ? `<p class="plan-summary">${esc(args.summary)}</p>` : "") +
+    `<ol>${rows}</ol><div class="plan-actions"><button class="primary" data-plan="go">Start them</button>` +
+    `<button data-plan="edit">Change it</button></div></div>`);
+  const card = [...document.querySelectorAll(".plan-card")].pop();
+  card.querySelector('[data-plan="go"]').onclick = () => { $("#prompt").value = "Go ahead with the plan."; grow(); send(); card.classList.add("answered"); };
+  card.querySelector('[data-plan="edit"]').onclick = () => { $("#prompt").value = "Change the plan: "; grow(); $("#prompt").focus(); };
+}
+
 function renderEvent(e) {
   if (e.type === "delta") return liveText(e.text);
   if (e.type !== "delta") endLive();
   if (e.type === "user") bubble("user", e.text);
   else if (e.type === "assistant") bubble("assistant", e.text);
+  else if (e.type === "tool_call" && e.name === "propose_plan") { pendingTool = e; planCard(e.args || {}); }
   else if (e.type === "tool_call") { pendingTool = e; }
   else if (e.type === "tool_result") {
     const args = pendingTool ? pendingTool.args : {};
@@ -1721,6 +1765,9 @@ function renderEvent(e) {
     if (cmds.some(c => c.op === "tab_new")) S.follow = "newest";
     else if (switched) S.follow = switched.tab_id;
     if (S.follow) refreshBrowser();
+  }
+  else if (e.type === "steer" && e.update) {
+    bubble("notice", e.text);  // from ABT (a helper finished), not from the person
   }
   else if (e.type === "steer") {
     add(`<div class="msg user steer queued" data-steer="${esc(e.id)}">${esc(e.text)}<span class="steer-note">Read at the next step</span></div>`);

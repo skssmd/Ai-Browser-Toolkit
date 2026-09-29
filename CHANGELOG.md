@@ -10,6 +10,13 @@
   steps and time; click one to open it, or stop a chat's reply from it. The
   button shows how many are working. Streams run only while the grid is open,
   sized to their tile and view-only.
+- **Helpers: one chat can run a team.** Turn on *Helpers* for a chat and it can
+  split a task into roles -- a designer, an SEO expert, a security expert --
+  and run up to five helper agents in parallel, each in its own session and
+  tabs, confined to the chat's allowed sites. It shows you the plan first and
+  starts nothing until you answer. It sees only their status, never their
+  conversations, is told as each one finishes, reads their reports and writes
+  a combined one. Without *Helpers* a chat is a single loop, as before.
 - **Connect an agent in one tap.** From the Agents view, *Connect an agent*
   finds Claude Code, Codex, Cursor, VS Code, Gemini CLI, OpenCode and Windsurf
   on this computer. Connecting gives the agent its own session on the profile
