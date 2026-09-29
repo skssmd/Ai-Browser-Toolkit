@@ -207,12 +207,16 @@ class ProfileRegistry:
             data = json.loads(self._meta_path(name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        headed = data.get("headed")
-        if headed is None:
-            # The default profile keeps whatever `abt serve` was told, so a
-            # server started without --headless still shows its window.
-            headed = self.default_headed if name == DEFAULT else False
-        return {"name": name, "created": data.get("created"), "headed": bool(headed)}
+        explicit = data.get("headed")
+        # Unset unless someone chose (`abt profile set --headed/--headless`).
+        # Unset, the session asking decides -- the app's chats run hidden, the
+        # CLI's follow the server (a window unless it was started --headless).
+        # `headed` reports what a launch with no preference would do.
+        headed = self.default_headed if explicit is None else bool(explicit)
+        return {
+            "name": name, "created": data.get("created"),
+            "headed": headed, "headed_set": explicit is not None,
+        }
 
     def _write_meta(self, name: str, meta: dict) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -242,13 +246,14 @@ class ProfileRegistry:
         if self.exists(name):
             raise OpError("invalid_op", f"profile {name!r} already exists")
         self.path(name).mkdir(parents=True)
-        self._write_meta(name, {"name": name, "created": _now(), "headed": False})
+        self._write_meta(name, {"name": name, "created": _now()})
         return self.describe(name)
 
     def set_headed(self, name: str, headed: bool) -> dict:
         self.require(name)
         meta = self.meta(name)
         meta["headed"] = bool(headed)
+        meta.pop("headed_set", None)
         self._write_meta(name, meta)
         return self.describe(name)
 
@@ -291,8 +296,14 @@ class ProfileRegistry:
         with self._lock:
             return self._live(name)
 
-    def attach(self, name: str, session: str) -> str:
-        """Make sure `name`'s Chrome is up and count `session` on it."""
+    def attach(self, name: str, session: str, headed: bool | None = None) -> str:
+        """Make sure `name`'s Chrome is up and count `session` on it.
+
+        `headed` is the session's wish, used only when this call is the one
+        that launches the browser and the profile has no setting of its own.
+        One Chrome serves every session on a profile, so whoever starts it
+        decides whether it has a window.
+        """
         with self._launch_lock(name):
             with self._lock:
                 running = self._live(name)
@@ -308,7 +319,7 @@ class ProfileRegistry:
                     self._launching.add(name)
             if running is None:
                 try:
-                    running = self._launch(name)
+                    running = self._launch(name, headed)
                 finally:
                     with self._lock:
                         self._launching.discard(name)
@@ -402,7 +413,7 @@ class ProfileRegistry:
 
     # --- process handling ------------------------------------------------------
 
-    def _launch(self, name: str) -> Running:
+    def _launch(self, name: str, wish: bool | None = None) -> Running:
         binary = self._find_binary(self.browser)
         if binary is None:
             raise OpError(
@@ -414,7 +425,11 @@ class ProfileRegistry:
         port_file = directory / PORT_FILE
         # A file left by an earlier run names a port nobody is listening on.
         port_file.unlink(missing_ok=True)
-        headed = self.meta(name)["headed"]
+        meta = self.meta(name)
+        if meta["headed_set"]:
+            headed = meta["headed"]
+        else:
+            headed = self.default_headed if wish is None else wish
         argv = launch_argv(binary, directory, headed)
         process = self._spawn(argv)
         try:

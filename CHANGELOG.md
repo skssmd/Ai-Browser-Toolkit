@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Steer a running chat.** A message sent while the app's AI is working joins
+  at its next step; it takes it into account and keeps going, instead of
+  stopping to reply. The model is also told to end its turn only when the task
+  is done.
+- **Hidden in the app, a window from the CLI.** Whether a profile's browser
+  has a window now follows the session that starts it: the app's chats run
+  hidden (the app shows the page), CLI and HTTP sessions follow the server's
+  default, a window unless it was started with `--headless`. A profile's own
+  setting (`abt profile set --headed/--headless`) still wins. `abt app` no
+  longer starts the server `--headless`.
+
 ## 0.7.0 — 2026-09-28
 
 One server now runs many sessions, each in its own browser profile, in

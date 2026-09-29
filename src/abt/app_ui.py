@@ -681,7 +681,16 @@ async function selectSession(name, chatId) {
 }
 
 async function loadRules() {
-  try { const info = await api("GET", "/sessions/" + encodeURIComponent(S.session)); S.rules = (info.settings || {}).rules || []; drawSessionButton(); }
+  try {
+    const name = S.session;
+    const info = await api("GET", "/sessions/" + encodeURIComponent(name));
+    const settings = info.settings || {};
+    S.rules = settings.rules || []; drawSessionButton();
+    // Chats made before sessions carried `headless` would open a window.
+    if (name.startsWith("chat-") && settings.headless === undefined) {
+      await api("PATCH", "/sessions/" + encodeURIComponent(name), { settings: { headless: true } });
+    }
+  }
   catch (e) {}
 }
 
@@ -1303,6 +1312,8 @@ async function createChatSession() {
   const settings = {
     rules: (d.rules || "").split("\n").map(r => r.trim()).filter(Boolean),
     only_listed: true, run_js: !!d.runJs, strict: !!d.strict,
+    // The app shows the page itself; its browsers need no window of their own.
+    headless: true,
   };
   const out = await api("POST", "/sessions", { name, profile, sealed: true, settings }, { session: null });
   if (out.token) { S.tokens[name] = out.token; try { sessionStorage.setItem("abt.tok." + name, out.token); } catch (e) {} }

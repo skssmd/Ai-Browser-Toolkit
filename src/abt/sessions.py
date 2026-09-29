@@ -251,7 +251,12 @@ class SessionRegistry:
 
         def connect() -> str:
             self.profiles.require(profile)
-            return self.profiles.attach(profile, name)
+            # Read at connect time, so a change to the setting applies the next
+            # time this session starts the profile's browser.
+            hidden = record.settings.get("headless")
+            return self.profiles.attach(
+                profile, name, headed=None if hidden is None else not hidden
+            )
 
         attach = Attach(
             connect=connect,

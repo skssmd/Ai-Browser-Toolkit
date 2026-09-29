@@ -279,3 +279,30 @@ def test_sweep_also_ends_browsers_this_registry_never_started(make):
     )
     assert reg.sweep() == [DEFAULT]
     assert killed == [99] and set(asked) == {True}
+
+
+def test_the_session_starting_the_browser_decides_its_window(make, spawned):
+    """The app's chats run hidden; CLI sessions follow the server's default."""
+    reg = make(default_headed=True)
+    reg.create("work")
+    reg.attach("work", "chat-1", headed=False)  # the app: hidden
+    assert "--headless=new" in spawned[-1].argv
+    reg.stop("work")
+    reg.attach("work", "cli", headed=None)  # the CLI: the server's default, a window
+    assert "--headless=new" not in spawned[-1].argv
+
+
+def test_a_profile_setting_wins_over_the_session(make, spawned):
+    reg = make(default_headed=False)
+    reg.create("work")
+    reg.set_headed("work", True)
+    reg.attach("work", "chat-1", headed=False)
+    assert "--headless=new" not in spawned[-1].argv
+    assert reg.meta("work")["headed_set"] is True
+
+
+def test_a_new_profile_has_no_window_setting_of_its_own(make):
+    reg = make(default_headed=True)
+    reg.create("work")
+    meta = reg.meta("work")
+    assert meta["headed_set"] is False and meta["headed"] is True

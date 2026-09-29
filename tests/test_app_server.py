@@ -317,3 +317,16 @@ def test_a_message_sent_while_the_chat_works_steers_it(client, monkeypatch):
     assert any(e["type"] == "steer_read" for e in events)
     saved = client.get(f"/app/chats/{chat['id']}").json()["result"]["messages"]
     assert [m["content"] for m in saved if m["role"] == "user"] == ["open the site", "no, the docs"]
+
+
+def test_a_chat_session_asks_for_a_hidden_browser(registry, monkeypatch):
+    """The app marks its chats headless; a CLI session leaves it to the server."""
+    asked = {}
+    monkeypatch.setattr(registry.profiles, "attach",
+                        lambda profile, session, headed=None: asked.update({session: headed}) or "ws://x:1/")
+    registry.create("chat-abc", sealed=True, settings={"headless": True})
+    registry.create("cli-one")
+    token = registry.store.directory.joinpath("chat-abc.token").read_text(encoding="utf-8")
+    registry.get("chat-abc", token).browser._attach.connect()
+    registry.get("cli-one").browser._attach.connect()
+    assert asked == {"chat-abc": False, "cli-one": None}

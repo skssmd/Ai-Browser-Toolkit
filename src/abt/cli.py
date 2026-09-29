@@ -816,8 +816,9 @@ def app_window(
     headed: bool = typer.Option(
         False,
         "--headed",
-        help="Also show the default profile's real Chrome window. Off by "
-        "default: the app shows the page itself.",
+        help="Start a new server with windowed browsers for everyone, the "
+        "app's chats included. Without it the app's chats stay hidden (the app "
+        "shows their pages) and CLI sessions get a window as usual.",
     ),
 ) -> None:
     """Open the desktop app: the browser and a chat with your model, side by side.
@@ -833,7 +834,9 @@ def app_window(
     if not _healthy(base):
         typer.echo(f"[abt] starting the server on {HOST}:{port}")
         try:
-            up(port=port, browser=browser, profile=None, headless=not headed, wait=60.0)
+            # Never --headless: that would hide CLI sessions' browsers too.
+            # The app's own chats ask for hidden browsers themselves.
+            up(port=port, browser=browser, profile=None, headless=False, wait=60.0)
         except typer.Exit as done:
             if done.exit_code:
                 raise
