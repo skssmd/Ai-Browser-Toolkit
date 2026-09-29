@@ -65,6 +65,18 @@ def test_an_entry_with_one_shared_session_is_reported_so_it_can_be_replaced(tmp_
     assert rows_by_id(tmp_path)["opencode"]["session"] is None
 
 
+def test_opencode_jsonc_is_the_file_written_when_it_exists(tmp_path):
+    """OpenCode reads opencode.jsonc; an entry in opencode.json beside it was ignored."""
+    folder = tmp_path / ".config" / "opencode"
+    folder.mkdir(parents=True)
+    (folder / "opencode.jsonc").write_text(json.dumps({"mcp": {"abt": {
+        "type": "local", "command": ["py", "-m", "abt", "mcp"], "enabled": True}}}), encoding="utf-8")
+    connect.connect("opencode", "default", API, home=tmp_path)
+    entry = json.loads((folder / "opencode.jsonc").read_text(encoding="utf-8"))["mcp"]["abt"]
+    assert "--profile" in entry["command"]
+    assert not (folder / "opencode.json").exists()
+
+
 def test_codex_toml_keeps_other_tables(tmp_path):
     path = tmp_path / ".codex" / "config.toml"
     path.parent.mkdir()

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 — 2026-09-29
 
 - **Agents view in the app.** The *Agents* button at the left of the browser
   toolbar shows every agent's page at once -- app chats and agents driving
@@ -31,7 +31,9 @@
   navigate each other's pages away; now each has its own tabs, and an agent
   that restarts with the same name picks its tabs back up. `abt mcp --session`
   still fixes one for the connection. An entry written by an earlier Connect
-  shows *Connect again* to switch over.
+  shows *Connect again* to switch over. For OpenCode, Connect writes
+  `opencode.jsonc` when there is one -- OpenCode reads it, and an entry in
+  `opencode.json` beside it was ignored.
 
 ## 0.7.1 — 2026-09-29
 

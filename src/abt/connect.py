@@ -207,6 +207,13 @@ _opencode = _json_section("mcp", lambda cmd: {"type": "local", "command": cmd, "
 _claude_json = _json_section("mcpServers", lambda cmd: {"type": "stdio", "command": cmd[0], "args": cmd[1:], "env": {}})
 
 
+def _opencode_config(folder: Path) -> Path:
+    """OpenCode reads `opencode.jsonc` when there is one; an entry written to
+    `opencode.json` beside it was silently ignored."""
+    jsonc = folder / "opencode.jsonc"
+    return jsonc if jsonc.exists() else folder / "opencode.json"
+
+
 def _claude_cli() -> str | None:
     return shutil.which("claude")
 
@@ -247,7 +254,7 @@ HARNESSES: tuple[Harness, ...] = (
             lambda h: [_appdata(h) / "Code" / "User"], "code", *_vscode),
     Harness("gemini", "Gemini CLI", lambda h: h / ".gemini" / "settings.json",
             lambda h: [h / ".gemini"], "gemini", *_json_std),
-    Harness("opencode", "OpenCode", lambda h: h / ".config" / "opencode" / "opencode.json",
+    Harness("opencode", "OpenCode", lambda h: _opencode_config(h / ".config" / "opencode"),
             lambda h: [h / ".config" / "opencode"], "opencode", *_opencode),
     Harness("windsurf", "Windsurf", lambda h: h / ".codeium" / "windsurf" / "mcp_config.json",
             lambda h: [h / ".codeium" / "windsurf"], "windsurf", *_json_std),
