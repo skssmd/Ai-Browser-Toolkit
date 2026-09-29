@@ -44,6 +44,7 @@ REGISTRY: dict[str, Handler] = {
     "run_js": control.run_js,
     "alert": control.alert,
     "files": control.files,
+    "save_file": control.save_file,
     "diff": control.diff,
     "status": control.status,
     "shutdown": control.shutdown,
@@ -92,6 +93,7 @@ NO_HEALTH_CHECK = frozenset(
         "guidelines_read",
         "guidelines_note",
         "files",
+        "save_file",
     }
 )
 
@@ -154,7 +156,7 @@ def note_file_chooser(session: BrowserSession, result: Any) -> Any:
 
     A shared session's browser never shows one: the picker is dismissed where
     it opens, and the command that caused it says so, with the route that
-    does work -- a path from the session's uploads folder, via `input`.
+    does work -- a path from the profile's uploads folder, via `input`.
     """
     driver = session._driver
     take = getattr(driver, "take_file_chooser", None)

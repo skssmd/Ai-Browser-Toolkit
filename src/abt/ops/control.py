@@ -222,6 +222,10 @@ def files(session: BrowserSession, cmd) -> dict:
     return session.files(open_folder=cmd.open)
 
 
+def save_file(session: BrowserSession, cmd) -> dict:
+    return session.save_file(cmd.name, cmd.content, overwrite=cmd.overwrite)
+
+
 def status(session: BrowserSession, cmd) -> dict:
     return session_status(session)
 

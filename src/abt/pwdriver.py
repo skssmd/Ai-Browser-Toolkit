@@ -640,7 +640,7 @@ class PlaywrightDriver:
         # session owns; see `window_handles`.
         self._cdp_url = cdp_url
         self._gate = gate
-        # Where this session's downloads are saved. Playwright otherwise keeps
+        # Where this profile's downloads are saved. Playwright otherwise keeps
         # them in a temporary folder it deletes when the connection closes.
         self._downloads = downloads
         # Set when a page of this session opened a file picker. See

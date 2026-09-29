@@ -103,8 +103,8 @@ launches you picks your session; do not pick one yourself.
   session's tab shows in `tab_list` as `locked` and refuses every action with
   `tab_locked` — open your own with `tab_new` rather than retrying.
 - `tab_claim` takes an `unowned` tab; `tab_release` gives one up.
-- **Files:** a page's file input takes only files from the session's uploads
-  folder (`Documents/AI Browser Toolkit/<session>/uploads`); anything else is
+- **Files:** a page's file input takes only files from the profile's uploads
+  folder (`Documents/AI Browser Toolkit/<profile>/uploads`); anything else is
   `file_blocked`. Call `files` to see what is there and what was downloaded —
   names and paths, never contents — and `{"op": "files", "open": true}` to open
   the folder so the person can drop the file in. Ask them to; do not guess paths.

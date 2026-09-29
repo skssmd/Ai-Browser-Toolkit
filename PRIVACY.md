@@ -83,8 +83,8 @@ It does **not** cover:
 | Session logs: what the agent saw, ran, and got back — every command, its parameters, its result, URL, tab, timing | Appended to a JSONL file as commands run | Yes, `events.jsonl` | To your model provider if your agent sends it there |
 | Browser network activity: request URLs, method, status, timing, content length | Read on request (`read_network`), and into the session log | Yes, as part of the recorded result | No |
 | Browser console output | Read on request (`read_console`) | Yes, as part of the recorded result | No |
-| Local file paths handed to `input` (uploads) | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the session's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
-| Files you put in a session's uploads folder, and files the browser downloads | Listed by name, size and path (the `files` op); never read into a response | Yes, in `Documents/AI Browser Toolkit/<session>/uploads` and `/downloads` | Uploads only to the site you or the agent upload them to |
+| Local file paths handed to `input` (uploads) | Passed to the page or to the site; the path string is recorded. In any session but `default`, and always for the desktop app's chat, only files inside the profile's uploads folder are accepted | Yes, as part of the recorded request | Only to the site the upload is aimed at |
+| Files you put in a profile's uploads folder, files the browser downloads, and documents the AI saves (`save_file`) | Listed by name, size and path (the `files` op); never read into a response | Yes, in `Documents/AI Browser Toolkit/<profile>/uploads` and `/downloads` | Uploads only to the site you or the agent upload them to |
 | Desktop app settings: model endpoint, **API key**, model list | Read when the chat calls the model | Yes, `app.json` in the sessions folder, readable only by your user account | The key goes to the endpoint you configured, with every request |
 | Desktop app chats: your messages, the model's replies, every tool call and its result | Sent to your model provider on each turn, and shown in the app | Yes, one JSON file per chat in the sessions folder | To your model provider, on every turn |
 | Sessions: name, profile, URL rules, settings; a sealed session's token | Read on every command to decide where it runs and what it may do | Yes, in the sessions folder; tokens owner-only | No |
@@ -453,7 +453,7 @@ directory — which is why uninstalling does not take them with it.
 | --- | --- | --- |
 | `config.json` | data root | Playbook lookup settings and the last check timestamp. No credentials. |
 | `sessions/` | beside the profiles (`<checkout>/sessions`, or the data root) | Session records (`<name>.json`), sealed-session tokens (`<name>.token`), `operator.token`, the desktop app's `app.json` **including your model API key**, and `chats/<session>/` with every chat. Files are created readable only by your account on macOS and Linux; on Windows they inherit your user profile's permissions. Removed sessions' chats move to `removed-chats/`. |
-| `Documents/AI Browser Toolkit/<session>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, and files the browser downloaded. Nothing is deleted automatically. |
+| `Documents/AI Browser Toolkit/<profile>/uploads`, `/downloads` | your Documents folder | Files you put there for the AI to upload, and files the browser downloaded. Nothing is deleted automatically. |
 | `guidelines/local/`, `guidelines/trusted/`, `guidelines/pending/` | data root | Playbooks read, trusted, or pulled but not yet trusted. An agent's own `guidelines_note` is written locally and is not shared until you run `abt guidelines submit`. |
 | `server.log` | next to the source checkout | The launcher's stdout, including the resolved profile path, log directory and listening address. |
 | `.first-run-shown` | state root | An empty marker file. |
@@ -548,7 +548,7 @@ Deletion is manual, and the paths are:
 | Desktop app chats | Delete a chat in the app, or the `sessions/chats/` folder. |
 | The model API key | Clear it in *Models*, or delete `sessions/app.json`. |
 | Session records and tokens | `abt session rm NAME`, or delete the `sessions/` folder. |
-| Uploaded and downloaded files | Delete them from `Documents/AI Browser Toolkit/<session>/`. |
+| Uploaded, downloaded and saved files | Delete them from `Documents/AI Browser Toolkit/<profile>/`. |
 | Named profiles | `abt profile rm NAME`, or *Logins from → delete* in the app. |
 | Logins, cookies, history, site storage | Sign out inside the browser window and use Chrome's own "Clear browsing data" on that profile, or delete the profile directory. `abt doctor` prints the path. There is no ABT command for this. |
 | Playbooks, config, first-run marker | Delete the data root (and the state root on Linux, where they differ). Local notes go with it; a submitted playbook is a separate Git history. |

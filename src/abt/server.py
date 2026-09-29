@@ -27,7 +27,7 @@ from . import shots as shots_util
 from .browser import NO_BROWSER_MESSAGE, BrowserSession
 from .engine import EngineError
 from .errors import OpError
-from .ops import dispatch
+from .ops import NO_HEALTH_CHECK, dispatch
 from .ops.control import browser_state, session_status
 from .recorder import (
     SessionRecorder,
@@ -1080,7 +1080,7 @@ def create_app(
                     raise OpError("invalid_op", "shutdown is not available from the chat")
                 keep_going = bool(envelope and payload.get("continue_on_error"))
                 # The chat's model may hand a page only files from the
-                # session's uploads folder, whatever the session's setting.
+                # profile's uploads folder, whatever the session's setting.
                 from .ops.interact import STRICT_UPLOADS
 
                 STRICT_UPLOADS.set(True)
@@ -1089,8 +1089,7 @@ def create_app(
                 # and the same commands again, once.
                 needs_page = any(
                     isinstance(item, dict)
-                    and not str(item.get("op", "")).startswith(("browser_", "guidelines_"))
-                    and item.get("op") != "status"
+                    and str(item.get("op", "")) not in NO_HEALTH_CHECK
                     for item in items
                 )
                 if needs_page and not sess.browser.is_running:
@@ -1240,7 +1239,7 @@ def create_app(
         loop.run_in_executor(None, work)
         return None
 
-    # --- files: the session's uploads and downloads folders ------------------------
+    # --- files: the profile's uploads and downloads folders ------------------------
 
     @app.get("/app/files")
     async def app_files(request: Request):
@@ -1272,7 +1271,7 @@ def create_app(
 
     @app.post("/app/upload")
     async def app_upload(request: Request):
-        """Save a file the person picked into the session's uploads folder."""
+        """Save a file the person picked into the profile's uploads folder."""
         body = await _object(request)
         if isinstance(body, JSONResponse):
             return body

@@ -158,7 +158,7 @@ def config_file(
 
 
 def files_home(home: Path | None = None) -> Path:
-    """Where each session's uploads and downloads folders live.
+    """Where each profile's uploads and downloads folders live.
 
     In Documents, where a person looks for files, rather than beside the
     toolkit's own data: the point is that they put a file here by hand.

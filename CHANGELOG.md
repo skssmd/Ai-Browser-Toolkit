@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The AI can save documents.** A new `save_file` op writes a document the AI
+  composed -- notes, a report, what it found -- into the downloads folder. Text
+  formats only (`.md`, `.txt`, `.csv`, …), a plain file name, up to 2 MB; an
+  existing file is kept and the new one gets a numbered name. It needs no
+  browser. The app's chat is told to use it.
+- **Folders per profile, not per session.** Uploads and downloads now live in
+  `Documents/AI Browser Toolkit/<profile>/`, shared by every chat and agent on
+  that profile like its logins -- one place to look instead of one folder per
+  chat.
 - **Back where it was.** Every session remembers its open pages and which one
   was active, and reopens them when its browser starts again -- after a
   `browser_restart`, a crash, or a server restart. The session's site rules

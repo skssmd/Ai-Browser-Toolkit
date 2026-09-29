@@ -194,7 +194,7 @@ class SessionRegistry:
         files_root: Path | None = None,
     ) -> None:
         self.store = store
-        # Each session's uploads and downloads folders live under here.
+        # Each profile's uploads and downloads folders live under here.
         self.files_root = Path(files_root) if files_root is not None else None
         self.profiles = profiles
         self.operator_token = operator_token
@@ -272,8 +272,11 @@ class SessionRegistry:
         # Read when the browser starts, so it reopens what was open last.
         browser.pages_to_restore = lambda: record.pages
         if self.files_root is not None:
-            browser.uploads_dir = self.files_root / name / "uploads"
-            browser.downloads_dir = self.files_root / name / "downloads"
+            # Per profile, like the logins: every chat and agent on a profile
+            # shares one uploads and one downloads folder, so a file is where
+            # you would look for it, not scattered one folder per chat.
+            browser.uploads_dir = self.files_root / profile / "uploads"
+            browser.downloads_dir = self.files_root / profile / "downloads"
             # Only files the person put in the uploads folder reach a page --
             # except in `default`, which keeps what scripts driving it
             # have always been able to do, unless its settings say otherwise.

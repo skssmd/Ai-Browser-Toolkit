@@ -788,7 +788,7 @@ belongs to) and clicked through rather than blocked.
 | Read | `get_html` `get_text` `find` `find_full` `screenshot` |
 | Interact | `click` `input` `select` `hover` `scroll` `wait_for` `press` |
 | Tabs | `tab_new` `tab_list` `tab_switch` `tab_close` `tab_claim` `tab_release` |
-| Control | `run_js` `diff` `status` `shutdown` `files` |
+| Control | `run_js` `diff` `status` `shutdown` `files` `save_file` |
 | Browser lifecycle | `browser_start` `browser_stop` `browser_restart` `browser_status` |
 
 `select` drives native `<select>` elements via `by_text`, `value`, or `option_index`.
@@ -873,7 +873,7 @@ A closed set, so you can branch on `error.type` instead of parsing prose:
 | `tab_locked` | Another session owns the tab. Open your own with `tab_new` rather than retrying. |
 | `profile_limit` | Too many browsers are running. `browser_stop` in a session you are done with, or raise `--max-profiles`. Nothing is ever closed to make room. |
 | `profile_in_use` | Remove or move the sessions on the profile, and stop its browser, first. |
-| `file_blocked` | Only files in the session's uploads folder can go to a page. Call `files` to see them, or `files {open: true}` to open the folder for the person. |
+| `file_blocked` | Only files in the profile's uploads folder can go to a page. Call `files` to see them, or `files {open: true}` to open the folder for the person. |
 | `url_blocked` | The session's URL rules do not allow it. They are set by whoever runs the session; ask them, do not work around it. |
 | `profile_not_found` | `abt profile list` shows what exists; `abt profile new NAME` creates one. |
 

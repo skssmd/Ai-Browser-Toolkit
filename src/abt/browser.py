@@ -813,7 +813,7 @@ class BrowserSession:
             if base not in path.parents:
                 raise OpError(
                     "file_blocked",
-                    f"{raw} is not in this session's uploads folder ({base})",
+                    f"{raw} is not in this profile's uploads folder ({base})",
                 )
             if not path.is_file():
                 raise OpError("file_blocked", f"there is no file {path.name!r} in {base}")
@@ -823,7 +823,7 @@ class BrowserSession:
         return "\n".join(accepted)
 
     def files(self, open_folder: bool = False) -> dict:
-        """What is in this session's uploads and downloads folders.
+        """What is in this profile's uploads and downloads folders.
 
         Names, sizes and paths -- never contents. `open_folder` shows the
         uploads folder in the system file manager so a person can add to it.
@@ -854,6 +854,45 @@ class BrowserSession:
         if open_folder:
             out["opened"] = open_in_file_manager(self.uploads_dir)
         return out
+
+    # What save_file writes: documents, never programs or anything a double
+    # click would run.
+    SAVE_EXTENSIONS = frozenset(
+        {".md", ".txt", ".csv", ".json", ".html", ".xml", ".yaml", ".yml", ".log"}
+    )
+    SAVE_MAX_BYTES = 2 * 1024 * 1024
+
+    def save_file(self, name: str, content: str, overwrite: bool = False) -> dict:
+        """Save a document the caller wrote into this profile's downloads folder.
+
+        `name` must be a bare file name with a text extension: no folders, so
+        nothing lands outside the folder, and nothing executable. An existing
+        file is left alone -- the new one gets " (2)", " (3)"... -- unless
+        `overwrite`.
+        """
+        if self.downloads_dir is None:
+            raise OpError("invalid_op", "save_file needs sessions: run `abt serve` on the playwright engine")
+        raw = str(name or "").strip()
+        if not raw or raw != Path(raw).name or raw in (".", "..") or any(c in raw for c in '<>:"|?*\\/'):
+            raise OpError("file_blocked", f"{name!r} is not a plain file name; give a name like notes.md, no folders")
+        suffix = Path(raw).suffix.lower()
+        if suffix not in self.SAVE_EXTENSIONS:
+            allowed = " ".join(sorted(self.SAVE_EXTENSIONS))
+            raise OpError("file_blocked", f"{raw!r}: only text documents can be saved ({allowed})")
+        data = str(content).encode("utf-8")
+        if len(data) > self.SAVE_MAX_BYTES:
+            raise OpError("invalid_op", f"{len(data)} bytes is over the {self.SAVE_MAX_BYTES} byte limit; split it into parts")
+        folder = self.downloads_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / raw
+        if target.exists() and not overwrite:
+            stem, n = Path(raw).stem, 2
+            while (folder / f"{stem} ({n}){suffix}").exists():
+                n += 1
+            target = folder / f"{stem} ({n}){suffix}"
+        target.write_bytes(data)
+        return {"saved": target.name, "path": str(target.resolve()), "size": len(data),
+                "folder": str(folder.resolve())}
 
     def check_url(self, url: str | None) -> None:
         if url:

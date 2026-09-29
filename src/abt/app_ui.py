@@ -916,7 +916,7 @@ async function openScreen(tab) {
       $("#screen").src = "data:image/jpeg;base64," + m.data; S.meta = m.metadata;
       $("#viewmsg").hidden = true;
     } else if (m.type === "file_chooser") {
-      toast("File pickers don't open here. Put the file in this session's uploads folder (📁) and ask the AI to upload it.");
+      toast("File pickers don't open here. Put the file in this profile's uploads folder (📁) and ask the AI to upload it.");
     } else if (m.ok === false) {
       const err = m.error || {};
       viewMessage(err.message || "This tab cannot be shown");
@@ -1371,6 +1371,8 @@ function describe(name, args) {
       case "read_network": return "Checked the page's network requests";
       case "current_url": case "status": case "tab_list": case "browser_status": return "Checked where the browser is";
       case "alert": return "Answered a pop-up";
+      case "save_file": return `Saved ${c.name ? "“" + c.name + "”" : "a document"} to downloads`;
+      case "files": return "Checked the profile's files";
       case "diff": return "Checked what changed";
       case "tab_claim": return "Took over a tab"; case "tab_release": return "Let go of a tab";
       case "browser_start": return "Started the browser"; case "browser_restart": return "Restarted the browser";

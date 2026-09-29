@@ -385,10 +385,12 @@ you choose. The chat docks left or right, resizes, and hides like a drawer
 - **The chat list** keeps the newest activity on top, with the last 30 minutes
   first. Chats idle for a day move to **Archived**; carry one on and it comes
   back to the top. Replies keep running while you switch chats.
-- **Files.** Each chat has two folders in `Documents/AI Browser Toolkit/<chat>/`.
+- **Files.** Each profile has two folders in `Documents/AI Browser Toolkit/<profile>/`,
+  shared by every chat on it, like its logins.
   **uploads** is the only place a page's file input takes a file from — the AI
   can list it but never read it, and a path anywhere else, `~/.ssh` included, is
-  refused. **downloads** is where downloads land. The 📁 button shows both.
+  refused. **downloads** is where downloads land, and where the AI saves documents it
+  writes for you (`save_file`). The 📁 button shows both.
 - The ⋯ menu has the chat's settings, its **Activity log** (every step, with
   screenshots) and Delete.
 - **Closing the window closes its browsers**; the server keeps running for

@@ -357,7 +357,7 @@ class RunJs(Diffable):
 
 
 class Files(Base):
-    """This session's uploads and downloads folders: names, sizes and paths.
+    """This profile's uploads and downloads folders: names, sizes and paths.
 
     Only files in the uploads folder can be given to a page's file input. With
     open: true the uploads folder is shown to the person, so they can put the
@@ -365,6 +365,20 @@ class Files(Base):
 
     op: Literal["files"]
     open: bool = False
+
+
+class SaveFile(Base):
+    """Write a document you composed -- notes, a report, a summary of what you
+    found -- into this profile's downloads folder, where the person finds it.
+
+    Text only (.md .txt .csv .json .html .xml .yaml .yml .log), up to 2 MB.
+    `name` is a file name, not a path. An existing file is kept and yours gets a
+    numbered name, unless overwrite is true. Answers with the saved path."""
+
+    op: Literal["save_file"]
+    name: str
+    content: str
+    overwrite: bool = False
 
 
 class Alert(Base):
@@ -548,7 +562,7 @@ Command = Annotated[
         GetHtml, GetText, Find, FindFull, Screenshot,
         Click, Input, Select, Hover, Scroll, WaitFor, Press,
         TabNew, TabList, TabSwitch, TabClose, TabClaim, TabRelease,
-        RunJs, Diff, Status, Shutdown, Alert, Files,
+        RunJs, Diff, Status, Shutdown, Alert, Files, SaveFile,
         ReadConsole, ReadNetwork,
         GuidelinesSearch, GuidelinesRead, GuidelinesNote,
         BrowserStart, BrowserStop, BrowserRestart, BrowserStatus,

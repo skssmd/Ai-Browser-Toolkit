@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextvars
 
 # Set by the desktop app's chat around the commands its model sends: that
-# model may hand a page only files from the session's uploads folder,
+# model may hand a page only files from the profile's uploads folder,
 # whatever the session's own setting says.
 STRICT_UPLOADS: contextvars.ContextVar[bool] = contextvars.ContextVar("strict_uploads", default=False)
 
