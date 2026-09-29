@@ -374,3 +374,19 @@ def test_the_app_makes_older_chats_headless_but_not_default(client, registry):
     assert registry.get("chat-old", token).record.settings["headless"] is True
     client.get("/app/chats")
     assert "headless" not in registry.get(None).record.settings
+
+
+def test_no_element_id_is_used_twice_in_the_app_page():
+    """The chat's streaming reply once shared `live` with the Agents grid: the
+    reply was written over the browser view, then the grid deleted with it."""
+    import re
+    from collections import Counter
+
+    from abt.app_ui import APP_HTML
+
+    ids = re.findall(r'\bid="([A-Za-z][\w-]*)"', APP_HTML)
+    assert [i for i, n in Counter(ids).items() if n > 1] == []
+    # Every #id the page's script looks up by name exists somewhere in it.
+    script = APP_HTML.split("<script>")[1].split("</script>")[0]
+    looked_up = set(re.findall(r'\$\("#([A-Za-z][\w-]*)"\)', script))
+    assert looked_up - set(ids) == set()

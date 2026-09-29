@@ -126,7 +126,7 @@ APP_HTML = r"""<!doctype html>
   }
   #live { position: absolute; inset: 0; background: var(--bg); padding: 12px; overflow: hidden; }
   #live[hidden] { display: none; }
-  #live-grid { display: grid; gap: 12px; justify-content: center; align-content: center; height: 100%; }
+  #live-grid { display: grid; gap: 12px; justify-content: center; align-content: center; height: calc(100% - 40px); margin-top: 40px; }
   .live-tile {
     display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
     border-radius: 10px; overflow: hidden; cursor: pointer; min-width: 0;
@@ -1020,18 +1020,17 @@ async function loadLive() {
 function liveKey(r) { return `${r.session}|${r.tab}`; }
 
 function layoutLive(n) {
-  // The column count that makes the tiles largest, keeping the page's shape.
-  const box = $("#live"), gap = 12, bar = 50;
-  const W = box.clientWidth - 24, H = box.clientHeight - 24, a = S.live.aspect;
-  let best = { cols: 1, w: 0 };
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    const cellW = (W - gap * (cols - 1)) / cols;
-    const cellH = (H - gap * (rows - 1)) / rows - bar;
-    const w = Math.min(cellW, cellH * a);
-    if (w > best.w) best = { cols, w };
-  }
-  return { cols: best.cols, w: Math.max(120, Math.floor(best.w)), h: Math.max(75, Math.floor(best.w / a)) };
+  // Fixed shapes, the way people expect them: 1 full, 2 side by side, 3-4 as
+  // 2x2, 5-6 as 3x2, 7-9 as 3x3. Tiles are then sized to fit, keeping the
+  // page's own shape.
+  const cols = n <= 1 ? 1 : n === 2 ? 2 : Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  const box = $("#live"), gap = 12, bar = 50, top = 40;  // `top` leaves room for Connect
+  const W = box.clientWidth - 24, H = box.clientHeight - 24 - top, a = S.live.aspect;
+  const cellW = (W - gap * (cols - 1)) / cols;
+  const cellH = (H - gap * (rows - 1)) / rows - bar;
+  const w = Math.min(cellW, cellH * a);
+  return { cols, w: Math.max(120, Math.floor(w)), h: Math.max(75, Math.floor(w / a)) };
 }
 
 function drawLive() {
@@ -1699,12 +1698,14 @@ let pendingTool = null;
 // The reply as it is being written: one bubble, re-rendered as pieces arrive,
 // replaced by the finished message when it lands.
 function liveText(piece) {
-  let el = $("#live");
-  if (!el) { add(`<div class="msg assistant md" id="live"></div>`); el = $("#live"); el._text = ""; }
+  // Its own id: `#live` is the Agents grid, and sharing it once wrote the
+  // reply over the browser view and then deleted the grid with the bubble.
+  let el = $("#reply-live");
+  if (!el) { add(`<div class="msg assistant md" id="reply-live"></div>`); el = $("#reply-live"); el._text = ""; }
   el._text += piece; el.innerHTML = markdown(el._text);
   const m = $("#messages"); m.scrollTop = m.scrollHeight;
 }
-function endLive() { const el = $("#live"); if (el) el.remove(); }
+function endLive() { const el = $("#reply-live"); if (el) el.remove(); }
 function renderEvent(e) {
   if (e.type === "delta") return liveText(e.text);
   if (e.type !== "delta") endLive();
