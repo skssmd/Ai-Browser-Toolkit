@@ -41,7 +41,6 @@ Your site is probably not in this table. That is expected — see above; read
 | `google-forms-apps-script.md` | Building Google Forms at scale via script.google.com (Monaco injection, the OAuth gauntlet and the session it kills, FormApp limits, Sheets linking) |
 | `fojik-mlwbd.md` | Finding and downloading movies on fojik.site/MLWBD (WordPress search, verify gauntlet, boabd/R2) |
 | `kayoanime.md` | Finding and downloading anime on kayoanime.com (WordPress search, Google Group, private Drive folders, virus-scan dialog) |
-| `messenger.md` | Reading and replying on messenger.com, normal + E2EE threads, sending images/files through the hidden file input (contenteditable composer, multi-attachment) |
 | `webarena-benchmark.md` | Running the WebArena sweep harness on the VPS — the two workers, plan/run, the queued multisite pass, dashboard. Operator notes, **not** a site playbook |
 
 Docs and Sheets share the canvas problem but not the workaround: Docs is driven

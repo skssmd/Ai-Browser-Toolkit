@@ -28,7 +28,6 @@ from abt.schema import OP_NAMES
 LIFECYCLE = {
     "serve", "up", "shutdown", "browser", "autostart",   # run the thing
     "status", "health", "doctor", "logs", "ops", "guidelines", "mcp",  # look at it
-    "messenger",                                          # a site shortcut
     "command-list",                                       # every page action
     # sessions and profiles: where commands run, not what they do
     "session", "profile",

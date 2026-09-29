@@ -216,8 +216,8 @@ playbook, and the connection opens with instructions covering the rest.
 ## Site playbooks
 
 Some sites break the ordinary rules and have their own notes in
-[`guidelines/`](guidelines/README.md) — Google Docs, Google Sheets, Messenger
-and others. **Most sites have no playbook, and that is normal.** Finding nothing
+[`guidelines/`](guidelines/README.md) — Google Docs, Google Sheets and
+others. **Most sites have no playbook, and that is normal.** Finding nothing
 for your site means the rules above are enough, not that there is no guidance.
 
 ## Working on the toolkit itself

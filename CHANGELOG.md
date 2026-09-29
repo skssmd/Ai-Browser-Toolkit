@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Messenger removed from the product for now.** The `/messenger/*` routes,
+  the `abt messenger` commands and the messenger.com playbook are gone;
+  automating a Meta account this way is against Messenger's terms. The code is
+  kept, unused and unshipped, in `reference/messenger/`.
+- **A stopped server really stops.** A chat reply still running at shutdown
+  kept the old process alive for up to five minutes, still driving its browser
+  -- restarting it whenever the new server took the profile, which then lost
+  its own browser in turn. Replies are stopped at shutdown and the process exits.
 - **Steer a running chat.** A message sent while the app's AI is working joins
   at its next step; it takes it into account and keeps going, instead of
   stopping to reply. The model is also told to end its turn only when the task

@@ -113,23 +113,6 @@ def test_a_windows_handoff_names_the_lock(tmp_path):
     assert "holding the profile" in exc.value.message
 
 
-# --- messenger jobs are per session ------------------------------------------------
-
-
-def test_messenger_jobs_are_visible_only_to_their_session(client, registry):
-    registry.create("s", sealed=False)
-    made = client.post(
-        "/messenger/sendmessage/async",
-        json={"thread_url": "https://www.messenger.com/t/1", "message": "secret"},
-        headers={"X-ABT-Session": "s"},
-    ).json()
-    job = made["result"]["job_id"]
-    assert client.get("/messenger/jobs").json()["result"] == []
-    assert client.get(f"/messenger/jobs/{job}").status_code == 404
-    mine = client.get("/messenger/jobs", headers={"X-ABT-Session": "s"}).json()["result"]
-    assert [j["job_id"] for j in mine] == [job]
-
-
 # --- a reused name does not inherit logs --------------------------------------------
 
 
@@ -223,3 +206,14 @@ def test_a_removed_session_is_marked_closed(registry):
     held = registry.get("a")
     registry.remove("a")
     assert held.closed is True
+
+
+def test_messenger_is_not_exposed(client):
+    """Taken out for now (Meta's terms); its code is kept in reference/messenger."""
+    from typer.main import get_command
+
+    from abt import cli, guidelines
+
+    assert not [r.path for r in client.app.routes if getattr(r, "path", "").startswith("/messenger")]
+    assert "messenger" not in get_command(cli.app).commands
+    assert "messenger.com" not in guidelines.installed()

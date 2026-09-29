@@ -43,7 +43,6 @@ SHOT_OPS = frozenset(
         "tab_switch",
         "tab_close",
         "wait_for",
-        "messenger_send",
         # Not a state change -- but `screenshot` answers with the path of the
         # frame recorded for it, so there has to be one.
         "screenshot",

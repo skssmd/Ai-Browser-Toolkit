@@ -101,8 +101,8 @@ def test_names_cannot_escape_the_guidelines_directory(home, name):
 @pytest.mark.parametrize(
     "url,expected",
     [
-        ("https://www.messenger.com/t/123", "messenger.com"),
-        ("https://messenger.com", "messenger.com"),
+        ("https://www.example.com/t/123", "example.com"),
+        ("https://example.com", "example.com"),
         ("https://docs.google.com/spreadsheets/d/abc", "docs.google.com"),
         ("not a url", None),
         ("", None),
@@ -281,7 +281,7 @@ def index(monkeypatch):
     data = {
         "docs.google.com": {"version": 1, "files": ["docs.md", "sheets.md"]},
         "script.google.com": {"version": 2, "files": ["forms-apps-script.md"]},
-        "messenger.com": {"version": 1, "files": ["messenger.md"]},
+        "example.com": {"version": 1, "files": ["example.md"]},
     }
     monkeypatch.setattr(guidelines, "fetch_index", lambda **kw: data)
     return data

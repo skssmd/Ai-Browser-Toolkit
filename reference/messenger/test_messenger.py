@@ -296,3 +296,23 @@ def _await_job(client, job_id, timeout=60):
             return job
         time.sleep(0.2)
     raise AssertionError(f"job {job_id} never finished")
+
+
+# Moved from tests/test_session_hardening.py (uses its client and registry fixtures).
+# --- messenger jobs are per session ------------------------------------------------
+
+
+def test_messenger_jobs_are_visible_only_to_their_session(client, registry):
+    registry.create("s", sealed=False)
+    made = client.post(
+        "/messenger/sendmessage/async",
+        json={"thread_url": "https://www.messenger.com/t/1", "message": "secret"},
+        headers={"X-ABT-Session": "s"},
+    ).json()
+    job = made["result"]["job_id"]
+    assert client.get("/messenger/jobs").json()["result"] == []
+    assert client.get(f"/messenger/jobs/{job}").status_code == 404
+    mine = client.get("/messenger/jobs", headers={"X-ABT-Session": "s"}).json()["result"]
+    assert [j["job_id"] for j in mine] == [job]
+
+

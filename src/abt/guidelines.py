@@ -18,9 +18,9 @@ caller decides.
 
 ## One folder per domain, with a version
 
-    messenger.com/
+    docs.google.com/
         meta.json      {"version": 3, "files": [...]}
-        messenger.md
+        docs.md
 
 `index.json` at the source root maps every domain to its version and files,
 so the daily check for updates is one small fetch and an integer compare
@@ -108,7 +108,7 @@ def domain_of(url: str) -> str | None:
     """The domain a URL belongs to, as playbooks name it.
 
     `www.` is stripped because nobody writes a playbook per subdomain prefix,
-    and `www.messenger.com` and `messenger.com` are the same site.
+    and `www.example.com` and `example.com` are the same site.
     """
     try:
         host = urlparse(url).hostname
