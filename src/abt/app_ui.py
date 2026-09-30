@@ -587,7 +587,7 @@ APP_HTML = r"""<!doctype html>
 
 <dialog id="dlg-token">
   <h2>Connect to the toolkit</h2>
-  <p class="lead">Opened outside the desktop app, this page needs the server's access token once.
+  <p class="lead"><span id="tok-lead-where">Opened outside the desktop app, this page needs the server's access token once.</span>
     It is in <code id="tok-path">sessions/operator.token</code>.</p>
   <label class="field"><span>Access token</span><input type="password" id="tok-value" autocomplete="off"></label>
   <div class="actions"><span class="spacer"></span><button id="tok-save" class="primary">Connect</button></div>
@@ -640,14 +640,26 @@ function fail(e) { toast(e.hint && e.type === "url_blocked" ? e.message : (e.mes
 
 // --- tokens ---------------------------------------------------------------------
 
-function bridge() { return window.pywebview && window.pywebview.api; }
+// The desktop window's bridge -- only once its functions are there: on Linux,
+// `window.pywebview` can exist a while before its api is filled in.
+function bridge() {
+  const api = window.pywebview && window.pywebview.api;
+  return api && typeof api.operator_token === "function" ? api : null;
+}
+// Set by the desktop window, which always brings a bridge.
+const IN_DESKTOP = new URLSearchParams(location.search).has("desktop");
 
 async function waitForBridge() {
-  if (bridge()) return true;
+  // GTK and Qt attach the bridge seconds after the page loads; a plain
+  // browser never will, so it is not kept waiting.
+  const limit = IN_DESKTOP ? 20000 : 1500, started = Date.now();
   return new Promise(res => {
-    let done = false;
-    window.addEventListener("pywebviewready", () => { if (!done) { done = true; res(true); } });
-    setTimeout(() => { if (!done) { done = true; res(!!bridge()); } }, 1500);
+    const tick = () => {
+      if (bridge()) return res(true);
+      if (Date.now() - started > limit) return res(false);
+      setTimeout(tick, 100);
+    };
+    tick();
   });
 }
 
@@ -657,13 +669,22 @@ async function operatorToken() {
   try { S.op = sessionStorage.getItem("abt.op"); } catch (e) {}
   if (S.op) return S.op;
   try { const w = await (await fetch("/app/where")).json(); if (w.ok) $("#tok-path").textContent = w.result.sessions_dir + "/operator.token"; } catch (e) {}
+  if (IN_DESKTOP) $("#tok-lead-where").textContent = "The desktop app could not hand this page its access token.";
   return new Promise(res => {
-    $("#dlg-token").showModal();
-    $("#tok-save").onclick = () => {
-      S.op = $("#tok-value").value.trim();
+    const done = (token) => {
+      S.op = token;
       try { sessionStorage.setItem("abt.op", S.op); } catch (e) {}
-      $("#dlg-token").close(); res(S.op);
+      if ($("#dlg-token").open) $("#dlg-token").close();
+      res(S.op);
     };
+    // A bridge that turns up late still answers: no typing needed.
+    window.addEventListener("pywebviewready", async () => {
+      for (let i = 0; i < 50 && !bridge(); i++) await new Promise(r => setTimeout(r, 100));
+      const token = bridge() && await bridge().operator_token();
+      if (token && S.op !== token) done(token);
+    });
+    $("#dlg-token").showModal();
+    $("#tok-save").onclick = () => done($("#tok-value").value.trim());
   });
 }
 

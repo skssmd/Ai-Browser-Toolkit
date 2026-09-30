@@ -100,6 +100,11 @@ def open_window(base: str, width: int = 1440, height: int = 900) -> str:
         webbrowser.open(url)
         return "browser"
     api = Bridge(where) if where is not None else None
+    if api is not None:
+        # Tells the page its bridge is coming. On Linux, pywebview's GTK and Qt
+        # backends attach it seconds after the page loads; not knowing, the
+        # page gave up after 1.5s and asked for the token by hand.
+        url += "?desktop=1"
     webview.create_window(
         "AI Browser Toolkit", url, js_api=api, width=width, height=height, min_size=(900, 600)
     )

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The desktop app on Linux no longer asks for the access token.** pywebview's
+  GTK and Qt backends attach the app's bridge seconds after the page loads;
+  the page waited 1.5s, decided it was in an ordinary browser and asked for the
+  token by hand. The window now tells the page a bridge is coming, the page
+  waits for it, and a token dialog already open fills itself in when it lands.
+
 ## 0.7.4 — 2026-09-29
 
 - **Token usage in every chat.** Beside the model picker, the tokens the chat
