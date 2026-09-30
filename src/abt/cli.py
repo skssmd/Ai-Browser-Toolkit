@@ -1191,6 +1191,9 @@ def _load(raw: str) -> Any:
         except (OSError, ValueError):
             # Not a usable path -- treat it as JSON, which is the common case.
             pass
+    # PowerShell 5.1 puts a byte-order mark in front of what it pipes -- the
+    # very route the help recommends there -- and json rejects it outright.
+    text = text.lstrip("﻿")
 
     try:
         return json.loads(text)

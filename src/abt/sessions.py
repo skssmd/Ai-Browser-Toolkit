@@ -19,6 +19,7 @@ import json
 import os
 import secrets
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,12 @@ from .policy import validate_settings
 from .profiles import DEFAULT, ProfileRegistry, check_name
 from .recorder import SessionRecorder
 from .tabs import TabGate
+
+# A session's pages come back after a browser restart only if it ran a command
+# this recently: a crash mid-task, not a session picked up again an hour later.
+RESTORE_WITHIN_SECONDS = 600
+# How often an idle session's page list is brought in step with its tabs.
+PAGES_REFRESH_SECONDS = 5
 
 NO_SESSIONS = (
     "sessions need `abt serve` on the playwright engine; this server has "
@@ -275,8 +282,17 @@ class SessionRegistry:
             gate=TabGate(self.profiles.tabs(profile), name),
         )
         browser = self._make_browser(self.profiles.path(profile), attach)
-        # Read when the browser starts, so it reopens what was open last.
-        browser.pages_to_restore = lambda: record.pages
+        # Read when the browser starts: what was open last -- but only for a
+        # session in the middle of its work. Reopening an idle session's old
+        # pages brought back tabs the person had long finished with.
+        def pages_to_restore():
+            live = self._live.get(name)
+            at = (live.activity or {}).get("at") if live is not None else None
+            if not at or time.time() - at > RESTORE_WITHIN_SECONDS:
+                return None
+            return record.pages
+
+        browser.pages_to_restore = pages_to_restore
         if self.files_root is not None:
             # Per profile, like the logins: every chat and agent on a profile
             # shares one uploads and one downloads folder, so a file is where
@@ -468,6 +484,11 @@ class SessionRegistry:
                 except Exception:
                     pass
 
+        def pages_loop() -> None:
+            while not self._stop_reaper.wait(PAGES_REFRESH_SECONDS):
+                self.refresh_pages()
+
+        threading.Thread(target=pages_loop, name="abt-pages", daemon=True).start()
         thread = threading.Thread(target=loop, name="abt-reaper", daemon=True)
         thread.start()
         return thread
@@ -488,14 +509,38 @@ class SessionRegistry:
     def remember_pages(self, session: Session) -> None:
         """Note the session's open pages, so a restart can reopen them.
 
-        Saved only when they changed, and never as nothing: a browser that has
-        just died lists no pages, and that must not erase the last good list.
+        Saved only when they changed. A browser that has just died lists no
+        pages -- `page_snapshot` answers None then -- and that must not erase
+        the last good list. With the browser alive, though, the list is what is
+        really open, empty included: a tab the person closed by hand stays
+        closed, where it used to come back at the next restart.
         """
         snapshot = session.browser.page_snapshot()
-        if not snapshot or not snapshot["urls"] or snapshot == session.record.pages:
+        if snapshot is None or snapshot == session.record.pages:
+            return
+        if not snapshot["urls"] and not session.record.pages:
             return
         session.record.pages = snapshot
         self.store.save(session.record)
+
+    def refresh_pages(self) -> None:
+        """Keep idle sessions' page lists in step with their tabs.
+
+        After a command is not enough: a tab closed by hand between commands
+        was still on the list when the browser next restarted. A session mid
+        command is skipped -- it records its pages when the command ends.
+        """
+        with self._lock:
+            sessions = [s for s in self._live.values() if s.browser.is_running]
+        for session in sessions:
+            if not session.lock.acquire(blocking=False):
+                continue
+            try:
+                self.remember_pages(session)
+            except Exception:
+                pass
+            finally:
+                session.lock.release()
 
     def close_all(self) -> None:
         self._stop_reaper.set()

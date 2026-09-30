@@ -37,6 +37,7 @@ runs inline if so, which makes nesting safe rather than forbidden.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import signal
@@ -653,6 +654,36 @@ class PlaywrightDriver:
         # `take_file_chooser`.
         self._file_chooser = False
         self._call(self._boot, config)
+        threading.Thread(target=self._pump, daemon=True, name="abt-pw-pump").start()
+
+    # -- keeping an idle connection reading --------------------------------
+    # Playwright's sync API reads a connection's messages only while a call is
+    # running. A connection gets the events of the pages it watches whether its
+    # session is working or not, and an idle one stopped reading them: its
+    # backlog filled, and the connection could no longer answer Chrome. Every
+    # connection to a shared Chrome must let a new tab go before it starts, so
+    # one idle session froze every other session's new tabs -- `goto` timed
+    # out, then the watchdog ended the connection. Seen live: an agent's tab
+    # hung twice while the `default` session sat idle on the same Chrome.
+    PUMP_INTERVAL = 0.1
+
+    def _pump(self) -> None:
+        pending = None
+        while not (self._closed or self._hung):
+            time.sleep(self.PUMP_INTERVAL)
+            if pending is not None and not pending.done():
+                continue  # a real call is running, and reads as it goes
+            try:
+                pending = self._pool.submit(self._run, self._drain)
+            except RuntimeError:  # the pool is shut down: the connection is over
+                return
+
+    def _drain(self) -> None:
+        """Let Playwright read and dispatch whatever has arrived. Asks nothing of Chrome."""
+        try:
+            self._pw._sync(asyncio.sleep(0.01))
+        except Exception:
+            pass
 
     # -- thread affinity ---------------------------------------------------
     # No single call to the browser takes this long: waits poll in short calls,

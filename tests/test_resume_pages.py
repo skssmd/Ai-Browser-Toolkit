@@ -99,7 +99,7 @@ def test_nothing_to_restore_is_a_no_op(tmp_path, monkeypatch):
     browser._restore_pages()
 
 
-def test_the_registry_keeps_the_last_good_list_when_the_browser_has_died(tmp_path):
+def registry_with_session(tmp_path):
     from abt.profiles import ProfileRegistry
     from abt.sessions import SessionRegistry, SessionStore
 
@@ -108,11 +108,37 @@ def test_the_registry_keeps_the_last_good_list_when_the_browser_has_died(tmp_pat
         lambda d, a: BrowserSession(profile=d, headless=True, attach=a),
     )
     registry.create("s")
-    sess = registry.get("s")
-    snaps = iter([{"urls": ["https://a.example/"], "active": 0}, {"urls": [], "active": 0}, None])
+    return registry, registry.get("s")
+
+
+def test_a_dead_browser_keeps_the_list_but_tabs_closed_by_hand_are_forgotten(tmp_path):
+    """A browser that died lists nothing (snapshot None): keep the last good
+    list. A live one listing nothing means the person closed the tabs: those
+    stay closed -- they used to come back at the next restart."""
+    from abt.sessions import SessionStore
+
+    registry, sess = registry_with_session(tmp_path)
+    one = {"urls": ["https://a.example/"], "active": 0}
+    snaps = iter([one, None, {"urls": [], "active": 0}])
     sess.browser.page_snapshot = lambda: next(snaps)
-    for _ in range(3):
-        registry.remember_pages(sess)
-    assert sess.record.pages == {"urls": ["https://a.example/"], "active": 0}
-    reloaded = SessionStore(tmp_path / "sessions").load()["s"]
-    assert reloaded.pages == {"urls": ["https://a.example/"], "active": 0}
+    registry.remember_pages(sess)
+    registry.remember_pages(sess)  # died
+    assert sess.record.pages == one
+    registry.remember_pages(sess)  # alive, every tab closed by hand
+    assert sess.record.pages == {"urls": [], "active": 0}
+    assert SessionStore(tmp_path / "sessions").load()["s"].pages == {"urls": [], "active": 0}
+
+
+def test_pages_come_back_only_for_a_session_in_the_middle_of_its_work(tmp_path):
+    import time
+
+    from abt import sessions
+
+    registry, sess = registry_with_session(tmp_path)
+    sess.record.pages = {"urls": ["https://a.example/"], "active": 0}
+    restore = sess.browser.pages_to_restore
+    assert restore() is None  # never used since the server started: start clean
+    sess.activity = {"at": time.time() - sessions.RESTORE_WITHIN_SECONDS - 60}
+    assert restore() is None  # idle an hour: start clean
+    sess.activity = {"at": time.time() - 30}
+    assert restore() == {"urls": ["https://a.example/"], "active": 0}  # a crash mid-task

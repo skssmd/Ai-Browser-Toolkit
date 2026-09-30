@@ -155,3 +155,25 @@ def test_idle_profiles_are_stopped_and_can_start_again(env):
     assert "p2" in registry.reap_idle()
     assert send(client, "s2", {"op": "status"})["result"]["running"] is False
     start(client, "s2")
+
+
+def test_an_idle_session_does_not_freeze_the_others_new_tabs(env, base_url):
+    """Seen live: an agent's new tab froze -- `goto` timed out, then the 60s
+    watchdog ended its connection -- while another session on the same Chrome
+    sat idle. Playwright's sync API reads a connection's messages only during
+    a call; an idle one stopped reading, its backlog filled, and it could no
+    longer let Chrome start the new tab, which every connection must."""
+    _, client = env
+    start(client, "s1", "s3")
+    # s1's page makes requests non-stop -- each an event for s1's connection.
+    # They fail at once against a closed port, so no server is loaded by them.
+    busy = "setInterval(() => fetch('http://127.0.0.1:9/x').catch(() => 0), 5); 1"
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})["ok"] is True
+    assert send(client, "s1", {"op": "run_js", "script": busy})["ok"] is True
+    time.sleep(5)  # s1 idle while its events pile up
+    started = time.monotonic()
+    opened = send(client, "s3", {"op": "tab_new"})
+    assert opened["ok"] is True, opened
+    loaded = send(client, "s3", {"op": "goto", "url": f"{base_url}/cards.html"})
+    assert loaded["ok"] is True, loaded
+    assert time.monotonic() - started < 15

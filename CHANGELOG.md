@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **An idle session no longer freezes the others' new tabs.** Playwright's
+  sync API reads a connection's messages only while a command runs, so a
+  session sitting idle on a shared Chrome stopped reading the events its tabs
+  kept sending. Every connection must let a new tab go before it starts, so
+  one idle session froze every other session's new tabs: `goto` timed out,
+  then the watchdog ended the connection and the agent reported a crash. Each
+  connection now reads its messages in the background while idle; the
+  failure is reproduced in a test that fails without it.
+- **Pages come back only for work in progress.** After a browser restart a
+  session reopens its pages only if it ran a command in the last 10 minutes
+  -- a crash mid-task. An idle session starts clean instead of bringing back
+  tabs you had finished with. And a tab closed by hand is forgotten: the page
+  list now follows the tabs while the browser is up, every 5 seconds and not
+  only after a command, so a closed tab no longer returns at the next restart.
+- **Piping JSON from PowerShell works.** `'...' | abt command-list -` failed
+  with "invalid JSON" because PowerShell 5.1 prefixes piped text with a
+  byte-order mark.
+
 ## 0.7.5 — 2026-09-30
 
 - **The app is in your apps.** Only the Windows installer used to add one;

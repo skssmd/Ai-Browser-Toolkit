@@ -57,3 +57,17 @@ def test_the_window_tells_the_page_its_bridge_is_coming(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop, "sessions_dir", lambda base: None)
     desktop.open_window("http://127.0.0.1:1")
     assert opened["url"] == "http://127.0.0.1:1/app" and opened["api"] is None
+
+
+def test_json_piped_from_powershell_is_read_despite_its_byte_order_mark(monkeypatch, tmp_path):
+    """PowerShell 5.1 prefixes what it pipes with a BOM; `abt command-list -`
+    answered "invalid JSON" to the exact usage its own help recommends."""
+    import io
+
+    from abt import cli
+
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO('﻿{"op": "status"}'))
+    assert cli._load("-") == {"op": "status"}
+    saved = tmp_path / "ops.json"
+    saved.write_text('﻿[{"op": "status"}]', encoding="utf-8")
+    assert cli._load(str(saved)) == [{"op": "status"}]
