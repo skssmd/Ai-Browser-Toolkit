@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.6 — 2026-09-30
 
 - **An idle session no longer freezes the others' new tabs.** Playwright's
   sync API reads a connection's messages only while a command runs, so a
