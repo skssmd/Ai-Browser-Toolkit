@@ -22,6 +22,11 @@ contents:
   - src: /opt/aibrowsertoolkit/bin/abt
     dst: /usr/bin/abt
     type: symlink
+  # The desktop app in the app menu: clicked, not typed.
+  - src: ./payload/assets/aibrowsertoolkit.desktop
+    dst: /usr/share/applications/aibrowsertoolkit.desktop
+  - src: ./payload/assets/logo-white-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/aibrowsertoolkit.png
 
 scripts:
   postinstall: ./packaging/postinstall.sh

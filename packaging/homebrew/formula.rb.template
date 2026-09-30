@@ -28,6 +28,9 @@ class Aibrowsertoolkit < Formula
       It drives an existing Google Chrome or Microsoft Edge and bundles
       neither. `abt doctor --install-browser` will fetch Chrome via Homebrew.
 
+      To put the desktop app in ~/Applications (Launchpad, Spotlight, the Dock):
+        abt shortcut
+
       To start the server at logon:
         abt autostart install --browser chrome
 

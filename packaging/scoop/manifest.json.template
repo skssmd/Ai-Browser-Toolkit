@@ -11,6 +11,9 @@
         }
     },
     "bin": "abt.cmd",
+    "shortcuts": [
+        ["python\\pythonw.exe", "AI Browser Toolkit", "-m abt app", "assets\\logo-white.ico"]
+    ],
     "notes": [
         "Check what this needs: abt doctor",
         "It drives an existing Chrome or Edge and bundles neither.",

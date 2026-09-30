@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The app is in your apps.** Only the Windows installer used to add one;
+  every other install had just the `abt` command. The Linux packages (`.deb`,
+  `.rpm`, `.apk`, AUR) now add *AI Browser Toolkit* to the app menu with its
+  icon, Scoop to the Start menu, and a pip or Homebrew install adds it the
+  first time `abt app` runs -- or with `abt shortcut` (`--remove` takes it
+  away): a `.desktop` entry on Linux, an `.app` in ~/Applications on macOS, a
+  Start-menu shortcut on Windows.
+
 - **`abt update`.** Moves a pip install or the Windows installer's copy to the
   newest release in place, from the release's wheel: only the toolkit's own
   package is replaced -- seconds, not a reinstall -- after checking it against

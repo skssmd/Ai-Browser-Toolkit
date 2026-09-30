@@ -109,8 +109,12 @@ Scoop and the system packages are told to use their own package manager, so
 it keeps knowing what is installed.
 
 **The desktop app** — a window with the browser and a chat side by side, for
-driving it yourself with a model of your choice. The Windows installer sets it
-up; anywhere else:
+driving it yourself with a model of your choice. It opens from your apps like
+any other: the Windows installer and Scoop add it to the Start menu, and the
+Linux packages (`.deb`, `.rpm`, `.apk`, AUR) to the app menu. A pip or Homebrew
+install adds it the first time you run `abt app` — or now, with `abt shortcut`
+(an app-menu entry on Linux, an `.app` in `~/Applications` on macOS).
+Anywhere else:
 
 ```bash
 pip install "ai-browser-toolkit[app]"   # adds the window; without it the app opens in a browser tab

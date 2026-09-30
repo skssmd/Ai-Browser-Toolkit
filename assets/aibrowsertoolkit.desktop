@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=AI Browser Toolkit
+Comment=Watch and drive AI agents in a real browser
+Exec=/usr/bin/abt app
+Icon=aibrowsertoolkit
+Terminal=false
+Categories=Network;Development;
+StartupWMClass=AI Browser Toolkit

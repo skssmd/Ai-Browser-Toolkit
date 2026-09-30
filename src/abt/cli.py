@@ -840,8 +840,10 @@ def app_window(
     real window (`pip install "ai-browser-toolkit[app]"`); without it the app
     opens in your default browser instead.
     """
-    from . import desktop
+    from . import desktop, shortcut
 
+    # A pip or Homebrew install has no app to click until this adds one.
+    shortcut.ensure(echo=typer.echo)
     base = f"http://{HOST}:{port}"
     if not _healthy(base):
         typer.echo(f"[abt] starting the server on {HOST}:{port}")
@@ -1012,6 +1014,28 @@ def mcp(
 def shutdown(port: int = _port_option()) -> None:
     """Close the browser and stop the server."""
     _call(port, "/command-list", {"op": "shutdown"})
+
+
+@app.command("shortcut")
+def shortcut_cmd(
+    remove: bool = typer.Option(False, "--remove", help="Take the app back out of your apps."),
+) -> None:
+    """Put the desktop app in your apps: the app menu, Start menu or ~/Applications.
+
+    For this user, opening this copy's `abt app`. The Windows installer, Scoop
+    and the Linux packages add one themselves; `abt app` adds it on first run.
+    """
+    from . import shortcut
+
+    if remove:
+        gone = shortcut.remove()
+        typer.echo(f"removed {gone}" if gone else "there was no shortcut to remove")
+        return
+    try:
+        typer.echo(f"added {shortcut.NAME}: {shortcut.install()}")
+    except OSError as exc:
+        typer.secho(f"could not add the shortcut: {exc}", fg="red", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()

@@ -29,4 +29,7 @@ package() {
     install -dm755 "${pkgdir}/usr/bin"
     ln -s /opt/aibrowsertoolkit/bin/abt "${pkgdir}/usr/bin/abt"
     install -Dm644 "${src}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    # The desktop app in the app menu: clicked, not typed.
+    install -Dm644 "${src}/assets/aibrowsertoolkit.desktop" "${pkgdir}/usr/share/applications/aibrowsertoolkit.desktop"
+    install -Dm644 "${src}/assets/logo-white-256.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/aibrowsertoolkit.png"
 }

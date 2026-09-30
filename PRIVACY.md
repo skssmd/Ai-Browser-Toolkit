@@ -484,6 +484,7 @@ directory — which is why uninstalling does not take them with it.
 | `server.log` | next to the source checkout | The launcher's stdout, including the resolved profile path, log directory and listening address. |
 | An `abt` entry in an agent's MCP settings | `~/.claude.json` (via `claude mcp`), `~/.codex/config.toml`, `~/.cursor/mcp.json`, VS Code's `mcp.json`, `~/.gemini/settings.json`, `~/.config/opencode/opencode.json`, `~/.codeium/windsurf/mcp_config.json` | Only when you press *Connect* in the app for that agent. One entry, named `abt`, that runs ABT's MCP bridge on the profile you picked -- each agent it runs then names its own session, which is kept like any other; nothing else in the file changes, and the file is first copied to `<file>.abt-backup`. *Disconnect* removes the entry. |
 | `.first-run-shown` | state root | An empty marker file. |
+| A launcher for the desktop app | `~/.local/share/applications/aibrowsertoolkit.desktop` (Linux), `~/Applications/AI Browser Toolkit.app` (macOS), the Start menu (Windows) | Added for a pip or Homebrew install the first time `abt app` runs, or by `abt shortcut`. It only opens the app; it holds nothing about you. The installer, Scoop and the Linux packages add their own instead. |
 | A logon task or launch agent | Task Scheduler / launchd / systemd user unit | Only if you opt in with `abt autostart install` or tick the installer task. It starts the server at logon, so a browser that an agent can drive opens every time you sign in. |
 
 ### Helper agents
@@ -590,6 +591,7 @@ Deletion is manual, and the paths are:
 | Logins, cookies, history, site storage | Sign out inside the browser window and use Chrome's own "Clear browsing data" on that profile, or delete the profile directory. `abt doctor` prints the path. There is no ABT command for this. |
 | Playbooks, config, first-run marker | Delete the data root (and the state root on Linux, where they differ). Local notes go with it; a submitted playbook is a separate Git history. |
 | Logon task / launch agent | `abt autostart uninstall`. |
+| The app's launcher | `abt shortcut --remove`. |
 | ABT itself | The WinGet/Inno uninstaller removes the program files and the logon task. **It does not remove the data root** — `%LOCALAPPDATA%\AIBrowserToolkit` (or the `~/Library/…`, `~/.local/…` equivalent) holding the profile, the logs, the config and the playbooks stays on disk. Delete it yourself. |
 
 A browser profile deleted while the browser is running may be recreated. Stop
