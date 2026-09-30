@@ -101,6 +101,13 @@ abt doctor          # what browsers are installed, and where
 ./start-server.sh   # start-server.bat on Windows -- the safe way to bring it up
 ```
 
+**Updating** — `abt update` moves a pip install or the Windows installer's copy
+to the newest release in place: it replaces only the toolkit's own package
+(checked against the release's checksums), not Python or the dependencies, so
+it takes seconds. `abt update --check` only says whether one is out. Homebrew,
+Scoop and the system packages are told to use their own package manager, so
+it keeps knowing what is installed.
+
 **The desktop app** — a window with the browser and a chat side by side, for
 driving it yourself with a model of your choice. The Windows installer sets it
 up; anywhere else:

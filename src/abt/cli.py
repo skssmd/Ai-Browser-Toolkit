@@ -1014,6 +1014,27 @@ def shutdown(port: int = _port_option()) -> None:
     _call(port, "/command-list", {"op": "shutdown"})
 
 
+@app.command()
+def update(
+    check: bool = typer.Option(False, "--check", help="Only say whether a newer release is out."),
+    force: bool = typer.Option(False, "--force", help="Reinstall the newest release even if this is it."),
+) -> None:
+    """Update abt to the newest release, in place.
+
+    Replaces only the toolkit's own package from the release's wheel (checked
+    against its checksums), so it is quick and works for a pip install and for
+    the installer's bundle alike. Homebrew, Scoop and system-package installs are told to
+    use their package manager; a source checkout, git.
+    """
+    from . import updater
+
+    try:
+        updater.update(check_only=check, force=force, echo=typer.echo)
+    except updater.UpdateError as exc:
+        typer.secho(f"update failed: {exc}", fg="red", err=True)
+        raise typer.Exit(1)
+
+
 def _trace_line(row: dict) -> str:
     when = time.strftime("%H:%M:%S", time.localtime(row.get("started", 0)))
     ms = row.get("ms")

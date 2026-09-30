@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`abt update`.** Moves a pip install or the Windows installer's copy to the
+  newest release in place, from the release's wheel: only the toolkit's own
+  package is replaced -- seconds, not a reinstall -- after checking it against
+  the release's `checksums.txt`. A release that needs a dependency this install
+  lacks goes through pip, or, in a bundle without pip, stops and says to
+  reinstall. `--check` only reports. Homebrew, Scoop and system-package
+  installs are pointed at their manager; a source checkout at `git pull`.
+- **winget, once a day.** Not submitted per release any more: every winget PR
+  waits on a human reviewer, and one a release piled up. A daily workflow
+  submits the newest release only when winget does not have it and none of our
+  PRs is still open.
+
 - **The desktop app on Linux no longer asks for the access token.** pywebview's
   GTK and Qt backends attach the app's bridge seconds after the page loads;
   the page waited 1.5s, decided it was in an ordinary browser and asked for the

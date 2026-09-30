@@ -1,0 +1,78 @@
+name: winget
+
+# Once a day, not once per release. Every winget PR waits on a human reviewer
+# at microsoft/winget-pkgs, and a release a day opened a PR a day -- most of
+# them for versions already outdated by the time anyone looked. This submits
+# only the newest release, and only when nothing of ours is still waiting.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Submit even if a PR for this package is still open"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget
+  cancel-in-progress: false
+
+env:
+  IDENTIFIER: skssmd.AIBrowserToolkit
+  # microsoft/winget-pkgs keeps manifests at manifests/<first letter>/<publisher>/<name>.
+  MANIFEST_DIR: manifests/s/skssmd/AIBrowserToolkit
+
+jobs:
+  submit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -eu
+          # The newest non-draft, non-prerelease release: -rc tags never go
+          # to winget.
+          tag=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          version="${tag#v}"
+          echo "latest release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if gh api "repos/microsoft/winget-pkgs/contents/$MANIFEST_DIR/$version" --silent 2>/dev/null; then
+            echo "winget already has $version: nothing to do."
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          open=$(gh api -X GET search/issues \
+            -f q="repo:microsoft/winget-pkgs is:pr is:open in:title $IDENTIFIER" \
+            --jq '[.items[] | {n: .number, t: .title}]')
+          echo "open PRs for $IDENTIFIER: $open"
+          if [ "$open" != "[]" ] && [ "$FORCE" != "true" ]; then
+            echo "A PR is still waiting for review; not opening another."
+            echo "The next run after it merges submits $version, or whatever is newest then."
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "submit=true" >> "$GITHUB_OUTPUT"
+
+      # Reads the release and derives the three manifests from the installer
+      # asset. WINGET_TOKEN must be a *classic* PAT with public_repo -- this
+      # action does not work with fine-grained tokens.
+      - if: steps.decide.outputs.submit == 'true'
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: skssmd.AIBrowserToolkit
+          version: ${{ steps.decide.outputs.version }}
+          release-tag: ${{ steps.decide.outputs.tag }}
+          installers-regex: '-setup\.exe$'
+          fork-user: The-Graft-Project
+          token: ${{ secrets.WINGET_TOKEN }}

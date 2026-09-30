@@ -40,6 +40,15 @@ pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 release = yaml.safe_load(
     (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 )
+winget_flow = yaml.safe_load(
+    (ROOT / ".github" / "workflows" / "winget.yml").read_text(encoding="utf-8")
+)
+
+
+def winget_step():
+    return next(
+        s for s in winget_flow["jobs"]["submit"]["steps"] if "winget-releaser" in str(s)
+    )
 
 
 def read(*parts: str) -> str:
@@ -89,16 +98,14 @@ def test_the_workflow_builds_the_paths_bundle_py_produces():
 
 
 def test_the_installer_filename_matches_what_winget_looks_for():
-    """abt.iss decides the installer's name; the winget job finds it with a
+    """abt.iss decides the installer's name; the daily winget workflow finds it with a
     regex. A rename on either side means winget silently matches nothing."""
     iss = read("packaging", "windows", "abt.iss")
     base = re.search(r"OutputBaseFilename=(\S+)", iss).group(1)
     produced = base.replace("{#AppVersion}", VERSION)
     assert produced == f"aibrowsertoolkit-{VERSION}-windows-x86_64-setup"
 
-    winget = next(
-        s for s in release["jobs"]["winget"]["steps"] if "winget-releaser" in str(s)
-    )
+    winget = winget_step()
     pattern = winget["with"]["installers-regex"]
     assert re.search(pattern, produced + ".exe")
 
@@ -141,16 +148,23 @@ def test_the_winget_identifier_is_the_one_that_was_submitted():
     """winget-releaser only updates an identifier that already exists
     upstream. If this changes, every future release silently updates nothing
     -- or fails with 'does not exist in the winget-pkgs repository'."""
-    winget = next(
-        s for s in release["jobs"]["winget"]["steps"] if "winget-releaser" in str(s)
-    )
+    winget = winget_step()
     assert winget["with"]["identifier"] == "skssmd.AIBrowserToolkit"
 
 
 def test_the_winget_fork_is_the_org_not_the_redirect():
     """skssmd/winget-pkgs redirects to The-Graft-Project/winget-pkgs after the
     fork was transferred, and the action does not follow redirects."""
-    winget = next(
-        s for s in release["jobs"]["winget"]["steps"] if "winget-releaser" in str(s)
-    )
+    winget = winget_step()
     assert winget["with"]["fork-user"] == "The-Graft-Project"
+
+
+def test_winget_is_submitted_daily_not_per_release():
+    """Every winget PR waits on a human; one per release piled up. The daily
+    run submits only the newest release, and none while one is still open."""
+    assert "winget" not in release["jobs"]
+    triggers = winget_flow.get("on") or winget_flow.get(True)
+    assert triggers["schedule"] and "workflow_dispatch" in triggers
+    decide = next(s for s in winget_flow["jobs"]["submit"]["steps"] if s.get("id") == "decide")
+    assert "is:pr is:open" in decide["run"] and "releases/latest" in decide["run"]
+    assert winget_step()["if"] == "steps.decide.outputs.submit == 'true'"

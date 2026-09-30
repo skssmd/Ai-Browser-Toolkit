@@ -253,32 +253,9 @@ jobs:
   # re-run of a single job rather than of the release.
   # ---------------------------------------------------------------------
 
-  winget:
-    needs: [wheel, release]
-    # Release candidates are excluded: the winget community repository does
-    # not want them.
-    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc')
-    runs-on: ubuntu-24.04
-    # winget-releaser only *updates* an identifier that already exists in
-    # microsoft/winget-pkgs; it cannot create one. Until the first version is
-    # submitted by hand with `wingetcreate new`, this fails with "Package
-    # skssmd.AIBrowserToolkit does not exist in the winget-pkgs repository".
-    #
-    # Non-fatal so one manual prerequisite does not colour every release red.
-    # REMOVE THIS LINE once the package exists upstream -- leaving it there
-    # would hide a genuine winget failure later.
-    continue-on-error: true
-    steps:
-      # Reads the finished release and derives the three manifests from the
-      # installer asset. WINGET_TOKEN must be a *classic* PAT with
-      # public_repo -- this action does not work with fine-grained tokens.
-      - uses: vedantmgoyal9/winget-releaser@main
-        with:
-          identifier: skssmd.AIBrowserToolkit
-          version: ${{ needs.wheel.outputs.version }}
-          installers-regex: '-setup\.exe$'
-          fork-user: The-Graft-Project
-          token: ${{ secrets.WINGET_TOKEN }}
+  # winget is not submitted from here: every PR there waits on a human
+  # reviewer, and one per release piled up. winget.yml submits the newest
+  # release once a day, and only when none of ours is still open.
 
   scoop:
     needs: [wheel, release]

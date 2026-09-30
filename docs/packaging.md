@@ -53,7 +53,7 @@ none of your logins.
 
 The tap and the Scoop bucket live under `skssmd`. The winget fork does not:
 `skssmd/winget-pkgs` redirects to **`The-Graft-Project/winget-pkgs`**, because
-the fork was transferred to that org. `fork-user` in the winget job names the
+the fork was transferred to that org. `fork-user` in the winget workflow names the
 org for that reason -- a redirect is not something the action follows.
 
 The pushes rebase and retry, and they push *before* pulling. `git pull
@@ -65,10 +65,15 @@ first release could never land.
 package that already exists in `microsoft/winget-pkgs`; on a brand-new
 identifier it fails with "Package skssmd.AIBrowserToolkit does not exist in
 the winget-pkgs repository". Version 0.1.2 was submitted by hand with
-`wingetcreate new`; every release after that is automatic. Once it merges,
-remove `continue-on-error: true` from the winget job -- it is there only to
-stop that one manual prerequisite colouring every release red, and leaving it
-would hide a genuine winget failure later.
+`wingetcreate new`; the updates after that are automatic.
+
+**winget is submitted once a day, not per release** (`.github/workflows/winget.yml`).
+Every PR to `microsoft/winget-pkgs` waits on a human reviewer, and releasing
+several times a day opened a PR each time, most of them outdated before anyone
+looked. The daily run takes the newest stable release and submits it only when
+winget does not already have that version *and* none of our PRs for the
+package is still open. Run it by hand from the Actions tab; its `force` input
+submits even with a PR open.
 
 ## The name is different on every channel
 
