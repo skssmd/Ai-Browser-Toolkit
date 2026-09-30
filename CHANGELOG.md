@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.5 — 2026-09-30
 
 - **The app is in your apps.** Only the Windows installer used to add one;
   every other install had just the `abt` command. The Linux packages (`.deb`,
