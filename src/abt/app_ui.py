@@ -448,7 +448,7 @@ APP_HTML = r"""<!doctype html>
         <button class="icon ghost" id="files-btn" title="Files: what the AI may upload, and what was downloaded">📁</button>
         <div class="menu files-menu" id="files-menu" hidden></div>
       </span>
-      <button class="icon ghost" id="restart" title="Restart this browser. It starts and recovers on its own; use this if a page is stuck.">⏻</button>
+      <button class="icon ghost" id="restart" title="Reconnect to this browser. It connects and recovers on its own; use this if a page looks stuck.">⏻</button>
       <span class="sep" aria-hidden="true"></span>
       <button class="icon ghost" id="theme" title="Theme: follows your system. Click to switch."></button>
       <button class="icon ghost" id="dock" title="Move the chat to the other side">⇆</button>
@@ -899,7 +899,7 @@ async function refreshBrowser() {
     // No tab at all: either the session let its last one go, or the browser
     // died. Ask the session, which knows the difference.
     try { await run({ op: "tab_list" }); }
-    catch (e) { if (e.type === "browser_dead") return ensureBrowser("browser_restart"); }
+    catch (e) { if (e.type === "browser_dead") return ensureBrowser("browser_start"); }
   }
   if (S.follow) {
     // The agent just opened or switched a tab: show that one.
@@ -948,7 +948,7 @@ async function ensureBrowser(op) {
     return;
   }
   S.starting = true; S.lastStart[session] = Date.now();
-  viewMessage(op === "browser_restart" ? "Restarting the browser…" : "Starting the browser…");
+  viewMessage("Connecting to the browser…");
   try { await run({ op }); }
   catch (e) {
     if (/holding the profile/.test(e.message || "")) { S.starting = false; return offerForceClose(session, op); }
@@ -980,7 +980,7 @@ function viewMessage(text, action, onAction) {
   if (action) box.querySelector("button").onclick = onAction;
 }
 
-$("#restart").onclick = () => { S.lastStart[S.session] = 0; ensureBrowser("browser_restart"); };
+$("#restart").onclick = () => { S.lastStart[S.session] = 0; ensureBrowser("browser_start"); };
 async function nav(cmd) { try { await run(cmd); await refreshBrowser(); } catch (e) { fail(e); } }
 $("#back").onclick = () => nav({ op: "back", diff: false });
 $("#fwd").onclick = () => nav({ op: "forward", diff: false });
@@ -1011,7 +1011,7 @@ const LIVE_WORDS = {
   scroll: "Scrolling", wait_for: "Waiting for the page", back: "Going back", forward: "Going forward",
   reload: "Reloading", tab_new: "Opening a tab", tab_switch: "Switching tab", tab_close: "Closing a tab",
   screenshot: "Taking a screenshot", run_js: "Running a script", hover: "Hovering", save_file: "Saving a document",
-  files: "Checking files", browser_start: "Starting the browser", browser_restart: "Restarting the browser",
+  files: "Checking files", browser_start: "Connecting to the browser", browser_restart: "Restarting the browser",
   status: "Checking the browser", tab_list: "Checking tabs",
 };
 
@@ -1218,7 +1218,7 @@ async function openScreen(tab) {
     } else if (m.ok === false) {
       const err = m.error || {};
       viewMessage(err.message || "This tab cannot be shown");
-      if (err.type === "browser_dead") ensureBrowser("browser_restart");
+      if (err.type === "browser_dead") ensureBrowser("browser_start");
     }
   };
   ws.onclose = () => { if (S.screenSock === ws) { S.screenSock = null; setTimeout(() => S.running && refreshBrowser(), 1500); } };
@@ -1668,7 +1668,7 @@ function describe(name, args) {
   if (name === "read_report") return `Read ${args.worker || "a helper"}'s report`;
   if (name === "stop_worker") return `Stopped ${args.worker || "a helper"}`;
   if (name === "browser_guidelines") return args.domain ? `Checked site notes for ${args.domain}` : "Read the toolkit's notes";
-  if (name === "browser_session") return ({ start: "Started the browser", stop: "Stopped the browser", restart: "Restarted the browser", status: "Checked the browser" })[args.action] || "Checked the browser";
+  if (name === "browser_session") return ({ start: "Connected to the browser", stop: "Stopped the browser", restart: "Restarted the browser", status: "Checked the browser" })[args.action] || "Checked the browser";
   const cmds = (args.commands || []);
   const said = cmds.map(c => {
     const what = c.text || c.value || c.css || c.level || c.ref || "";
@@ -1696,7 +1696,7 @@ function describe(name, args) {
       case "files": return "Checked the profile's files";
       case "diff": return "Checked what changed";
       case "tab_claim": return "Took over a tab"; case "tab_release": return "Let go of a tab";
-      case "browser_start": return "Started the browser"; case "browser_restart": return "Restarted the browser";
+      case "browser_start": return "Connected to the browser"; case "browser_restart": return "Restarted the browser";
       case "browser_stop": return "Stopped the browser";
       default: return (c.op || "worked on the page").replace(/_/g, " ");
     }

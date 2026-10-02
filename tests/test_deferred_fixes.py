@@ -98,7 +98,7 @@ def test_a_fault_in_the_toolkit_is_not_a_dead_browser(capsys):
     for exc in (KeyError("missing"), AttributeError("nope"), ValueError("bad"), TypeError("x")):
         error = _unmapped(exc)
         assert error.type == "internal_error"
-        assert "restart" in error.hint.lower() and "not" in error.hint.lower()
+        assert "browser" in error.hint.lower() and "still up" in error.hint.lower()
     assert "KeyError" in capsys.readouterr().err  # the traceback is kept for the log
 
 

@@ -397,7 +397,7 @@ def _call(
             f"The server on {HOST}:{port} did not answer {path} within "
             f"{timeout:g}s. It is up (the connection was accepted) but busy. "
             f"`abt health` answers without touching the browser; "
-            f"`abt browser restart` if it never frees up.",
+            f"`abt browser start` re-attaches if it never frees up.",
             fg="red",
             err=True,
         )

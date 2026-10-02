@@ -118,3 +118,61 @@ def test_a_dead_driver_process_is_noticed_at_once_and_logged(capsys):
     assert time.monotonic() - started < 3  # noticed at once, not at the 60s deadline
     assert "exited (code 3221225477)" in capsys.readouterr().err
     forever.set()
+
+
+# -- nothing ever tells a caller to restart the browser -----------------------------
+
+
+def test_no_error_text_tells_anyone_to_restart_the_browser():
+    """A dropped connection re-attaches on the next command, so there is nothing
+    for a caller to do about it -- and advice to restart closed healthy tabs."""
+    from abt.browser import NO_BROWSER_MESSAGE
+    from abt.errors import HINTS
+
+    # (Restarting the *server* is the operator's call and may be named.)
+    advice = ("restart the browser", "browser restart", "browser_restart", "restart it", "restarting it")
+    for kind, hint in HINTS.items():
+        assert not any(phrase in hint.lower() for phrase in advice), kind
+    assert not any(phrase in NO_BROWSER_MESSAGE.lower() for phrase in advice)
+    driver = bare_driver(0.2)
+    with pytest.raises(DeadSession) as dead:
+        driver._call(lambda: threading.Event().wait(30))
+    assert "restart" not in str(dead.value).lower()
+
+
+def test_a_connection_that_dies_mid_command_is_reattached_and_the_agent_is_told_so():
+    from abt.errors import OpError
+    from abt.server import _after_dropped_connection, fail
+
+    class Browser:
+        def __init__(self, ok=True):
+            self.ok, self.reconnected = ok, 0
+
+        def reconnect(self):
+            self.reconnected += 1
+            if not self.ok:
+                raise OpError("browser_dead", "could not reconnect")
+
+    original = fail(OpError("browser_dead", "the browser connection stopped answering"), 2)
+    healed = Browser()
+    out = _after_dropped_connection(healed, original, 2)
+    assert healed.reconnected == 1
+    error = out["error"]
+    assert error["type"] == "timeout" and error["op_index"] == 2
+    assert "re-established" in error["message"] and "restart" not in str(error).lower()
+    # Could not be re-attached: the original error stands.
+    assert _after_dropped_connection(Browser(ok=False), original, 2) == original
+
+
+def test_a_standalone_browsers_dead_connection_relaunches_it(tmp_path, monkeypatch):
+    """No other connection to take over: its driver owned the Chrome."""
+    from abt.browser import BrowserSession
+
+    browser = BrowserSession(profile=tmp_path, headless=True)
+    browser._driver = object()
+    calls = []
+    monkeypatch.setattr(browser, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(browser, "start", lambda **kw: calls.append(("start", kw)))
+    browser.reconnect()
+    assert calls[0] == "stop" and calls[1][0] == "start"
+    assert calls[1][1]["headless"] is True and browser._driver is None

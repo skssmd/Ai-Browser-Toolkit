@@ -59,19 +59,20 @@ HINTS = {
         "this one, or stop the browser with `abt browser stop`."
     ),
     "tab_not_found": (
-        "List what is actually open with `abt tabs`. Tab ids do not survive a "
-        "browser restart."
+        "List what is actually open with `abt tabs`. A tab id lasts only as long "
+        "as its tab."
     ),
     "browser_dead": (
-        "No usable browser. If you have not started one: `abt browser start` "
-        "-- the server runs without a browser on purpose. If one died (a tab "
-        "that closes itself takes the session with it): `abt browser restart`, "
-        "which keeps your logins but loses every tab."
+        "No usable browser connection. If you have not started a browser: "
+        "`abt browser start` -- the server runs without one on purpose. If one "
+        "was running, it reconnects by itself on your next command, keeping "
+        "your tabs and logins: just retry. `browser_start` is always safe to "
+        "send -- it connects to the browser if one is up."
     ),
     "internal_error": (
         "The toolkit itself failed on this -- not your command, and not the "
-        "browser, which is still up. Do not restart it. Try the action another "
-        "way, and say what happened: the details are in the session log."
+        "browser, which is still up. Try the action another way, and say what "
+        "happened: the details are in the session log."
     ),
     "bad_browser": (
         "Only chrome and edge are supported. `abt doctor` reports which are "

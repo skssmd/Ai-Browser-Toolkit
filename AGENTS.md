@@ -165,12 +165,12 @@ research") and keep that name on every call, so your tabs stay yours.
 Branch on `error.type`, never on the message. `invalid_op` means you guessed a
 parameter — check `GET /ops`.
 
-`browser_dead` is **recoverable and not fatal**. It means no browser is running
-right now — never started, stopped, or crashed. Nothing starts one for you:
-send `{"op": "browser_start"}` if none was ever up, or
-`{"op": "browser_restart"}` if one died. Both work when everything else
-returns `browser_dead`, because they skip the health check. You keep the
-server, the session log and your logins; you lose every tab and ref.
+`browser_dead` is **recoverable and not fatal**. It means this session has no
+working connection to a browser right now. If none was ever started, nothing
+starts one for you: send `{"op": "browser_start"}`. If one was running, the
+connection is re-attached by itself on your next command -- keeping your tabs,
+refs and logins -- so just retry. `browser_start` is always safe to send: with
+a browser up it attaches instead of refusing.
 
 ## The browser is not the server
 
@@ -183,9 +183,9 @@ which never returns. The server comes up with **no browser**, so:
 * `GET /status` — always carries `running`. When false, there is no `url`.
 * `POST /browser/start|stop|restart` — optional `{browser, profile, headless}`.
 
-`start` uses the server's defaults; `restart` keeps whatever the last browser
-used. So a session started headless comes back headless under `restart` and
-windowed under `start`.
+`start` uses the server's defaults, and connects to a browser that is already
+up rather than refusing; `restart` -- for when you deliberately want a fresh
+browser -- keeps whatever the last browser used.
 
 **Google (and some other sites) block a driven browser at sign-in.** Even with
 the anti-detection flags this toolkit already sets, `accounts.google.com`

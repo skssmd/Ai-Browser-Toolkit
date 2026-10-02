@@ -46,12 +46,20 @@ def test_config_falls_back_to_defaults_until_something_launches(session, tmp_pat
     assert session.config.profile == tmp_path.resolve()
 
 
-def test_starting_a_running_browser_is_refused(session):
-    session._driver = object()  # pretend one is up
-    with pytest.raises(OpError) as exc:
-        session.start()
-    assert exc.value.type == "invalid_op"
-    assert "browser_restart" in exc.value.message
+def test_starting_a_running_browser_attaches_to_it_instead_of_refusing(session):
+    """It used to be an error -- "already running, use browser_restart" -- which
+    sent agents in a circle. Now it is the answer to "is it there?"."""
+
+    class Up:
+        window_handles = ["h0"]
+        current_window_handle = "h0"
+
+    up = Up()
+    session._driver = up
+    out = session.start()
+    assert out["running"] is True and out["already_running"] is True
+    assert out["reconnected"] is False
+    assert session._driver is up  # not replaced: nothing was restarted
 
 
 
@@ -234,7 +242,9 @@ def test_health_check_on_a_stopped_session_names_the_remedy(session):
     assert "browser_start" in exc.value.message
 
 
-def test_an_unreachable_browser_points_at_restart_not_start(session):
+def test_an_unreachable_browser_is_reattached_not_reported(session, monkeypatch):
+    """The driver cannot reach its browser -- and cannot even quit. The session
+    brings the browser back on the same profile instead of telling anyone to."""
     from abt.engine import EngineError as WebDriverException
 
     class Corpse:
@@ -242,14 +252,41 @@ def test_an_unreachable_browser_points_at_restart_not_start(session):
         def window_handles(self):
             raise WebDriverException("no such window: target window already closed")
 
-    session._driver = Corpse()
+    class Healthy:
+        window_handles = ["h0"]
 
+    session._driver = Corpse()  # no quit(): stop() cannot succeed either
+    session.launch = session.defaults.merge(headless=True)
+    started = []
+
+    def fake_start(browser=None, profile=None, headless=None):
+        started.append((browser, headless))
+        session._driver = Healthy()
+
+    monkeypatch.setattr(session, "start", fake_start)
+
+    session.health_check()  # raises nothing: it mended itself
+    assert started == [(session.launch.browser, True)]
+    assert isinstance(session._driver, Healthy)
+
+
+def test_a_reconnect_that_cannot_clear_the_dead_driver_does_not_loop(session, monkeypatch):
+    """The RecursionError this used to be: stop() leaving the driver in place made
+    `start` think a browser was up, check it, and reconnect again, for ever."""
+
+    class Stuck:
+        @property
+        def window_handles(self):
+            raise RuntimeError("gone")
+
+    session._driver = Stuck()
+    session.launch = session.defaults
+    monkeypatch.setattr(session, "stop", lambda: (_ for _ in ()).throw(RuntimeError("cannot quit")))
+    monkeypatch.setattr(session, "_launch_driver", lambda config: (_ for _ in ()).throw(OpError("browser_dead", "chrome would not launch")))
     with pytest.raises(OpError) as exc:
-        session.health_check()
-
+        session.reconnect()
     assert exc.value.type == "browser_dead"
-    assert "browser_restart" in exc.value.message
-    assert "target window already closed" in exc.value.message
+    assert session._driver is None and session._reconnecting is False
 
 
 # --- ops -------------------------------------------------------------------

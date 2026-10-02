@@ -261,6 +261,8 @@ class BrowserSession:
     def is_running(self) -> bool:
         return self._driver is not None
 
+    _reconnecting = False
+
     @property
     def is_dead(self) -> bool:
         """The browser may be fine but this session's connection to it is gone."""
@@ -275,16 +277,36 @@ class BrowserSession:
         and nothing the session was told to try could end it. Seen live: an
         agent sat in that state for twenty minutes, one command every five.
 
-        But Chrome and the session's tabs are untouched, so a restart -- which
-        closes them -- is the wrong remedy. This opens a fresh connection, takes
-        the session's tabs back, and goes on.
+        But Chrome and the session's tabs are untouched, so replacing the
+        browser -- which closes them -- is the wrong remedy. This opens a fresh
+        connection, takes the session's tabs back, and goes on. Nothing is ever
+        asked of the caller: it is what every failure of this kind leads to.
         """
-        if self._attach is None:
-            raise OpError(
-                "browser_dead",
-                "the browser connection stopped answering; restart the browser",
-            )
+        if self._reconnecting:
+            raise OpError("browser_dead", "the browser is already being reconnected")
+        self._reconnecting = True
+        try:
+            self._reconnect()
+        finally:
+            self._reconnecting = False
+
+    def _reconnect(self) -> None:
         config = self.config
+        if self._attach is None:
+            # A standalone browser is owned by its driver: a dead driver means a
+            # dead Chrome, and there is no other connection to take over. Bring
+            # it back on the same profile.
+            try:
+                self.stop()
+            except Exception:
+                pass  # a dead driver may not even be able to quit
+            # Whatever stop managed, the dead driver is not kept: left in place
+            # it would make `start` think a browser is up, and check it, and
+            # come straight back here.
+            self._driver = None
+            self._reset_state()
+            self.start(browser=config.browser, profile=config.profile, headless=config.headless)
+            return
         with trace_util.span("browser.reconnect", config.browser, session=self._attach.gate.session):
             print(
                 f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} reconnecting "
@@ -348,32 +370,46 @@ class BrowserSession:
         profile: Path | str | None = None,
         headless: bool | None = None,
     ) -> dict:
-        """Launch a browser. Overrides layer over the serve-time defaults.
+        """Connect to the browser, launching it if it is not up. Overrides layer
+        over the serve-time defaults.
 
-        Deliberately not idempotent. Silently no-op'ing a start that named a
-        different profile would hand back a session on the wrong identity with
-        no way to tell -- and the profile is the logins. A caller that wants
-        "running, whatever it takes" wants `restart`.
+        Safe to repeat, and the answer to every kind of "is it there?". With a
+        browser already up this attaches to it -- and mends the connection if it
+        had died or Chrome had gone away -- instead of refusing. Refusing sent
+        agents round a loop: `status` said running, `start` said already
+        running, commands said dead, and the one remedy on offer closed every
+        tab. What it will not do is quietly apply an override it cannot (a
+        different profile is refused for a shared session, since the profile is
+        the logins; a different window mode is reported as not applied).
         """
         self.refuse_other_profile(profile)
-        if self.is_dead:
-            # "Already running" is true of the browser and false of this
-            # session's hold on it: say so by mending it.
-            if self._attach is not None:
-                self.reconnect()
-                return {
-                    "running": True,
-                    "reconnected": True,
-                    "config": self.config.to_dict(),
-                    "active_tab": self.active_tab,
-                }
-            self.stop()
         if self.is_running:
-            raise OpError(
-                "invalid_op",
-                "a browser is already running; use browser_restart to replace "
-                "it, or browser_stop first",
-            )
+            before = self._driver
+            self.health_check()  # reconnects a dead or unreachable connection
+            wanted = self.defaults.merge(browser=browser, profile=profile, headless=headless)
+            have = self.config
+            ignored = []
+            if browser is not None and wanted.browser != have.browser:
+                ignored.append(f"browser={wanted.browser}")
+            if headless is not None and wanted.headless != have.headless:
+                ignored.append(f"headless={wanted.headless}")
+            try:
+                active = self.active_tab
+            except OpError:
+                active = None
+            out = {
+                "running": True,
+                "already_running": True,
+                "reconnected": self._driver is not before,
+                "config": have.to_dict(),
+                "active_tab": active,
+            }
+            if ignored:
+                out["note"] = (
+                    f"already connected, with browser={have.browser} "
+                    f"headless={have.headless}; not applied: {', '.join(ignored)}"
+                )
+            return out
         config = self.defaults.merge(
             browser=browser, profile=profile, headless=headless
         )
@@ -728,13 +764,11 @@ class BrowserSession:
             self.reconnect()
         try:
             self._driver.window_handles
-        except EngineError as exc:
-            raise OpError(
-                "browser_dead",
-                f"browser is no longer reachable: {exc.msg or exc}; "
-                'relaunch it with {"op": "browser_restart"} '
-                "or POST /browser/restart",
-            ) from exc
+        except EngineError:
+            # Unreachable: the connection or the Chrome behind it went away.
+            # Re-attach (relaunching the profile's Chrome if it is gone) and go
+            # on, rather than handing the problem to the caller.
+            self.reconnect()
 
     # --- tabs -----------------------------------------------------------------
 

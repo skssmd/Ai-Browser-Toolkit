@@ -154,6 +154,36 @@ def _unmapped(exc: Exception) -> OpError:
     return OpError("internal_error", detail)
 
 
+# Ops that are safe to run again once the connection is re-attached: they carry
+# everything they need, and depend on no page state a relaunch could have lost.
+RETRY_AFTER_REATTACH = frozenset({"goto"})
+
+
+def _after_dropped_connection(browser: BrowserSession, response: dict, op_index: int) -> dict:
+    """Re-attach a session whose connection died mid-command.
+
+    The command itself failed, and may or may not have taken effect, so it is
+    reported rather than silently retried. If re-attaching is not possible the
+    original error stands.
+    """
+    try:
+        browser.reconnect()
+    except Exception:
+        return response
+    return fail(
+        OpError(
+            "timeout",
+            "the browser connection dropped while this ran, and has been "
+            "re-established; it may or may not have completed",
+            hint=(
+                "Look at where the page is now (`get_text` or `status`), then run "
+                "it again if it did not take effect. Your tabs are all still there."
+            ),
+        ),
+        op_index,
+    )
+
+
 def _strip(item: Any) -> tuple[Any, str | None, str | None]:
     """Take the transport fields off one command, leaving the command."""
     if isinstance(item, dict) and ("session" in item or "token" in item):
@@ -250,16 +280,33 @@ def create_app(
         started = now_ms()
         browser.last_target = None
         op = str(data.get("op", "")) if isinstance(data, dict) else ""
-        with trace_util.span("command", op, session=sess.name, op=op) as step:
+        def attempt() -> dict:
             try:
                 cmd = parse_command(data)
-                response = ok(dispatch(browser, cmd))
+                return ok(dispatch(browser, cmd))
             except OpError as exc:
-                response = fail(exc, op_index)
+                return fail(exc, op_index)
             except Exception as exc:  # an unmapped driver surprise
-                response = fail(_unmapped(exc), op_index)
+                return fail(_unmapped(exc), op_index)
+
+        with trace_util.span("command", op, session=sess.name, op=op) as step:
+            response = attempt()
             if not response.get("ok"):
                 step.note(result=(response.get("error") or {}).get("type"))
+                gone = (response.get("error") or {}).get("type") == "browser_dead"
+                if browser.is_running and (browser.is_dead or gone):
+                    # The connection died during this very command -- or the
+                    # Chrome behind it went away, which Playwright reports at
+                    # once, without ever marking the connection hung. Re-attach
+                    # now, so the next call -- from the agent, the app or the
+                    # activity log -- finds it working; the agent is told what
+                    # happened, and never asked to do anything about it.
+                    mended = _after_dropped_connection(browser, response, op_index)
+                    if mended is not response and op in RETRY_AFTER_REATTACH:
+                        # Nothing to lose by going again: `goto` names its whole
+                        # destination, so the caller never sees the drop.
+                        mended = attempt()
+                    response = mended
         if sess.recorder is not None:
             # Logging takes a screenshot: timed apart, since it can be slow too.
             with trace_util.span("log", op, session=sess.name):
@@ -493,7 +540,7 @@ def create_app(
                     f"the browser did not answer within {STATUS_TIMEOUT:g}s, so "
                     "where it is could not be read -- it is busy with a command, "
                     "not dead. /health answers without touching the browser at "
-                    "all; browser_restart is the way out if it never frees up"
+                    "all. If it never frees up, `browser_start` re-attaches"
                 ),
             })
         except OpError as exc:
@@ -511,12 +558,12 @@ def create_app(
             # and /status answering `Internal Server Error` to that tells a
             # caller nothing about what to do next. Observed: an agent saw it,
             # could not tell the server was wedged, and guessed for four
-            # commands. `abt browser restart` is the way out.
+            # commands. Re-attaching is the way out, and a command does it.
             return fail(
                 OpError(
                     "browser_dead",
                     f"browser is not reachable ({type(exc).__name__}: {exc}). "
-                    f"Try `abt browser restart`.",
+                    f"The next command re-attaches to it.",
                 )
             )
 
@@ -1195,8 +1242,14 @@ def create_app(
                 # as navigation_failed. So on any failure, ask the browser
                 # itself whether it is still there.
                 if needs_page and any(not r["ok"] for r in results) and browser_gone(sess):
-                    if execute(sess, [{"op": "browser_restart"}], False)[0]["ok"]:
+                    # Re-attach, relaunching the profile's Chrome if it is gone:
+                    # the chat never restarts a browser to get out of a failure.
+                    try:
+                        with _locked(sess):
+                            sess.browser.reconnect()
                         results = execute(sess, items, keep_going)
+                    except OpError:
+                        pass
                 if envelope:
                     failed = [r for r in results if not r["ok"]]
                     body = {"ok": not failed, "results": results, "ran": len(results), "total": len(items)}

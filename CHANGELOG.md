@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Nothing ever asks anyone to restart the browser; it re-attaches.**
+  `browser_start` is now safe to repeat: with a browser up it attaches to it
+  (and mends the connection on the way) instead of refusing with "already
+  running -- use browser_restart". A failure re-attaches on the spot: a
+  connection that dies mid-command, or a Chrome that went away -- which is
+  relaunched on the same profile -- is re-established before the next call,
+  and a `goto` is simply run again so the caller never notices. Anything else
+  that was in flight is told, once, that the connection was re-established and
+  to check the page and go again. No error, hint, message, tool description or
+  doc says to restart any more, the MCP tool no longer offers `restart`, and
+  the app's own recovery (and its ⏻ button, now *Reconnect*) attach instead of
+  restarting. A restart of one session on a shared Chrome only ever closed that
+  session's own tabs; the browser stays up while another session is on it -- a
+  test now pins that. An override `start` cannot apply (a different window
+  mode) is reported as not applied rather than refused. The explicit
+  `browser_restart` op remains, for when someone deliberately wants a new
+  browser; nothing recommends it.
 - **A session whose connection died mends itself.** When a call gets no answer
   the watchdog ends the session's Playwright connection -- and every command
   after that failed with `browser_dead` for good: `browser_status` still said

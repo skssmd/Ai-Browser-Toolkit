@@ -721,7 +721,7 @@ class PlaywrightDriver:
         if self._owner is not None and threading.get_ident() == self._owner:
             return fn(*a, **kw)
         if self._hung:
-            raise DeadSession("the browser connection stopped answering; restart the browser")
+            raise DeadSession("the browser connection stopped answering; it reconnects on the next command")
         # Traced: the step a hang would be stuck in. `get.<locals>.work` -> "get".
         parts = getattr(fn, "__qualname__", "call").split(".")
         name = parts[1] if len(parts) > 1 and parts[0] == type(self).__name__ else parts[0]
@@ -752,7 +752,7 @@ class PlaywrightDriver:
                 # record of how the driver went: a kill, a crash and a system
                 # fault leave different exit codes.
                 print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} {reason}", file=sys.stderr, flush=True)
-                raise DeadSession(f"{reason}; restart the browser")
+                raise DeadSession(f"{reason}; it reconnects on the next command")
 
     @property
     def is_dead(self) -> bool:
@@ -813,8 +813,8 @@ class PlaywrightDriver:
                         "browser_dead",
                         f"could not connect to this profile's browser at {cdp_url}: {exc}",
                         hint=(
-                            "The profile's browser went away. `browser_restart` in "
-                            "this session relaunches it."
+                            "The profile's browser went away. `browser_start` in "
+                            "this session reconnects it, relaunching it if needed."
                         ),
                     ) from exc
                 # Terminal, and it has to say so. This browser belongs to

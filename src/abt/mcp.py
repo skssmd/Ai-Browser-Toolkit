@@ -70,6 +70,8 @@ Then start a browser:
   purpose, and nothing starts one for you. Every page command fails with
   browser_dead until you do this. It can take up to two minutes on a profile
   that has logins in it. browser_session {"action":"status"} says what is up.
+  start is safe to repeat: with a browser up it just attaches, and a dropped
+  connection mends itself on the next command, so send start whenever unsure.
 
 Then act through command_list. It is the only way to touch the page, and it
 takes a LIST, so send every op you already know you need in one call --
@@ -175,11 +177,12 @@ TOOLS: list[dict] = [
     {
         "name": "browser_session",
         "description": (
-            "Start, stop or restart the browser, or ask whether one is running. "
+            "Connect to the browser, stop it, or ask whether one is running. "
             "Every page command fails with browser_dead until a browser is "
-            "started; nothing starts one for you. Use restart after a crash or "
-            "after a tab closed the session. start uses the server's defaults, "
-            "restart keeps whatever the last browser used. open_manual launches "
+            "started; nothing starts one for you. start is safe to repeat: with "
+            "a browser up it just attaches, and a dropped connection mends "
+            "itself, so send start whenever unsure. start uses the server's "
+            "defaults. open_manual launches "
             "the real installed browser directly (no automation) on the same "
             "profile, for sites -- Google among them -- that block a "
             "CDP-controlled browser at sign-in: stop the running browser first, "
@@ -192,7 +195,7 @@ TOOLS: list[dict] = [
             {
                 "action": {
                     "type": "string",
-                    "enum": ["start", "stop", "restart", "status", "open_manual"],
+                    "enum": ["start", "stop", "status", "open_manual"],
                 },
                 "browser": {"type": "string", "enum": ["chrome", "edge"]},
                 "profile": {"type": "string"},

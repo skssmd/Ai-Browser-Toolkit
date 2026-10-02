@@ -80,10 +80,11 @@ curl http://127.0.0.1:8765/health      # is the *server* up (never touches the d
 
 Pass `--start-browser` to `abt serve` for the old eager behaviour.
 
-**When the browser dies, the server survives it.** Every page command returns
-`browser_dead` naming the remedy, and `browser_restart` gives you a fresh
-browser on the same profile without losing the server or the session log. You
-stay logged in; tabs and refs do not survive.
+**When a connection to the browser drops, the session mends it.** The command
+that hit it returns once, saying so; the next command re-attaches to the same
+browser -- relaunching the profile's Chrome if it is gone -- keeping the server,
+the session log, your logins and your tabs. `browser_start` is safe to send at
+any time: with a browser up it simply attaches.
 
 **The safe way — use the start script.** It does the whole dance for you and is
 the only thing an agent or CI job should call:
@@ -1048,7 +1049,7 @@ agents obliged 64% of the time.
 | tool | mirrors |
 |---|---|
 | `command_list` | `abt command-list` — every page action, one op or a list |
-| `browser_session` | `abt browser` — start, stop, restart, status |
+| `browser_session` | `abt browser` — start (connects), stop, status |
 | `browser_guidelines` | `abt guidelines` — the workflow and site playbooks |
 
 The parameter schemas the per-op tools carried are not lost. `GET /ops`

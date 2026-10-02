@@ -136,15 +136,17 @@ def test_a_sealed_session_over_http(env):
     assert send(client, "sealed", {"op": "status"}, token=token)["ok"] is True
 
 
-def test_a_crashed_profile_comes_back_on_restart(env, base_url):
+def test_a_crashed_profile_comes_back_on_its_own(env, base_url):
+    """It used to fail, and need a browser_restart. Now the session re-attaches --
+    relaunching the profile's Chrome -- and the goto is simply run again."""
     registry, client = env
     start(client, "s1")
     registry.profiles.running("p1").process.kill()
     registry.profiles.running("p1")  # noticed dead and forgotten
-    dead = send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})
-    assert dead["ok"] is False
-    assert send(client, "s1", {"op": "browser_restart"})["ok"] is True
     assert send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})["ok"] is True
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/cards.html"})["ok"] is True
+    # A deliberate restart is still there for whoever asks for one.
+    assert send(client, "s1", {"op": "browser_restart"})["ok"] is True
 
 
 def test_idle_profiles_are_stopped_and_can_start_again(env):
@@ -224,4 +226,81 @@ def test_start_and_status_on_a_dead_connection_mend_it_rather_than_refuse(env):
     kill_connection(registry, "s1")
     started = send(client, "s1", {"op": "browser_start"})
     assert started["ok"] is True and started["result"]["reconnected"] is True, started
+    assert send(client, "s1", {"op": "current_url"})["ok"] is True
+
+
+def test_restarting_one_session_leaves_the_others_and_their_chrome_alone(env, base_url):
+    """Several agents share one Chrome. A restart of one -- by an agent, or by the
+    app answering browser_dead -- closes that session's own tabs and nothing
+    else: the browser stays up for as long as any other session is on it."""
+    registry, client = env
+    start(client, "s1", "s3")  # both on p1
+    for name, page in (("s1", "form.html"), ("s3", "cards.html")):
+        assert send(client, name, {"op": "goto", "url": f"{base_url}/{page}"})["ok"] is True
+    pid = registry.profiles._running["p1"].process.pid
+    theirs = send(client, "s3", {"op": "status"})["result"]["active_tab"]
+
+    restarted = send(client, "s1", {"op": "browser_restart"})
+    assert restarted["ok"] is True, restarted
+
+    assert registry.profiles._running["p1"].process.pid == pid  # the same Chrome, never relaunched
+    assert send(client, "s3", {"op": "status"})["result"]["active_tab"] == theirs
+    where = send(client, "s3", {"op": "current_url"})  # s3's own page, untouched
+    assert where["ok"] is True and "cards.html" in str(where["result"]), where
+    assert send(client, "s3", {"op": "get_text", "css": "body"})["ok"] is True  # and still driveable
+    assert send(client, "s1", {"op": "current_url"})["ok"] is True  # s1 is back, on a page of its own
+
+
+# -- a running browser is attached to, never refused; nothing says "restart" ----------
+
+
+def test_start_on_a_browser_that_is_up_attaches_instead_of_refusing(env, base_url):
+    registry, client = env
+    start(client, "s1")
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})["ok"] is True
+    pid = registry.profiles._running["p1"].process.pid
+    tabs = send(client, "s1", {"op": "tab_list"})["result"]
+
+    again = send(client, "s1", {"op": "browser_start"})
+    assert again["ok"] is True, again
+    assert again["result"]["already_running"] is True and again["result"]["reconnected"] is False
+    assert registry.profiles._running["p1"].process.pid == pid  # no second Chrome
+    assert send(client, "s1", {"op": "tab_list"})["result"] == tabs  # nothing opened or closed
+
+    # An override it cannot apply is reported, not quietly dropped -- and not refused.
+    asked = send(client, "s1", {"op": "browser_start", "headless": False})
+    assert asked["ok"] is True and "not applied: headless=False" in asked["result"]["note"], asked
+
+
+def test_a_chrome_that_went_away_is_reattached_and_goto_is_not_even_noticed(env, base_url):
+    """The Chrome itself is gone, not only the connection: re-attaching relaunches
+    the profile's browser. A `goto` names its whole destination, so it is simply
+    run again; anything that depended on the lost page is told what happened.
+    Nobody is ever asked to restart anything."""
+    registry, client = env
+    start(client, "s1")
+    old = registry.profiles._running["p1"].process
+    old.kill()
+    old.wait(timeout=15)
+    out = send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})
+    assert out["ok"] is True, out
+    assert registry.profiles._running["p1"].process.pid != old.pid
+    assert "form.html" in str(send(client, "s1", {"op": "current_url"})["result"])
+
+    # A read of a page that was lost with the browser is reported, not guessed at.
+    again = registry.profiles._running["p1"].process
+    again.kill()
+    again.wait(timeout=15)
+    told = send(client, "s1", {"op": "get_text", "css": "body"})
+    assert told["ok"] is False and told["error"]["type"] == "timeout"
+    assert "re-established" in told["error"]["message"] and "restart" not in str(told).lower()
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/cards.html"})["ok"] is True
+
+
+def test_start_on_a_dead_browser_is_never_a_refusal(env):
+    registry, client = env
+    start(client, "s1")
+    registry.profiles._running["p1"].process.kill()
+    out = send(client, "s1", {"op": "browser_start"})
+    assert out["ok"] is True, out
     assert send(client, "s1", {"op": "current_url"})["ok"] is True

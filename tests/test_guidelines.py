@@ -489,7 +489,7 @@ def test_a_hint_says_what_to_do_not_what_happened():
 
     hint = OpError("browser_dead", "no active page").hint
     assert "abt browser start" in hint
-    assert "abt browser restart" in hint
+    assert "retry" in hint  # the connection mends itself; the caller just tries again
 
 
 def test_an_explicit_hint_beats_the_type_default():

@@ -525,36 +525,28 @@ A closed set of `error.type` values to branch on: `invalid_op`,
 `navigation_failed`, `js_error`, `last_tab`, `tab_not_found`, `browser_dead`,
 `bad_browser`, `browser_not_found`, `internal_error`.
 
-`browser_dead` means the browser itself is gone -- it is the only one whose
-remedy is a restart. A page or control refusing a value is `not_interactable`,
-and `internal_error` is a fault in the toolkit with the browser still up: do
-not restart for either.
+`browser_dead` means this session has no working connection to its browser. It
+mends itself: the next command re-attaches (relaunching the profile's Chrome if
+it is gone), keeping your tabs and logins, so the answer is to retry. A page or
+control refusing a value is `not_interactable`, and `internal_error` is a fault
+in the toolkit with the browser still up.
+
+`browser_start` is always safe to send: with a browser up it simply attaches,
+and it mends a dropped connection on the way. Send it whenever unsure.
 
 Failed ops never quietly continue: batches stop unless `continue_on_error`.
 
-### A tab that closes itself takes the session with it
+### A tab that closes itself
 
 OAuth popups, payment frames and "you may close this window" tabs close
-themselves when they finish. **If such a tab was the active one, the session
-dies** — every later call returns `browser_dead` with `no such window: target
-window already closed`, and neither `tab_switch` nor `tab_list` can recover it,
-even though the other windows are still on screen.
+themselves when they finish. If such a tab was the active one, the next command
+may answer `browser_dead` or `tab_not_found` once: the connection is
+re-attached on the spot, with the session's remaining tabs, so retry. Nothing
+needs restarting and no other tab is lost.
 
-Avoid it by not standing there: `tab_switch` back to the tab you came from
-*before* clicking the control that completes the flow, when the flow allows it.
-
-Once it has happened, send `{"op": "browser_restart"}`. Like `status` and
-`shutdown` it skips the health check, so it works precisely when everything else
-returns `browser_dead`. The server stays up, the session log continues, and you
-get a fresh browser on the same profile — so you are still logged in, but
-**every tab is gone** and you must navigate back.
-
-You no longer have to check by hand that nothing else holds the profile: `stop`
-waits for the old browser to release it, and `start` probes the new session and
-fails loudly rather than handing you one that dies on first use.
-
-Still worth fixing properly: falling back to a surviving window handle on
-`NoSuchWindowException` would keep the tabs, which `browser_restart` cannot.
+It is still cleaner not to be standing there: `tab_switch` back to the tab you
+came from *before* clicking the control that completes the flow, when the flow
+allows it.
 
 ### Some sites block a driven browser at sign-in
 
