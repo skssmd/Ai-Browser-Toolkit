@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Callable
 
 from . import diff as diff_util
 from . import frames as frame_util
+from . import trace as trace_util
 from .engine import EngineError
 from .errors import OpError
 from .launch import LaunchConfig
@@ -260,6 +262,68 @@ class BrowserSession:
         return self._driver is not None
 
     @property
+    def is_dead(self) -> bool:
+        """The browser may be fine but this session's connection to it is gone."""
+        return self._driver is not None and bool(getattr(self._driver, "is_dead", False))
+
+    def reconnect(self) -> None:
+        """A new connection to the same browser, for a session whose own died.
+
+        A call that gets no answer ends the connection (see `PlaywrightDriver`),
+        and every call after it failed with browser_dead -- for good: `status`
+        still said running, `browser_start` said a browser was already running,
+        and nothing the session was told to try could end it. Seen live: an
+        agent sat in that state for twenty minutes, one command every five.
+
+        But Chrome and the session's tabs are untouched, so a restart -- which
+        closes them -- is the wrong remedy. This opens a fresh connection, takes
+        the session's tabs back, and goes on.
+        """
+        if self._attach is None:
+            raise OpError(
+                "browser_dead",
+                "the browser connection stopped answering; restart the browser",
+            )
+        config = self.config
+        with trace_util.span("browser.reconnect", config.browser, session=self._attach.gate.session):
+            print(
+                f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} reconnecting "
+                f"session {self._attach.gate.session!r} to its browser",
+                file=sys.stderr, flush=True,
+            )
+            # Where the agent was, read from what the dead driver last knew --
+            # no round trip. A fresh connection starts on its first tab, and
+            # the agent's next click must land where its last one did.
+            was_on = self.active_target_hint()
+            old, self._driver = self._driver, None
+            try:
+                if old is not None:
+                    old.quit()
+            except Exception:
+                pass  # it is dead; there is nothing in it to close
+            self._reset_state()
+            try:
+                self._driver = self._launch_driver(config)
+                self._driver.implicitly_wait(0)
+                self._verify_session()
+                if was_on and was_on in self._driver.window_handles:
+                    self._driver.switch_to.window(was_on)
+                self._install_console_capture()
+                self._sync_tabs()
+                self.sync_guard()
+            except Exception as exc:
+                # Leave it stopped, cleanly, rather than half-built: the next
+                # call then says there is no browser, and browser_start works.
+                self._driver = None
+                self._reset_state()
+                if isinstance(exc, OpError):
+                    raise
+                raise OpError(
+                    "browser_dead",
+                    f"could not reconnect to the browser: {exc}",
+                ) from exc
+
+    @property
     def shared(self) -> bool:
         return self._attach is not None
 
@@ -292,6 +356,18 @@ class BrowserSession:
         "running, whatever it takes" wants `restart`.
         """
         self.refuse_other_profile(profile)
+        if self.is_dead:
+            # "Already running" is true of the browser and false of this
+            # session's hold on it: say so by mending it.
+            if self._attach is not None:
+                self.reconnect()
+                return {
+                    "running": True,
+                    "reconnected": True,
+                    "config": self.config.to_dict(),
+                    "active_tab": self.active_tab,
+                }
+            self.stop()
         if self.is_running:
             raise OpError(
                 "invalid_op",
@@ -648,6 +724,8 @@ class BrowserSession:
         """Raise browser_dead rather than hanging on a driver that has gone away."""
         if self._driver is None:
             raise OpError("browser_dead", NO_BROWSER_MESSAGE)
+        if self.is_dead:
+            self.reconnect()
         try:
             self._driver.window_handles
         except EngineError as exc:

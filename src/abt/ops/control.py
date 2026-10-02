@@ -141,11 +141,16 @@ def browser_state(session: BrowserSession) -> dict:
     will use. `defaults` is what `abt serve` was given, which is what a bare
     browser_start will use.
     """
-    return {
+    state = {
         "running": session.is_running,
         "config": session.config.to_dict(),
         "defaults": session.defaults.to_dict(),
     }
+    if session.is_dead:
+        # Running, but this session's connection to it is gone -- which is what
+        # `running: true` alone hid from an agent for twenty minutes.
+        state["connected"] = False
+    return state
 
 
 def browser_start(session: BrowserSession, cmd) -> dict:
@@ -165,6 +170,13 @@ def browser_restart(session: BrowserSession, cmd) -> dict:
 
 
 def browser_status(session: BrowserSession, cmd) -> dict:
+    if session.is_dead:
+        # Asking is a fine moment to mend it. If that cannot be done, the state
+        # says `connected: false` and the next command says why.
+        try:
+            session.reconnect()
+        except OpError:
+            pass
     return browser_state(session)
 
 

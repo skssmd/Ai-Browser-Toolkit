@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **A session whose connection died mends itself.** When a call gets no answer
+  the watchdog ends the session's Playwright connection -- and every command
+  after that failed with `browser_dead` for good: `browser_status` still said
+  `running: true`, `browser_start` said a browser was already running, and
+  nothing the agent tried ended it. Seen live: an agent sat in that for twenty
+  minutes, one command every five. Chrome and the session's tabs were never
+  touched, so the next command (and `browser_status`, and `browser_start`) now
+  opens a fresh connection, takes the tabs back and carries on -- no restart,
+  nothing closed. `browser_status` says `connected: false` while it cannot.
+- **A log screenshot can no longer take a session down.** The activity log's
+  frame came through a raw CDP call with no timeout; when Chrome never
+  produced the frame it waited out the 60s watchdog, which ended the whole
+  connection. Seen repeatedly in the traces. Frames now go through
+  Playwright's own capture with a 4s limit: a frame that does not come is
+  just a missing frame. Frames are full-viewport JPEGs, not downscaled.
+
 ## 0.7.7 — 2026-10-02
 
 - **Colour inputs work.** `input` on an `<input type="color">` failed with

@@ -172,3 +172,49 @@ def test_a_tab_behind_another_is_not_photographed():
 
     assert shots.capture(SimpleNamespace(driver=Driver())) is None
     assert calls == []
+
+
+def test_a_log_frame_that_will_not_come_costs_a_missing_frame_not_the_session():
+    """Seen live, repeatedly: the raw CDP capture had no timeout, waited out the
+    60s watchdog, and that ended the whole connection -- a log frame took its
+    session down. The Playwright capture has its own timeout."""
+    from types import SimpleNamespace
+
+    from abt import shots
+
+    class Driver:
+        asked = []
+
+        def execute_script(self, script, *args):
+            return "visible"
+
+        def screenshot_jpeg(self, quality, timeout):
+            self.asked.append(timeout)
+            raise TimeoutError("Page.screenshot: Timeout 4000ms exceeded")
+
+        def execute_cdp_cmd(self, *a):
+            raise AssertionError("the unbounded call must not be made")
+
+    driver = Driver()
+    assert shots.capture(SimpleNamespace(driver=driver)) is None
+    assert driver.asked == [shots.CAPTURE_TIMEOUT]
+
+
+def test_a_frame_that_does_come_is_returned_and_a_hidden_tab_is_skipped_first():
+    from types import SimpleNamespace
+
+    from abt import shots
+
+    class Driver:
+        state = "visible"
+
+        def execute_script(self, script, *args):
+            return self.state
+
+        def screenshot_jpeg(self, quality, timeout):
+            return b"jpeg"
+
+    driver = Driver()
+    assert shots.capture(SimpleNamespace(driver=driver)) == b"jpeg"
+    driver.state = "hidden"
+    assert shots.capture(SimpleNamespace(driver=driver)) is None

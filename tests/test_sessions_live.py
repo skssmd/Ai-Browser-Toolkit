@@ -177,3 +177,51 @@ def test_an_idle_session_does_not_freeze_the_others_new_tabs(env, base_url):
     loaded = send(client, "s3", {"op": "goto", "url": f"{base_url}/cards.html"})
     assert loaded["ok"] is True, loaded
     assert time.monotonic() - started < 15
+
+
+def kill_connection(registry, name):
+    """End a session's Playwright connection exactly as the watchdog does when a
+    call gets no answer: the driver process is terminated and the driver marked."""
+    driver = registry.get(name).browser._driver
+    driver._hung = True
+    driver._end_driver()
+
+
+def test_a_session_whose_connection_died_mends_itself_with_its_tabs(env, base_url):
+    """Seen live: after one hung call every later command said browser_dead for
+    good -- `status` still said running and `browser_start` said a browser was
+    already running -- and an agent sat in that for twenty minutes. Chrome and
+    the tabs were fine; only the connection was gone."""
+    registry, client = env
+    start(client, "s1", "s3")
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/form.html"})["ok"] is True
+    assert send(client, "s1", {"op": "tab_new"})["ok"] is True
+    assert send(client, "s1", {"op": "goto", "url": f"{base_url}/cards.html"})["ok"] is True
+    before = sorted(r["tab_id"] for r in send(client, "s1", {"op": "tab_list"})["result"]
+                    if "locked" not in r and "unowned" not in r)
+    assert len(before) == 2
+
+    kill_connection(registry, "s1")
+    assert registry.get("s1").browser.is_dead is True
+    out = send(client, "s1", {"op": "current_url"})  # the next command mends it
+    assert out["ok"] is True, out
+    # Back on the tab it was on -- a fresh connection starts on the first one.
+    assert "cards.html" in (out["result"]["url"] if isinstance(out["result"], dict) else out["result"])
+    after = sorted(r["tab_id"] for r in send(client, "s1", {"op": "tab_list"})["result"]
+                   if "locked" not in r and "unowned" not in r)
+    assert after == before  # the same tabs, none reopened and none lost
+    assert registry.get("s1").browser.is_dead is False
+    assert send(client, "s3", {"op": "current_url"})["ok"] is True  # nobody else was touched
+
+
+def test_start_and_status_on_a_dead_connection_mend_it_rather_than_refuse(env):
+    registry, client = env
+    start(client, "s1")
+    kill_connection(registry, "s1")
+    status = send(client, "s1", {"op": "browser_status"})
+    assert status["ok"] is True and status["result"]["running"] is True
+    assert "connected" not in status["result"]  # mended by being asked, so no longer lost
+    kill_connection(registry, "s1")
+    started = send(client, "s1", {"op": "browser_start"})
+    assert started["ok"] is True and started["result"]["reconnected"] is True, started
+    assert send(client, "s1", {"op": "current_url"})["ok"] is True

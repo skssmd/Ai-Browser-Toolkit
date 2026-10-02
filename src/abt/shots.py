@@ -51,6 +51,9 @@ SHOT_OPS = frozenset(
 
 DEFAULT_QUALITY = 60
 DEFAULT_WIDTH = 1280
+# How long a log frame may take. A step's frame is the audit trail's, never
+# worth more than this to the person waiting on the step.
+CAPTURE_TIMEOUT = 4.0
 
 # Viewport size and the element's box in one round trip, so a captured frame
 # costs at most two calls into the page.
@@ -60,6 +63,7 @@ return [r.x, r.y, r.width, r.height, window.innerWidth, window.innerHeight];
 """
 
 _VIEWPORT_JS = "return [window.innerWidth, window.innerHeight, document.visibilityState];"
+_VISIBILITY_JS = "return document.visibilityState;"
 
 
 class NotDrawn(Exception):
@@ -78,6 +82,18 @@ def capture(session, quality: int = DEFAULT_QUALITY, width: int = DEFAULT_WIDTH)
     driver = getattr(session, "driver", None)
     if driver is None:
         return None
+    bounded = getattr(driver, "screenshot_jpeg", None)
+    if bounded is not None:
+        # Playwright's own capture, with a timeout: a frame Chrome never
+        # produces costs a few seconds and a missing frame, not the connection.
+        try:
+            # A tab behind another in a window gets no frames at all: skip it
+            # now instead of waiting out the timeout on every command.
+            if driver.execute_script(_VISIBILITY_JS) == "hidden":
+                return None
+            return bounded(quality, CAPTURE_TIMEOUT)
+        except Exception:
+            return None
     try:
         return _capture_cdp(driver, quality, width)
     except NotDrawn:

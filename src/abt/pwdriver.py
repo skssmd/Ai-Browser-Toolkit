@@ -754,6 +754,12 @@ class PlaywrightDriver:
                 print(f"[abt] {time.strftime('%Y-%m-%d %H:%M:%S')} {reason}", file=sys.stderr, flush=True)
                 raise DeadSession(f"{reason}; restart the browser")
 
+    @property
+    def is_dead(self) -> bool:
+        """Its connection was ended -- a call got no answer, or Playwright's
+        driver process exited -- so every call from here on fails at once."""
+        return bool(self._hung) or self._driver_exit_code() is not None
+
     def _driver_exit_code(self) -> int | None:
         """The exit code of Playwright's Node.js driver, or None while it runs."""
         try:
@@ -1422,6 +1428,25 @@ class PlaywrightDriver:
     # -- screenshots -------------------------------------------------------
     def get_screenshot_as_base64(self) -> str:
         return base64.b64encode(self.get_screenshot_as_png()).decode("ascii")
+
+    def screenshot_jpeg(self, quality: int, timeout: float) -> bytes:
+        """The viewport as a JPEG, giving up after `timeout` seconds.
+
+        For the activity log's frames. The same capture through a raw CDP call
+        has no timeout at all: when Chrome never produced the frame, the call
+        waited out the 60s watchdog, which then ended the whole connection --
+        and a log frame took its session down with it, more than once. Here the
+        wait is Playwright's own, so a frame that does not come is just a
+        missing frame.
+        """
+        try:
+            return self._call(
+                lambda: self._page.screenshot(
+                    type="jpeg", quality=int(quality), timeout=timeout * 1000
+                )
+            )
+        except Exception as exc:
+            raise _as_engine_error(exc) from exc
 
     def get_screenshot_as_png(self) -> bytes:
         try:
