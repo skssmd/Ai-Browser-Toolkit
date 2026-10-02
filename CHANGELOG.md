@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.8 — 2026-10-02
 
 - **Nothing ever asks anyone to restart the browser; it re-attaches.**
   `browser_start` is now safe to repeat: with a browser up it attaches to it
