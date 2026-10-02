@@ -220,7 +220,8 @@ def translate_launch_failure(exc: BaseException, browser: str) -> OpError | None
         return None
     other = "edge" if browser == "chrome" else "chrome"
     return OpError(
-        "browser_dead",
+        # Not `browser_dead`: nothing died, there is nothing to restart.
+        "browser_not_found",
         f"{browser} is not installed, or not where Playwright looks for it. "
         f"This toolkit drives an existing Google Chrome or Microsoft Edge and "
         f"bundles neither. Install one, run `abt doctor` to check, or pass "
@@ -271,7 +272,18 @@ def _as_engine_error(exc: BaseException) -> BaseException:
         return NotInteractable(text)
     if isinstance(exc, PlaywrightTimeout):
         return Timeout(str(exc))
-    if "target closed" in lowered or "browser closed" in lowered:
+    # Playwright's wording varies by version: "Target closed", "Target page,
+    # context or browser has been closed" (its TargetClosedError), "Browser has
+    # been closed", "Connection closed". The second was matched by neither
+    # check that used to be here, and only reached browser_dead by way of a
+    # catch-all that was then changed to say something else.
+    if (
+        type(exc).__name__ == "TargetClosedError"
+        or "target closed" in lowered
+        or "browser closed" in lowered
+        or "has been closed" in lowered
+        or "connection closed" in lowered
+    ):
         return DeadSession(text)
     if isinstance(exc, PlaywrightError):
         return EngineError(text)

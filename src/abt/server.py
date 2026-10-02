@@ -65,23 +65,41 @@ def _is_shutdown(item: Any) -> bool:
     return isinstance(item, dict) and item.get("op") == "shutdown"
 
 
+# What a failure says when the browser really is gone, rather than the page or
+# an element having refused something. Playwright reports it in the message.
+_GONE = (
+    "target closed", "has been closed", "browser closed", "connection closed",
+    "browser has disconnected", "cannot schedule new futures", "event loop is closed",
+    "driver process exited", "stopped answering",
+)
+
+
 def _unmapped(exc: Exception) -> OpError:
     """Give an exception nobody translated the least wrong type available.
 
     Everything used to land on `browser_dead`, which is the most expensive
     wrong answer the toolkit can give: its hint tells the caller to restart
-    the browser, so an agent stops working on the page and starts working on
-    the toolkit. A timeout in particular says nothing about the browser being
-    dead -- it is the ordinary way a wait ends.
+    the browser -- and the app does it for them -- so an agent stops working on
+    the page and starts working on the toolkit. Seen live: a colour input's
+    "Malformed value" was reported as a dead browser five times in a row.
 
-    Ops should translate their own failures; this is the net under them, and
-    a `browser_dead` reaching here should be read as a missing translation.
+    Only a browser that really is gone keeps that type. A page or an element
+    refusing something is `not_interactable`; a navigation under a running read
+    is `stale_ref`; and a fault in the toolkit's own code -- a KeyError, say --
+    is `internal_error`, which says the browser is fine and not to restart it.
+
+    Ops should translate their own failures; this is the net under them.
     """
+    from . import engine
+
     name = type(exc).__name__
     detail = f"{name}: {exc}"
+    lowered = str(exc).lower()
+    module = type(exc).__module__ or ""
+
     if "Timeout" in name:
         return OpError("timeout", detail)
-    if "NoSuchWindow" in name:
+    if "NoSuchWindow" in name or isinstance(exc, engine.NoSuchWindow):
         # A shared session whose last tab was released or taken over has no
         # page at all. The browser is fine; the session needs a tab.
         return OpError(
@@ -89,7 +107,51 @@ def _unmapped(exc: Exception) -> OpError:
             f"this session has no tab to act on ({detail})",
             hint="Open one with tab_new, or tab_claim an unowned tab from tab_list.",
         )
-    return OpError("browser_dead", detail)
+
+    # The browser itself.
+    if (
+        isinstance(exc, (engine.DeadSession, ConnectionError, EOFError))
+        or module.startswith(("httpx", "httpcore", "websockets"))
+        or "TargetClosed" in name
+        or any(marker in lowered for marker in _GONE)
+    ):
+        return OpError("browser_dead", detail)
+
+    # The page changed under a running read: what it held is gone, not the browser.
+    if isinstance(exc, engine.StaleElement) or "execution context was destroyed" in lowered:
+        return OpError(
+            "stale_ref",
+            detail,
+            hint=(
+                "The page navigated or re-rendered while this ran, so what it was "
+                "working on is gone. The browser is fine: look again (`find` or "
+                "`get_text`) and retry."
+            ),
+        )
+    if isinstance(exc, (engine.NoSuchElement, engine.NoSuchFrame)):
+        return OpError("element_not_found", detail)
+    if isinstance(exc, engine.ScriptError):
+        return OpError("js_error", detail)
+
+    # The page or an element refused the action. The browser is still running.
+    if isinstance(exc, engine.EngineError):
+        return OpError(
+            "not_interactable",
+            detail,
+            hint=(
+                "The browser refused that action; it is still running. Read the "
+                "message for what it objected to, and try another way to act on "
+                "the element."
+            ),
+        )
+
+    # Anything else is a fault in the toolkit's own code. Keep the traceback:
+    # the reply carries only its last line.
+    import sys
+    import traceback
+
+    traceback.print_exception(exc, file=sys.stderr)
+    return OpError("internal_error", detail)
 
 
 def _strip(item: Any) -> tuple[Any, str | None, str | None]:

@@ -9,6 +9,7 @@ import contextvars
 # whatever the session's own setting says.
 STRICT_UPLOADS: contextvars.ContextVar[bool] = contextvars.ContextVar("strict_uploads", default=False)
 
+import re
 import time
 
 from ..browser import BrowserSession
@@ -17,6 +18,7 @@ from ..engine import (
     DELETE,
     ActionChains,
     ClickIntercepted,
+    DeadSession,
     EngineError,
     InvalidElementState,
     NotInteractable,
@@ -545,6 +547,8 @@ def set_by_kind(session: BrowserSession, cmd, element, value):
         return _write_hidden_file(session, cmd, element)
     if field_type in _SEGMENTED_TYPES:
         return _set_segmented(session, cmd, element, field_type, value)
+    if field_type == "color":
+        return _set_color(session, cmd, element, value)
     if _tag_of(element) == "select":
         return _select_option(element, value, describe(cmd))
     if field_type in ("checkbox", "radio"):
@@ -618,6 +622,21 @@ def input(session: BrowserSession, cmd) -> dict:
         raise OpError(
             "timeout", f"typing into {describe(cmd)} timed out: {detail}"
         ) from exc
+    except DeadSession:
+        raise  # the browser really is gone: browser_dead is right
+    except EngineError as exc:
+        # The engine refused the value for this control -- a kind of field the
+        # kind-specific branches above do not know. The browser is fine; saying
+        # otherwise sent an agent restarting it five times over.
+        raise OpError(
+            "not_interactable",
+            f"{describe(cmd)} refused {cmd.value!r}: {exc.msg or exc}",
+            hint=(
+                "The page rejected that value for this control; the browser is "
+                "fine. Check the control's type -- a custom widget is driven by "
+                "clicking it, and a paired text box by typing into that."
+            ),
+        ) from exc
     return {"target": describe(cmd), "value": _field_value(element)}
 
 
@@ -646,6 +665,55 @@ def _set_segmented(session: BrowserSession, cmd, element, field_type: str,
             f"{describe(cmd)} is a {field_type} input and rejected "
             f"{cmd.value!r} (it now holds {landed!r}); it needs the format "
             f"{_SEGMENTED_TYPES[field_type]}",
+        )
+    return {"target": describe(cmd), "value": landed, "set_directly": True}
+
+
+_COLOR_HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _color_value(value: str) -> str | None:
+    """"#7C3AED", "7c3aed" and "#73e" as the lowercase #rrggbb a colour input holds."""
+    found = _COLOR_HEX.match((value or "").strip())
+    if not found:
+        return None
+    digits = found.group(1).lower()
+    if len(digits) == 3:
+        digits = "".join(c * 2 for c in digits)
+    return "#" + digits
+
+
+def _set_color(session: BrowserSession, cmd, element, value: str) -> dict:
+    """Write a colour input instead of typing into it.
+
+    It has no text to type: the browser's own picker holds the value, and the
+    engine's fill() refuses it -- "Malformed value", for the empty string the
+    clear step writes first as much as for a colour. That was reported as
+    `browser_dead`, five times in a row, to an agent whose browser was fine. A
+    colour is always a lowercase #rrggbb, so the value is set directly, in that
+    form.
+    """
+    wanted = _color_value(value)
+    if wanted is None:
+        raise OpError(
+            "invalid_op",
+            f"{describe(cmd)} is a colour input; it holds a hex colour like "
+            f"#7c3aed, not {value!r}",
+            hint='Send "#rrggbb" (or "#rgb"). A colour input has no text field; '
+            "a page that pairs one with a text box wants the box typed into "
+            "instead.",
+        )
+    try:
+        landed = session.driver.execute_script(_SET_VALUE_JS, element, wanted)
+    except EngineError as exc:
+        raise OpError(
+            "not_interactable", f"could not set {describe(cmd)}: {exc.msg or exc}"
+        ) from exc
+    if landed != wanted:
+        raise OpError(
+            "not_interactable",
+            f"{describe(cmd)} is a colour input and did not take {wanted!r} "
+            f"(it now holds {landed!r})",
         )
     return {"target": describe(cmd), "value": landed, "set_directly": True}
 

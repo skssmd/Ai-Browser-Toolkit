@@ -862,6 +862,7 @@ A closed set, so you can branch on `error.type` instead of parsing prose:
 
 `invalid_op` `element_not_found` `stale_ref` `not_interactable` `not_a_select`
 `timeout` `navigation_failed` `js_error` `last_tab` `tab_not_found` `browser_dead`
+`internal_error`
 `unknown_session` `session_exists` `session_sealed` `tab_locked`
 `profile_limit` `profile_in_use` `profile_not_found` `url_blocked` `file_blocked`
 

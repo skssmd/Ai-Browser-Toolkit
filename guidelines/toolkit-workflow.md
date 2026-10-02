@@ -523,7 +523,12 @@ it costs a click each time you guess low.
 A closed set of `error.type` values to branch on: `invalid_op`,
 `element_not_found`, `stale_ref`, `not_interactable`, `not_a_select`, `timeout`,
 `navigation_failed`, `js_error`, `last_tab`, `tab_not_found`, `browser_dead`,
-`bad_browser`, `browser_not_found`.
+`bad_browser`, `browser_not_found`, `internal_error`.
+
+`browser_dead` means the browser itself is gone -- it is the only one whose
+remedy is a restart. A page or control refusing a value is `not_interactable`,
+and `internal_error` is a fault in the toolkit with the browser still up: do
+not restart for either.
 
 Failed ops never quietly continue: batches stop unless `continue_on_error`.
 

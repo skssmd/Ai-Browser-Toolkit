@@ -16,6 +16,7 @@
     <input type="month" id="m">
     <input type="datetime-local" id="dt">
     <input type="text" id="plain">
+    <input type="color" id="c" value="#000000">
     <output id="echo"></output>
   </form>
 
@@ -34,7 +35,7 @@ document.getElementById('low').addEventListener('click', () => {
 });
 
 // Report every date-ish field's value so a test can see what actually landed.
-for (const id of ['d','t','m','dt']) {
+for (const id of ['d','t','m','dt','c']) {
   document.getElementById(id).addEventListener('change', (e) => {
     document.getElementById('echo').textContent = e.target.id + '=' + e.target.value;
   });

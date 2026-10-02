@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Colour inputs work.** `input` on an `<input type="color">` failed with
+  "Malformed value" -- the engine refuses to fill one, even with the empty
+  string the clear step writes first -- and the toolkit reported it as
+  `browser_dead`. It is set directly now, as a hex colour (`#7c3aed`, `7c3aed`
+  or `#73e`), and the page is told it changed. `select` reaches it too.
+- **`browser_dead` means the browser is gone, and nothing else.** Anything the
+  toolkit could not translate used to land there, whose remedy is a restart --
+  one the app performs for you, losing every tab of a healthy browser. Now: a
+  page or control refusing an action is `not_interactable`; a navigation
+  under a running read is `stale_ref`; a session with no current tab is
+  `tab_not_found`; Chrome not being installed is `browser_not_found`; and a
+  fault in the toolkit's own code is the new `internal_error`, which says the
+  browser is fine and not to restart it. Playwright's closed-target errors,
+  which the old catch-all covered by accident, are recognised as a dead
+  session directly.
+
 ## 0.7.6 — 2026-09-30
 
 - **An idle session no longer freezes the others' new tabs.** Playwright's

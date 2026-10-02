@@ -55,6 +55,53 @@ def test_a_date_input_rejects_a_value_it_cannot_parse(page):
     assert "YYYY-MM-DD" in body["error"]["message"]
 
 
+# --- colour inputs ---------------------------------------------------------------
+
+
+def test_a_colour_input_takes_a_hex_value(page):
+    """Seen live: fill("") on a colour picker is "Malformed value", and that was
+    reported as browser_dead -- five times, to an agent whose browser was fine."""
+    body = page.post(
+        "/command-list", json={"op": "input", "css": "#c", "value": "#7c3aed"}
+    ).json()
+    assert body["ok"] is True, body
+    assert body["result"]["value"] == "#7c3aed"
+    assert body["result"]["set_directly"] is True
+    echo = page.post("/command-list", json={"op": "get_text", "css": "#echo"}).json()
+    assert said(echo["result"]) == "c=#7c3aed"  # the page was told, not just the field
+
+
+@pytest.mark.parametrize(
+    "given,held", [("#7C3AED", "#7c3aed"), ("7c3aed", "#7c3aed"), ("#73e", "#7733ee")]
+)
+def test_a_colour_is_accepted_in_the_forms_people_write_it(page, given, held):
+    body = page.post("/command-list", json={"op": "input", "css": "#c", "value": given}).json()
+    assert body["ok"] is True, body
+    assert body["result"]["value"] == held
+
+
+def test_a_colour_that_is_not_hex_is_refused_with_the_format(page):
+    body = page.post("/command-list", json={"op": "input", "css": "#c", "value": "rebeccapurple"}).json()
+    assert body["ok"] is False
+    assert body["error"]["type"] == "invalid_op" and "#7c3aed" in body["error"]["message"]
+
+
+def test_select_reaches_a_colour_input_too(page):
+    """`select` and `input` are one intent, whichever the caller guessed."""
+    body = page.post("/command-list", json={"op": "select", "css": "#c", "value": "#112233"}).json()
+    assert body["ok"] is True and body["result"]["value"] == "#112233"
+
+
+def test_an_engine_refusal_is_not_reported_as_a_dead_browser():
+    """The net under the ops: a plain engine failure is the page refusing
+    something, not the browser going away."""
+    from abt.engine import DeadSession, EngineError
+    from abt.server import _unmapped
+
+    assert _unmapped(EngineError("ElementHandle.fill: Malformed value")).type == "not_interactable"
+    assert _unmapped(DeadSession("target closed")).type == "browser_dead"
+
+
 def test_a_plain_text_input_is_still_typed_into(page):
     body = page.post(
         "/command-list", json={"op": "input", "css": "#plain", "value": "typed"}

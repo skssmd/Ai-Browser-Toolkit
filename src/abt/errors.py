@@ -68,6 +68,11 @@ HINTS = {
         "that closes itself takes the session with it): `abt browser restart`, "
         "which keeps your logins but loses every tab."
     ),
+    "internal_error": (
+        "The toolkit itself failed on this -- not your command, and not the "
+        "browser, which is still up. Do not restart it. Try the action another "
+        "way, and say what happened: the details are in the session log."
+    ),
     "bad_browser": (
         "Only chrome and edge are supported. `abt doctor` reports which are "
         "installed and where."

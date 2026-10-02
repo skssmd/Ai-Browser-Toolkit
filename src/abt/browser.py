@@ -698,7 +698,14 @@ class BrowserSession:
         for tab_id, known in self._handles.items():
             if known == handle:
                 return tab_id
-        raise OpError("browser_dead", "the active window is not in the tab registry")
+        # The browser is fine; this session's current tab is not one it owns --
+        # closed, or handed to another session. Restarting would lose every tab.
+        raise OpError(
+            "tab_not_found",
+            "this session's current tab is not one it owns (it was closed, or "
+            "given to another session)",
+            hint="Open one with tab_new, or tab_claim an unowned tab from tab_list.",
+        )
 
     def tabs(self) -> list[dict]:
         self._sync_tabs()

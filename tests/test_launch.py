@@ -95,7 +95,7 @@ def test_an_explicit_profile_still_wins(tmp_path):
     assert LaunchConfig(profile=tmp_path / "mine").profile == (tmp_path / "mine").resolve()
 
 
-def test_a_missing_browser_is_a_browser_dead_error_naming_both():
+def test_a_missing_browser_is_a_not_found_error_naming_both():
     """Playwright raises its own error when a channel is not installed. It
     does not mention Edge, and it does not say what to do."""
     from abt import pwdriver
@@ -107,7 +107,7 @@ def test_a_missing_browser_is_a_browser_dead_error_naming_both():
         ),
         "chrome",
     )
-    assert translated.type == "browser_dead"
+    assert translated.type == "browser_not_found"  # nothing died; nothing to restart
     assert "chrome" in translated.message.lower()
     assert "edge" in translated.message.lower()
 

@@ -56,3 +56,79 @@ def test_a_tab_cannot_be_given_to_a_session_on_another_profile(tmp_path):
         body = {"profile": DEFAULT, "tab_id": "tab_0", "session": "elsewhere"}
         out = client.post("/tabs/owner", json=body, headers={"X-ABT-Token": "op"})
         assert out.status_code == 400 and out.json()["error"]["type"] == "invalid_op"
+
+
+# -- browser_dead is for a browser that is gone ---------------------------------------
+
+
+def test_only_a_browser_that_is_gone_is_reported_as_dead():
+    """The app answers browser_dead by restarting the browser, and an agent does
+    the same: so every wrong browser_dead costs the tabs of a healthy one. Seen
+    live, five times in a row, for a colour input's "Malformed value"."""
+    from abt import engine
+
+    dead = [
+        engine.DeadSession("the browser connection stopped answering"),
+        RuntimeError("cannot schedule new futures after shutdown"),
+        engine.EngineError("Page.title: Target page, context or browser has been closed"),
+        ConnectionResetError("reset"),
+    ]
+    for exc in dead:
+        assert _unmapped(exc).type == "browser_dead", exc
+
+
+def test_a_refusal_is_not_a_dead_browser():
+    from abt import engine
+
+    expected = {
+        "not_interactable": [engine.EngineError("fill: Malformed value"),
+                             engine.InvalidElementState("readonly"), engine.UnexpectedAlert("alert open")],
+        "stale_ref": [engine.StaleElement("detached"),
+                      engine.EngineError("Execution context was destroyed, most likely because of a navigation")],
+        "element_not_found": [engine.NoSuchElement("none"), engine.NoSuchFrame("none")],
+        "js_error": [engine.ScriptError("boom")],
+    }
+    for kind, errors in expected.items():
+        for exc in errors:
+            assert _unmapped(exc).type == kind, (kind, exc)
+
+
+def test_a_fault_in_the_toolkit_is_not_a_dead_browser(capsys):
+    """A KeyError inside an op used to read "browser is dead; restart it"."""
+    for exc in (KeyError("missing"), AttributeError("nope"), ValueError("bad"), TypeError("x")):
+        error = _unmapped(exc)
+        assert error.type == "internal_error"
+        assert "restart" in error.hint.lower() and "not" in error.hint.lower()
+    assert "KeyError" in capsys.readouterr().err  # the traceback is kept for the log
+
+
+def test_playwrights_closed_target_error_is_a_dead_session_at_the_source():
+    from abt import engine
+    from abt.pwdriver import _as_engine_error
+
+    class TargetClosedError(Exception):
+        pass
+
+    for message in ("Page.title: Target page, context or browser has been closed",
+                    "Target closed", "Browser has been closed", "Connection closed while reading"):
+        assert isinstance(_as_engine_error(Exception(message)), engine.DeadSession), message
+    assert isinstance(_as_engine_error(TargetClosedError("anything")), engine.DeadSession)
+    assert not isinstance(_as_engine_error(Exception("fill: Malformed value")), engine.DeadSession)
+
+
+def test_a_session_with_no_current_tab_is_told_so_not_that_its_browser_died(tmp_path):
+    from abt.browser import Attach, BrowserSession
+    from abt.errors import OpError
+    from abt.tabs import TabGate, TabRegistry
+    from types import SimpleNamespace
+
+    browser = BrowserSession(profile=tmp_path, headless=True, attach=Attach(
+        connect=lambda: "", disconnect=lambda: None, list_targets=lambda: [],
+        gate=TabGate(TabRegistry("default"), "a")))
+    browser._driver = SimpleNamespace(current_window_handle="h-unknown", window_handles=["h-other"])
+    try:
+        browser.active_tab
+    except OpError as exc:
+        assert exc.type == "tab_not_found" and "tab_new" in exc.hint
+    else:
+        raise AssertionError("expected an error")
