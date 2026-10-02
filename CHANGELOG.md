@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.7 — 2026-10-02
 
 - **Colour inputs work.** `input` on an `<input type="color">` failed with
   "Malformed value" -- the engine refuses to fill one, even with the empty
